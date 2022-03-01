@@ -33,7 +33,6 @@ impl<'a> CPU {
                 yield YieldReason::SyncPPU(5);
             }
             yield YieldReason::SyncSMP(5);
-            yield YieldReason::SyncCPU(5);
         }
     }
 }
