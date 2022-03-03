@@ -5,6 +5,8 @@ mod relative_clock;
 
 pub use yield_reason::YieldReason;
 
+use crate::{bus::Bus, cpu::CPU, ppu::PPU, smp::SMP};
+
 use device_thread::DeviceThread;
 use relative_clock::RelativeClock;
 
@@ -19,19 +21,19 @@ pub const SMP_FREQ: u32 = 24_576_000;
 
 pub trait DeviceGenerator = Generator<Yield = YieldReason, Return = !>;
 pub trait InstructionGenerator = Generator<Yield = YieldReason, Return = ()>;
-type RcGen<'a> = Rc<RefCell<dyn Unpin + Generator<Yield = YieldReason, Return = !> + 'a>>;
+pub type RcGen = Rc<RefCell<dyn Unpin + Generator<Yield = YieldReason, Return = !>>>;
 
-pub struct Scheduler<'a> {
-    cpu: RcGen<'a>,
-    ppu: RcGen<'a>,
-    smp: RcGen<'a>,
+pub struct Scheduler {
+    cpu: RcGen,
+    ppu: RcGen,
+    smp: RcGen,
     curr: DeviceThread,
     cpu_ppu_clock: RelativeClock,
     cpu_smp_clock: RelativeClock,
 }
 
-impl<'a> Scheduler<'a> {
-    pub fn new(cpu: RcGen<'a>, ppu: RcGen<'a>, smp: RcGen<'a>) -> Self {
+impl Scheduler {
+    pub fn new(cpu: RcGen, ppu: RcGen, smp: RcGen) -> Self {
         Self {
             cpu,
             ppu,
@@ -64,6 +66,19 @@ impl<'a> Scheduler<'a> {
             _ => panic!("unexpected value from resume"),
         }
     }
+
+    // pub fn run(&mut self) -> impl Generator<Yield = (), Return = !> {
+    //     let current_generator = match self.curr {
+    //         DeviceThread::CPU => &self.cpu,
+    //         DeviceThread::PPU => &self.ppu,
+    //         DeviceThread::SMP => &self.smp,
+    //     };
+    //     let yielded = Pin::new(&mut *current_generator.borrow_mut()).resume(());
+    //     match yielded {
+    //         GeneratorState::Yielded(yield_reason) => self.sync_curr(yield_reason),
+    //         _ => panic!("unexpected value from resume"),
+    //     }
+    // }
 
     fn get_relative_clock(
         &mut self,
