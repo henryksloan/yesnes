@@ -9,6 +9,7 @@ impl PPU {
 
     pub fn run(&mut self) -> impl DeviceGenerator {
         move || loop {
+            println!("PPU");
             yield YieldReason::SyncCPU(5);
         }
     }
