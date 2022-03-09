@@ -8,19 +8,17 @@ pub use yield_reason::YieldReason;
 use device_thread::DeviceThread;
 use relative_clock::RelativeClock;
 
-use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
-use std::rc::Rc;
 
 pub const CPU_FREQ: u32 = 21_477_272;
 pub const PPU_FREQ: u32 = CPU_FREQ;
 pub const SMP_FREQ: u32 = 24_576_000;
 
-pub trait DeviceGenerator = Generator<Yield = YieldReason, Return = !>;
-pub trait InstructionGenerator = Generator<Yield = YieldReason, Return = ()>;
-// type RcGen = Rc<RefCell<dyn Unpin + Generator<Yield = YieldReason, Return = !>>>;
-type BoxGen = Box<dyn Unpin + Generator<Yield = YieldReason, Return = !>>;
+pub trait Yieldable<T> = Generator<Yield = YieldReason, Return = T>;
+pub trait DeviceGenerator = Yieldable<!>;
+pub trait InstructionGenerator = Yieldable<()>;
+type BoxGen = Box<dyn Unpin + DeviceGenerator>;
 
 pub struct Scheduler {
     cpu: BoxGen,
