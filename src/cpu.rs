@@ -28,33 +28,26 @@ macro_rules! yield_all {
 }
 
 macro_rules! pull_instrs {
-    (u8, $($reg:ident),*) => {
+    // kind decides whether the bit-width depends on some flag (X or M),
+    // or is unconditional
+    (kind: $kind:ident, $($reg:ident),*) => {
         paste! {
             $(
-            fn [<pull_ $reg _u8>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+            fn [<pull_ $reg>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
                 move || {
-                    let data = yield_all!(CPU::stack_pull_u8(cpu.clone()));
-                    cpu.borrow_mut().reg.[<set_ $reg _lo>](data);
+                    let data = yield_all!(CPU::[<stack_pull_ $kind>](cpu.clone()));
+                    cpu.borrow_mut().reg.[<set_ $reg>](data);
+                    // TODO: Set flags
                 }
             }
             )*
         }
     };
-    (u16, $($reg:ident),*) => {
-        paste! {
-            $(
-            fn [<pull_ $reg _u16>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
-                move || {
-                    let data = yield_all!(CPU::stack_pull_u16(cpu.clone()));
-                    cpu.borrow_mut().reg.$reg = data;
-                }
-            }
-            )*
-        }
-    };
-    ($($reg:ident),*) => {
-        pull_instrs!(u8, $($reg),*);
-        pull_instrs!(u16, $($reg),*);
+    () => {
+        pull_instrs!(kind: m, a);
+        pull_instrs!(kind: x, x, y);
+        pull_instrs!(kind: u16, d);
+        pull_instrs!(kind: u8, b);
     }
 }
 
@@ -70,6 +63,7 @@ impl CPU {
         move || loop {
             let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             println!("CPU");
+            yield_all!(CPU::pull_x(cpu.clone()));
         }
     }
 
@@ -98,6 +92,27 @@ impl CPU {
         }
     }
 
-    pull_instrs!(a, d, x, y);
-    pull_instrs!(u8, b);
+    // Calls either the _u8 or _u16 variant of stack_pull, depending on the X flag
+    fn stack_pull_x<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            if cpu.borrow().reg.p.x() {
+                yield_all!(CPU::stack_pull_u8(cpu)) as u16
+            } else {
+                yield_all!(CPU::stack_pull_u16(cpu))
+            }
+        }
+    }
+
+    // Calls either the _u8 or _u16 variant of stack_pull, depending on the M flag
+    fn stack_pull_m<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            if cpu.borrow().reg.p.m() {
+                yield_all!(CPU::stack_pull_u8(cpu)) as u16
+            } else {
+                yield_all!(CPU::stack_pull_u16(cpu))
+            }
+        }
+    }
+
+    pull_instrs!();
 }

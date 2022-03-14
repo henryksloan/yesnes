@@ -16,42 +16,88 @@ pub struct Registers {
     pub b: u8,  // Data bank
 }
 
-macro_rules! reg_accessors {
-    ($($reg:ident),*) => {
-        paste! {
-            $(
-                pub fn [<get_ $reg _lo>](&mut self) -> u8 {
-                    self.$reg as u8
-                }
-                pub fn [<get_ $reg _hi>](&mut self) -> u8 {
-                    (self.$reg >> 8) as u8
-                }
-                pub fn [<set_ $reg _lo>](&mut self, val: u8) {
-                    self.$reg &= 0xFF00;
-                    self.$reg |= val as u16;
-                }
-                pub fn [<set_ $reg _hi>](&mut self, val: u8) {
-                    self.$reg &= 0x00FF;
-                    self.$reg |= (val as u16) << 8;
-                }
-            )*
-        }
-    };
-}
-
 impl Registers {
     pub fn new() -> Self {
         Default::default()
     }
 
-    reg_accessors!(a, x, y, sp, d);
-
-    pub fn get_b_lo(&self) -> u8 {
+    pub fn get_b(&self) -> u8 {
         self.b
     }
 
-    pub fn set_b_lo(&mut self, val: u8) {
-        self.b = val
+    pub fn set_b(&mut self, val: u8) {
+        self.b = val;
+    }
+
+    pub fn get_d(&self) -> u16 {
+        self.d
+    }
+
+    pub fn set_d(&mut self, val: u16) {
+        self.d = val;
+    }
+
+    // Gets the X register.
+    // Whether it gets the whole thing or just the low bits
+    // depends on the X flag.
+    pub fn get_x(&mut self) -> u16 {
+        if self.p.x() {
+            self.x & 0xFF
+        } else {
+            self.x
+        }
+    }
+
+    // Sets the X register.
+    // Whether it sets the whole thing or just the low bits
+    // depends on the X flag.
+    pub fn set_x(&mut self, val: u16) {
+        if self.p.x() {
+            self.x &= 0xFF00;
+            self.x |= val & 0xFF;
+        } else {
+            self.x = val;
+        }
+    }
+
+    pub fn get_y(&mut self) -> u16 {
+        if self.p.x() {
+            self.y & 0xFF
+        } else {
+            self.y
+        }
+    }
+
+    pub fn set_y(&mut self, val: u16) {
+        if self.p.x() {
+            self.y &= 0xFF00;
+            self.y |= val & 0xFF;
+        } else {
+            self.y = val;
+        }
+    }
+
+    // Gets the A register.
+    // Whether it gets the whole thing or just the low bits
+    // depends on the M flag.
+    pub fn get_a(&mut self) -> u16 {
+        if self.p.m() {
+            self.a & 0xFF
+        } else {
+            self.a
+        }
+    }
+
+    // Sets the A register.
+    // Whether it sets the whole thing or just the low bits
+    // depends on the X flag.
+    pub fn set_a(&mut self, val: u16) {
+        if self.p.m() {
+            self.a &= 0xFF00;
+            self.a |= val & 0xFF;
+        } else {
+            self.a = val;
+        }
     }
 }
 
@@ -82,5 +128,13 @@ impl StatusRegister {
         // This should set M and X high
         // The instruction that effects this should also affect some other registers
         self.e = new_mode;
+    }
+
+    pub fn x(&self) -> bool {
+        self.x
+    }
+
+    pub fn m(&self) -> bool {
+        self.m
     }
 }
