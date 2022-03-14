@@ -8,30 +8,29 @@ pub use yield_reason::YieldReason;
 use device_thread::DeviceThread;
 use relative_clock::RelativeClock;
 
-use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
-use std::rc::Rc;
 
 pub const CPU_FREQ: u32 = 21_477_272;
 pub const PPU_FREQ: u32 = CPU_FREQ;
 pub const SMP_FREQ: u32 = 24_576_000;
 
-pub trait DeviceGenerator = Generator<Yield = YieldReason, Return = !>;
-pub trait InstructionGenerator = Generator<Yield = YieldReason, Return = ()>;
-type RcGen<'a> = Rc<RefCell<dyn Unpin + Generator<Yield = YieldReason, Return = !> + 'a>>;
+pub trait Yieldable<T> = Generator<Yield = YieldReason, Return = T>;
+pub trait DeviceGenerator = Yieldable<!>;
+pub trait InstructionGenerator = Yieldable<()>;
+type BoxGen = Box<dyn Unpin + DeviceGenerator>;
 
-pub struct Scheduler<'a> {
-    cpu: RcGen<'a>,
-    ppu: RcGen<'a>,
-    smp: RcGen<'a>,
+pub struct Scheduler {
+    cpu: BoxGen,
+    ppu: BoxGen,
+    smp: BoxGen,
     curr: DeviceThread,
     cpu_ppu_clock: RelativeClock,
     cpu_smp_clock: RelativeClock,
 }
 
-impl<'a> Scheduler<'a> {
-    pub fn new(cpu: RcGen<'a>, ppu: RcGen<'a>, smp: RcGen<'a>) -> Self {
+impl Scheduler {
+    pub fn new(cpu: BoxGen, ppu: BoxGen, smp: BoxGen) -> Self {
         Self {
             cpu,
             ppu,
@@ -54,11 +53,11 @@ impl<'a> Scheduler<'a> {
 
     pub fn tick(&mut self) {
         let current_generator = match self.curr {
-            DeviceThread::CPU => &self.cpu,
-            DeviceThread::PPU => &self.ppu,
-            DeviceThread::SMP => &self.smp,
+            DeviceThread::CPU => &mut self.cpu,
+            DeviceThread::PPU => &mut self.ppu,
+            DeviceThread::SMP => &mut self.smp,
         };
-        let yielded = Pin::new(&mut *current_generator.borrow_mut()).resume(());
+        let yielded = Pin::new(&mut *current_generator).resume(());
         match yielded {
             GeneratorState::Yielded(yield_reason) => self.sync_curr(yield_reason),
             _ => panic!("unexpected value from resume"),

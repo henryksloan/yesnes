@@ -1,39 +1,103 @@
 pub mod registers;
 
-use crate::{cpu::registers::Registers, scheduler::*};
+use crate::{bus::Bus, cpu::registers::Registers, scheduler::*, u24::u24};
 
+use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
+use std::rc::Rc;
+
+use paste::paste;
 
 /// The 65816 microprocessor, the main CPU of the SNES
 pub struct CPU {
     reg: Registers,
+    bus: Bus,
 }
 
-impl<'a> CPU {
-    pub fn new() -> Self {
+macro_rules! yield_all {
+    ($gen_expr:expr) => {{
+        let mut gen = $gen_expr;
+        loop {
+            match Pin::new(&mut gen).resume(()) {
+                GeneratorState::Yielded(yield_reason) => yield yield_reason,
+                GeneratorState::Complete(out) => break out,
+            }
+        }
+    }};
+}
+
+macro_rules! pull_instrs {
+    (u8, $($reg:ident),*) => {
+        paste! {
+            $(
+            fn [<pull_ $reg _u8>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+                move || {
+                    let data = yield_all!(CPU::stack_pull_u8(cpu.clone()));
+                    cpu.borrow_mut().reg.[<set_ $reg _lo>](data);
+                }
+            }
+            )*
+        }
+    };
+    (u16, $($reg:ident),*) => {
+        paste! {
+            $(
+            fn [<pull_ $reg _u16>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+                move || {
+                    let data = yield_all!(CPU::stack_pull_u16(cpu.clone()));
+                    cpu.borrow_mut().reg.$reg = data;
+                }
+            }
+            )*
+        }
+    };
+    ($($reg:ident),*) => {
+        pull_instrs!(u8, $($reg),*);
+        pull_instrs!(u16, $($reg),*);
+    }
+}
+
+impl CPU {
+    pub fn new(bus: Bus) -> Self {
         Self {
             reg: Registers::new(),
+            bus,
         }
     }
 
-    pub fn run(&'a mut self) -> impl DeviceGenerator + 'a {
+    pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
         move || loop {
-            let mut instr = self.instr1();
-            while let GeneratorState::Yielded(yield_reason) = Pin::new(&mut instr).resume(()) {
-                yield yield_reason;
-            }
-            println!("Continue");
+            let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
+            println!("CPU");
         }
     }
 
-    fn instr1(&'a mut self) -> impl InstructionGenerator + 'a {
+    fn step(&mut self, n_clocks: u32) {}
+
+    fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
-            if self.reg.a == 0 {
-                yield YieldReason::SyncPPU(5);
-            }
-            yield YieldReason::SyncSMP(5);
-            yield YieldReason::SyncCPU(5);
+            // TODO: Some clock cycles before the read, depending on region
+            let data = yield_all!(cpu.borrow_mut().bus.read_u8(addr));
+            cpu.borrow_mut().step(4);
+            data
         }
     }
+
+    fn stack_pull_u8<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u8> + 'a {
+        // TODO
+        move || yield_all!(CPU::read_u8(cpu.clone(), u24(0x100)))
+    }
+
+    fn stack_pull_u16<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u16> + 'a {
+        // TODO
+        move || {
+            let hi = yield_all!(CPU::read_u8(cpu.clone(), u24(0x101)));
+            let lo = yield_all!(CPU::read_u8(cpu.clone(), u24(0x100)));
+            ((hi as u16) << 8) | lo as u16
+        }
+    }
+
+    pull_instrs!(a, d, x, y);
+    pull_instrs!(u8, b);
 }

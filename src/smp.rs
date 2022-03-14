@@ -9,6 +9,7 @@ impl SMP {
 
     pub fn run(&mut self) -> impl DeviceGenerator {
         move || loop {
+            println!("SMP");
             yield YieldReason::SyncCPU(5);
         }
     }
