@@ -15,21 +15,9 @@ pub struct CPU {
     bus: Bus,
 }
 
-macro_rules! yield_all {
-    ($gen_expr:expr) => {{
-        let mut gen = $gen_expr;
-        loop {
-            match Pin::new(&mut gen).resume(()) {
-                GeneratorState::Yielded(yield_reason) => yield yield_reason,
-                GeneratorState::Complete(out) => break out,
-            }
-        }
-    }};
-}
-
 macro_rules! pull_instrs {
     // kind decides whether the bit-width depends on some flag (X or M),
-    // or is unconditional
+    // or is unconditional (u8 or u16)
     (kind: $kind:ident, $($reg:ident),*) => {
         paste! {
             $(
@@ -61,9 +49,19 @@ impl CPU {
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
         move || loop {
-            let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             println!("CPU");
-            yield_all!(CPU::pull_x(cpu.clone()));
+            let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
+            let opcode = 0x68; // PLACEHOLDER
+
+            // TODO: Refactor to read from a LUT of (instr, addr_mode) pairs
+            match opcode {
+                0x2B => yield_all!(CPU::pull_d(cpu.clone())),
+                0x68 => yield_all!(CPU::pull_a(cpu.clone())),
+                0x7A => yield_all!(CPU::pull_y(cpu.clone())),
+                0xAB => yield_all!(CPU::pull_b(cpu.clone())),
+                0xFA => yield_all!(CPU::pull_x(cpu.clone())),
+                _ => panic!("Invalid opcode {}", opcode),
+            };
         }
     }
 

@@ -20,6 +20,20 @@ pub trait DeviceGenerator = Yieldable<!>;
 pub trait InstructionGenerator = Yieldable<()>;
 type BoxGen = Box<dyn Unpin + DeviceGenerator>;
 
+macro_rules! yield_all {
+    ($gen_expr:expr) => {{
+        let mut gen = $gen_expr;
+        loop {
+            match Pin::new(&mut gen).resume(()) {
+                GeneratorState::Yielded(yield_reason) => yield yield_reason,
+                GeneratorState::Complete(out) => break out,
+            }
+        }
+    }};
+}
+
+pub(crate) use yield_all;
+
 pub struct Scheduler {
     cpu: BoxGen,
     ppu: BoxGen,
