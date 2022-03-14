@@ -1,3 +1,5 @@
+use crate::u24::u24;
+
 use paste::paste;
 
 #[derive(Default)]
@@ -52,11 +54,6 @@ impl Registers {
         self.b = val
     }
 }
-
-// A faux primative to store 24-bit addresses
-#[derive(Copy, Clone, Debug, Default)]
-#[allow(non_camel_case_types)]
-pub struct u24(pub u32);
 
 #[derive(Default)]
 pub struct StatusRegister {

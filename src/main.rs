@@ -9,6 +9,7 @@ mod ppu;
 mod scheduler;
 mod smp;
 mod snes;
+mod u24;
 
 use snes::SNES;
 

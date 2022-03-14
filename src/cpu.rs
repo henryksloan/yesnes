@@ -1,10 +1,6 @@
 pub mod registers;
 
-use crate::{
-    bus::Bus,
-    cpu::registers::{u24, Registers},
-    scheduler::*,
-};
+use crate::{bus::Bus, cpu::registers::Registers, scheduler::*, u24::u24};
 
 use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
@@ -74,16 +70,17 @@ impl CPU {
         move || loop {
             let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             println!("CPU");
-            yield_all!(CPU::pull_a_u8(cpu.clone()));
         }
     }
 
+    fn step(&mut self, n_clocks: u32) {}
+
     fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
-            if false {
-                yield YieldReason::SyncPPU(5);
-            }
-            5
+            // TODO: Some clock cycles before the read, depending on region
+            let data = yield_all!(cpu.borrow_mut().bus.read_u8(addr));
+            cpu.borrow_mut().step(4);
+            data
         }
     }
 
