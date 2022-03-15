@@ -41,6 +41,15 @@ macro_rules! pull_instrs {
     }
 }
 
+macro_rules! instr {
+    ($cpu_rc: ident, $instr_f:ident) => {
+        yield_all!(CPU::$instr_f($cpu_rc.clone()))
+    };
+    ($cpu_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {
+        yield_all!($instr_f($cpu_rc.clone(), $addr_mode_f(cpu.clone())))
+    };
+}
+
 impl CPU {
     pub fn new(bus: Bus) -> Self {
         Self {
@@ -55,13 +64,12 @@ impl CPU {
             let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             let opcode = 0x68; // PLACEHOLDER
 
-            // TODO: Refactor to read from a LUT of (instr, addr_mode) pairs
             match opcode {
-                0x2B => yield_all!(CPU::pull_d(cpu.clone())),
-                0x68 => yield_all!(CPU::pull_a(cpu.clone())),
-                0x7A => yield_all!(CPU::pull_y(cpu.clone())),
-                0xAB => yield_all!(CPU::pull_b(cpu.clone())),
-                0xFA => yield_all!(CPU::pull_x(cpu.clone())),
+                0x2B => instr!(cpu, pull_d),
+                0x68 => instr!(cpu, pull_a),
+                0x7A => instr!(cpu, pull_y),
+                0xAB => instr!(cpu, pull_b),
+                0xFA => instr!(cpu, pull_x),
                 _ => panic!("Invalid opcode {}", opcode),
             };
         }
