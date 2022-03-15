@@ -41,7 +41,7 @@ impl Registers {
     // Whether it gets the whole thing or just the low bits
     // depends on the X flag.
     pub fn get_x(&mut self) -> u16 {
-        if self.p.x() {
+        if self.p.x_or_b {
             self.x & 0xFF
         } else {
             self.x
@@ -52,7 +52,7 @@ impl Registers {
     // Whether it sets the whole thing or just the low bits
     // depends on the X flag.
     pub fn set_x(&mut self, val: u16) {
-        if self.p.x() {
+        if self.p.x_or_b {
             self.x &= 0xFF00;
             self.x |= val & 0xFF;
         } else {
@@ -61,7 +61,7 @@ impl Registers {
     }
 
     pub fn get_y(&mut self) -> u16 {
-        if self.p.x() {
+        if self.p.x_or_b {
             self.y & 0xFF
         } else {
             self.y
@@ -69,7 +69,7 @@ impl Registers {
     }
 
     pub fn set_y(&mut self, val: u16) {
-        if self.p.x() {
+        if self.p.x_or_b {
             self.y &= 0xFF00;
             self.y |= val & 0xFF;
         } else {
@@ -81,7 +81,7 @@ impl Registers {
     // Whether it gets the whole thing or just the low bits
     // depends on the M flag.
     pub fn get_a(&mut self) -> u16 {
-        if self.p.m() {
+        if self.p.m {
             self.a & 0xFF
         } else {
             self.a
@@ -92,7 +92,7 @@ impl Registers {
     // Whether it sets the whole thing or just the low bits
     // depends on the X flag.
     pub fn set_a(&mut self, val: u16) {
-        if self.p.m() {
+        if self.p.m {
             self.a &= 0xFF00;
             self.a |= val & 0xFF;
         } else {
@@ -103,38 +103,31 @@ impl Registers {
 
 #[derive(Default)]
 pub struct StatusRegister {
-    raw: u8, // Flag values, excluding those that depend on E
-    e: bool, // 6502 emulation mode flag
-    m: bool, // 8-bit accumulator and memory flag (native mode only)
-    x: bool, // 8-bit index flag (native mode only)
-    b: bool, // Break flag (emulation mode only)
+    pub n: bool, // Negative flag
+    pub v: bool, // Overflow flag
+    pub m: bool, // 8-bit accumulator and memory flag (native mode only)
+
+    // X: 8-bit index flag (native mode only)
+    // B: Break flag (emulation mode only)
+    pub x_or_b: bool,
+
+    pub d: bool, // Decimal flag
+    pub i: bool, // IRQ disable
+    pub z: bool, // Zero flag
+    pub c: bool, // Carry flag
+
+    pub e: bool, // 6502 emulation mode flag
 }
 
 impl StatusRegister {
     pub fn get(&self) -> u8 {
-        if self.e {
-            // Bit 5 is always 1 in emulation mode
-            self.raw | (1 << 5) | ((self.b as u8) << 4)
-        } else {
-            self.raw | ((self.m as u8) << 5) | ((self.x as u8) << 4)
-        }
-    }
-
-    pub fn emulation_mode(&self) -> bool {
-        self.e
-    }
-
-    pub fn set_emulation_mode(&mut self, new_mode: bool) {
-        // This should set M and X high
-        // The instruction that effects this should also affect some other registers
-        self.e = new_mode;
-    }
-
-    pub fn x(&self) -> bool {
-        self.x
-    }
-
-    pub fn m(&self) -> bool {
-        self.m
+        ((self.n as u8) << 7)
+            | ((self.v as u8) << 6)
+            | ((self.m as u8) << 5)
+            | ((self.x_or_b as u8) << 4)
+            | ((self.d as u8) << 3)
+            | ((self.i as u8) << 2)
+            | ((self.z as u8) << 1)
+            | ((self.c as u8) << 0)
     }
 }

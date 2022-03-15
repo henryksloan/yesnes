@@ -25,7 +25,9 @@ macro_rules! pull_instrs {
                 move || {
                     let data = yield_all!(CPU::[<stack_pull_ $kind>](cpu.clone()));
                     cpu.borrow_mut().reg.[<set_ $reg>](data);
-                    // TODO: Set flags
+                    let n_bits = std::mem::size_of_val(&data);
+                    cpu.borrow_mut().reg.p.n = ((data >> (n_bits - 1)) == 1);
+                    cpu.borrow_mut().reg.p.z = (data == 0);
                 }
             }
             )*
@@ -93,7 +95,7 @@ impl CPU {
     // Calls either the _u8 or _u16 variant of stack_pull, depending on the X flag
     fn stack_pull_x<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u16> + 'a {
         move || {
-            if cpu.borrow().reg.p.x() {
+            if cpu.borrow().reg.p.x_or_b {
                 yield_all!(CPU::stack_pull_u8(cpu)) as u16
             } else {
                 yield_all!(CPU::stack_pull_u16(cpu))
@@ -104,7 +106,7 @@ impl CPU {
     // Calls either the _u8 or _u16 variant of stack_pull, depending on the M flag
     fn stack_pull_m<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u16> + 'a {
         move || {
-            if cpu.borrow().reg.p.m() {
+            if cpu.borrow().reg.p.m {
                 yield_all!(CPU::stack_pull_u8(cpu)) as u16
             } else {
                 yield_all!(CPU::stack_pull_u16(cpu))
