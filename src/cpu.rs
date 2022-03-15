@@ -45,9 +45,24 @@ macro_rules! instr {
     ($cpu_rc: ident, $instr_f:ident) => {
         yield_all!(CPU::$instr_f($cpu_rc.clone()))
     };
-    ($cpu_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {
-        let data = yield_all!($addr_mode_f(cpu.clone()));
-        yield_all!($instr_f($cpu_rc.clone(), data))
+    ($cpu_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {{
+        let data = yield_all!(CPU::$addr_mode_f($cpu_rc.clone()));
+        yield_all!(CPU::$instr_f($cpu_rc.clone(), data))
+    }};
+    // If the instruction depends on the X or M flag,
+    // we pass true if the 16-bit variant should be used, else false
+    ($cpu_rc: ident, $instr_f:ident, flag: $flag: ident, $addr_mode_f:ident) => {{
+        let data = yield_all!(CPU::$addr_mode_f(
+            $cpu_rc.clone(),
+            !$cpu_rc.borrow().reg.p.$flag
+        ));
+        yield_all!(CPU::$instr_f($cpu_rc.clone(), data))
+    }};
+    ($cpu_rc: ident, $instr_f:ident, XFlag, $addr_mode_f:ident) => {
+        instr!($cpu_rc, $instr_f, flag: x_or_b, $addr_mode_f)
+    };
+    ($cpu_rc: ident, $instr_f:ident, MFlag, $addr_mode_f:ident) => {
+        instr!($cpu_rc, $instr_f, flag: m, $addr_mode_f)
     };
 }
 
@@ -72,9 +87,12 @@ impl CPU {
         move || loop {
             println!("CPU");
             let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
-            let opcode = 0x68; // PLACEHOLDER
+            let opcode = 0x29; // PLACEHOLDER
 
+            // TODO: Make a new macro that generates this, taking a list like
+            // (and, MFlag, 0x29:immediate, 0x2D:absolute, ...) etc.
             match opcode {
+                0x29 => instr!(cpu, and, MFlag, immediate),
                 0x2B => instr!(cpu, pull_d),
                 0x68 => instr!(cpu, pull_a),
                 0x7A => instr!(cpu, pull_y),
@@ -132,13 +150,15 @@ impl CPU {
         }
     }
 
-    // FIXME: Issue! Whether this is 8- or 16-bit can depend on either (or neither) flag
-    // OH! The macro can have extra info to dispatch it correctly
-    // fn immediate<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u16> + 'a {
-    //     move || {
-    //         let lo = fetch!(cpu) as u16;
-    //     }
-    // }
+    fn immediate<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let mut data = fetch!(cpu) as u16;
+            if long {
+                data |= (fetch!(cpu) as u16) << 8;
+            }
+            data
+        }
+    }
 
     fn and<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
         move || {
