@@ -34,6 +34,20 @@ macro_rules! yield_all {
 
 pub(crate) use yield_all;
 
+// A silly hack:
+// An expression only satisfies the Generator trait if it
+// uses the `yield` keyword. But not all instructions yield,
+// so this must be used to satisfy the trait
+macro_rules! dummy_yield {
+    () => {
+        if false {
+            yield YieldReason::SyncCPU(0);
+        }
+    };
+}
+
+pub(crate) use dummy_yield;
+
 pub struct Scheduler {
     cpu: BoxGen,
     ppu: BoxGen,

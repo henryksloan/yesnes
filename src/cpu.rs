@@ -162,10 +162,7 @@ impl CPU {
 
     fn and<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
         move || {
-            // TODO: Factor this out to a macro, like "dummy_yield"
-            if false {
-                yield YieldReason::SyncCPU(5);
-            }
+            dummy_yield!();
             let val = cpu.borrow().reg.get_a() & data;
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
