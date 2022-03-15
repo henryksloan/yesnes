@@ -20,6 +20,34 @@ pub trait DeviceGenerator = Yieldable<!>;
 pub trait InstructionGenerator = Yieldable<()>;
 type BoxGen = Box<dyn Unpin + DeviceGenerator>;
 
+macro_rules! yield_all {
+    ($gen_expr:expr) => {{
+        let mut gen = $gen_expr;
+        loop {
+            match Pin::new(&mut gen).resume(()) {
+                GeneratorState::Yielded(yield_reason) => yield yield_reason,
+                GeneratorState::Complete(out) => break out,
+            }
+        }
+    }};
+}
+
+pub(crate) use yield_all;
+
+// A silly hack:
+// An expression only satisfies the Generator trait if it
+// uses the `yield` keyword. But not all instructions yield,
+// so this must be used to satisfy the trait
+macro_rules! dummy_yield {
+    () => {
+        if false {
+            yield YieldReason::SyncCPU(0);
+        }
+    };
+}
+
+pub(crate) use dummy_yield;
+
 pub struct Scheduler {
     cpu: BoxGen,
     ppu: BoxGen,
