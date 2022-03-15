@@ -40,7 +40,7 @@ impl Registers {
     // Gets the X register.
     // Whether it gets the whole thing or just the low bits
     // depends on the X flag.
-    pub fn get_x(&mut self) -> u16 {
+    pub fn get_x(&self) -> u16 {
         if self.p.x_or_b {
             self.x & 0xFF
         } else {
@@ -60,7 +60,7 @@ impl Registers {
         }
     }
 
-    pub fn get_y(&mut self) -> u16 {
+    pub fn get_y(&self) -> u16 {
         if self.p.x_or_b {
             self.y & 0xFF
         } else {
@@ -80,7 +80,7 @@ impl Registers {
     // Gets the A register.
     // Whether it gets the whole thing or just the low bits
     // depends on the M flag.
-    pub fn get_a(&mut self) -> u16 {
+    pub fn get_a(&self) -> u16 {
         if self.p.m {
             self.a & 0xFF
         } else {

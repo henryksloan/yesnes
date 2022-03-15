@@ -46,8 +46,18 @@ macro_rules! instr {
         yield_all!(CPU::$instr_f($cpu_rc.clone()))
     };
     ($cpu_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {
-        yield_all!($instr_f($cpu_rc.clone(), $addr_mode_f(cpu.clone())))
+        let data = yield_all!($addr_mode_f(cpu.clone()));
+        yield_all!($instr_f($cpu_rc.clone(), data))
     };
+}
+
+macro_rules! fetch {
+    ($cpu_rc: ident) => {{
+        let data = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
+        // FIXME: Fix after implementing u24
+        // cpu.borrow_mut().reg.pc += 1;
+        data
+    }};
 }
 
 impl CPU {
@@ -119,6 +129,28 @@ impl CPU {
             } else {
                 yield_all!(CPU::stack_pull_u16(cpu))
             }
+        }
+    }
+
+    // FIXME: Issue! Whether this is 8- or 16-bit can depend on either (or neither) flag
+    // OH! The macro can have extra info to dispatch it correctly
+    // fn immediate<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u16> + 'a {
+    //     move || {
+    //         let lo = fetch!(cpu) as u16;
+    //     }
+    // }
+
+    fn and<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            // TODO: Factor this out to a macro, like "dummy_yield"
+            if false {
+                yield YieldReason::SyncCPU(5);
+            }
+            let val = cpu.borrow().reg.get_a() & data;
+            cpu.borrow_mut().reg.set_a(val);
+            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
         }
     }
 
