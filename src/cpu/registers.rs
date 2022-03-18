@@ -12,7 +12,7 @@ pub struct Registers {
     pub pc: u24,
     pub sp: u16, // Stack pointer
     pub p: StatusRegister,
-    pub d: u16, // Zero page offset
+    pub d: u16, // Direct page
     pub b: u8,  // Data bank
 }
 

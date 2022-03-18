@@ -92,6 +92,7 @@ impl CPU {
             // TODO: Make a new macro that generates this, taking a list like
             // (and, MFlag, 0x29:immediate, 0x2D:absolute, ...) etc.
             match opcode {
+                0x25 => instr!(cpu, and, MFlag, direct_page),
                 0x29 => instr!(cpu, and, MFlag, immediate),
                 0x2B => instr!(cpu, pull_d),
                 0x68 => instr!(cpu, pull_a),
@@ -109,6 +110,23 @@ impl CPU {
         move || {
             // TODO: Some clock cycles before the read, depending on region
             let data = yield_all!(cpu.borrow_mut().bus.read_u8(addr));
+            cpu.borrow_mut().step(4);
+            data
+        }
+    }
+
+    fn read_direct_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
+        move || {
+            let addr = if cpu.borrow().reg.p.e && (cpu.borrow().reg.d & 0xFF == 0) {
+                // FIXME: Fix after implementing u24
+                // cpu.reg.d | (addr & 0xFF)
+                u24(0)
+            } else {
+                // FIXME: Fix after implementing u24
+                // (cpu.reg.d + addr) & 0xFFFF
+                u24(0)
+            };
+            let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
             cpu.borrow_mut().step(4);
             data
         }
@@ -155,6 +173,18 @@ impl CPU {
             let mut data = fetch!(cpu) as u16;
             if long {
                 data |= (fetch!(cpu) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    fn direct_page<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let addr = u24(fetch!(cpu) as u32);
+            let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
+            if long {
+                // FIXME: Fix after implementing u24
+                // data |= (yield_all!(CPU::read_direct_u8(cpu.clone(), addr + 1)) as u16) << 8;
             }
             data
         }
