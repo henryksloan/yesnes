@@ -1,7 +1,5 @@
 use crate::u24::u24;
 
-use paste::paste;
-
 #[derive(Default)]
 pub struct Registers {
     pub a: u16, // Accumulator register

@@ -69,8 +69,7 @@ macro_rules! instr {
 macro_rules! fetch {
     ($cpu_rc: ident) => {{
         let data = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
-        // FIXME: Fix after implementing u24
-        // cpu.borrow_mut().reg.pc += 1;
+        $cpu_rc.borrow_mut().reg.pc += 1u32;
         data
     }};
 }
@@ -118,13 +117,9 @@ impl CPU {
     fn read_direct_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
             let addr = if cpu.borrow().reg.p.e && (cpu.borrow().reg.d & 0xFF == 0) {
-                // FIXME: Fix after implementing u24
-                // cpu.reg.d | (addr & 0xFF)
-                u24(0)
+                u24(cpu.borrow().reg.d.into()) | (addr & 0xFFu8)
             } else {
-                // FIXME: Fix after implementing u24
-                // (cpu.reg.d + addr) & 0xFFFF
-                u24(0)
+                (u24(cpu.borrow().reg.d.into()) + addr) & 0xFFFFu32
             };
             let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
             cpu.borrow_mut().step(4);
@@ -183,8 +178,7 @@ impl CPU {
             let addr = u24(fetch!(cpu) as u32);
             let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
             if long {
-                // FIXME: Fix after implementing u24
-                // data |= (yield_all!(CPU::read_direct_u8(cpu.clone(), addr + 1)) as u16) << 8;
+                data |= (yield_all!(CPU::read_direct_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
             }
             data
         }
