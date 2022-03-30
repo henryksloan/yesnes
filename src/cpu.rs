@@ -94,6 +94,7 @@ impl CPU {
                 0x25 => instr!(cpu, and, MFlag, direct_page),
                 0x29 => instr!(cpu, and, MFlag, immediate),
                 0x2B => instr!(cpu, pull_d),
+                0x35 => instr!(cpu, and, MFlag, direct_page_x),
                 0x68 => instr!(cpu, pull_a),
                 0x7A => instr!(cpu, pull_y),
                 0xAB => instr!(cpu, pull_b),
@@ -173,9 +174,32 @@ impl CPU {
         }
     }
 
+    // TODO: Reduce code duplication across these three
     fn direct_page<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
         move || {
             let addr = u24(fetch!(cpu) as u32);
+            let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_direct_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    fn direct_page_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.x as u32);
+            let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_direct_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    fn direct_page_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.y as u32);
             let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
             if long {
                 data |= (yield_all!(CPU::read_direct_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
