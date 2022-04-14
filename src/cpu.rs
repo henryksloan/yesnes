@@ -91,10 +91,13 @@ impl CPU {
             // TODO: Make a new macro that generates this, taking a list like
             // (and, MFlag, 0x29:immediate, 0x2D:absolute, ...) etc.
             match opcode {
+                0x21 => instr!(cpu, and, MFlag, indexed_indirect),
                 0x25 => instr!(cpu, and, MFlag, direct_page),
                 0x29 => instr!(cpu, and, MFlag, immediate),
                 0x2B => instr!(cpu, pull_d),
                 0x2D => instr!(cpu, and, MFlag, absolute),
+                0x31 => instr!(cpu, and, MFlag, indirect_indexed),
+                0x32 => instr!(cpu, and, MFlag, indirect),
                 0x35 => instr!(cpu, and, MFlag, direct_page_x),
                 0x39 => instr!(cpu, and, MFlag, absolute_y),
                 0x3D => instr!(cpu, and, MFlag, absolute_x),
@@ -242,6 +245,57 @@ impl CPU {
     fn absolute_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
         move || {
             let addr = u24((fetch!(cpu) as u32 | fetch!(cpu) as u32) + cpu.borrow().reg.y as u32);
+            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    // TODO: Reduce code duplication across these three
+    fn indirect<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let indirect_addr = u24(fetch!(cpu) as u32);
+            let addr = {
+                let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
+                let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
+                u24((hi << 8) | lo)
+            };
+            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    fn indexed_indirect<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let offset = cpu.borrow().reg.x as u32;
+            let indirect_addr = u24(fetch!(cpu) as u32 + offset);
+            let addr = {
+                let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
+                let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
+                u24((hi << 8) | lo)
+            };
+            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    fn indirect_indexed<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let offset = cpu.borrow().reg.y as u32;
+            let indirect_addr = u24(fetch!(cpu) as u32);
+            let addr = {
+                let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
+                let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
+                u24((hi << 8) | lo)
+            } + offset;
             let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
             if long {
                 data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
