@@ -3,7 +3,7 @@ pub mod yield_reason;
 mod device_thread;
 mod relative_clock;
 
-pub use yield_reason::YieldReason;
+pub use yield_reason::{YieldReason, YieldTicks};
 
 use device_thread::DeviceThread;
 use relative_clock::RelativeClock;
@@ -11,12 +11,12 @@ use relative_clock::RelativeClock;
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 
-pub const CPU_FREQ: u32 = 21_477_272;
-pub const PPU_FREQ: u32 = CPU_FREQ;
-pub const SMP_FREQ: u32 = 24_576_000;
+pub const CPU_FREQ: u64 = 21_477_272;
+pub const PPU_FREQ: u64 = CPU_FREQ;
+pub const SMP_FREQ: u64 = 24_576_000;
 
 pub trait Yieldable<T> = Generator<Yield = YieldReason, Return = T>;
-pub trait DeviceGenerator = Yieldable<!>;
+pub trait DeviceGenerator = Generator<Yield = YieldTicks, Return = !>;
 pub trait InstructionGenerator = Yieldable<()>;
 type BoxGen = Box<dyn Unpin + DeviceGenerator>;
 
@@ -41,7 +41,7 @@ pub(crate) use yield_all;
 macro_rules! dummy_yield {
     () => {
         if false {
-            yield YieldReason::SyncCPU(0);
+            yield YieldReason::SyncCPU;
         }
     };
 }
@@ -53,6 +53,8 @@ pub struct Scheduler {
     ppu: BoxGen,
     smp: BoxGen,
     curr: DeviceThread,
+    // TODO: Really, these relative clocks only make sense if they're all relative to the same
+    // thing, like CPU. Should refactor to that effect, but should work for now?
     cpu_ppu_clock: RelativeClock,
     cpu_smp_clock: RelativeClock,
 }
@@ -87,7 +89,10 @@ impl Scheduler {
         };
         let yielded = Pin::new(&mut *current_generator).resume(());
         match yielded {
-            GeneratorState::Yielded(yield_reason) => self.sync_curr(yield_reason),
+            GeneratorState::Yielded((yield_reason, n_ticks)) => {
+                println!("Yielded {n_ticks} to {yield_reason:?}");
+                self.sync_curr(yield_reason, n_ticks)
+            }
             _ => panic!("unexpected value from resume"),
         }
     }
@@ -111,9 +116,11 @@ impl Scheduler {
         }
     }
 
-    fn sync_curr(&mut self, yield_reason: YieldReason) {
+    fn sync_curr(&mut self, yield_reason: YieldReason, n_ticks: u64) {
+        // TODO: The CPU syncing should update ALL clocks relative to the CPU (what about DSP
+        // relative to SMP?)
         let curr_device = self.curr;
-        let (other_device, n_ticks) = yield_reason.to_thread_ticks_tuple();
+        let other_device = yield_reason.to_thread();
         let relative_clock: &mut RelativeClock = self.get_relative_clock(curr_device, other_device);
         relative_clock.tick(curr_device, n_ticks);
         if relative_clock.is_ahead(curr_device) {

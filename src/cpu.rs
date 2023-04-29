@@ -13,6 +13,26 @@ use paste::paste;
 pub struct CPU {
     reg: Registers,
     bus: Bus,
+    ticks_run: u64,
+}
+
+macro_rules! yield_ticks {
+    ($gen_expr:expr) => {{
+        let ticks_to_yield = cpu.borrow().ticks_run;
+        cpu.borrow_mut().ticks_run = 0;
+        yield_all!($gen_expr, ticks_to_yield);
+    }};
+    ($cpu_rc:ident, $gen_expr:expr) => {{
+        let ticks_to_yield = $cpu_rc.borrow().ticks_run;
+        $cpu_rc.borrow_mut().ticks_run = 0;
+        let mut gen = $gen_expr;
+        loop {
+            match Pin::new(&mut gen).resume(()) {
+                GeneratorState::Yielded(yield_reason) => yield (yield_reason, ticks_to_yield),
+                GeneratorState::Complete(out) => break out,
+            }
+        }
+    }};
 }
 
 macro_rules! pull_instrs {
@@ -43,20 +63,20 @@ macro_rules! pull_instrs {
 
 macro_rules! instr {
     ($cpu_rc: ident, $instr_f:ident) => {
-        yield_all!(CPU::$instr_f($cpu_rc.clone()))
+        yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone()))
     };
     ($cpu_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {{
-        let data = yield_all!(CPU::$addr_mode_f($cpu_rc.clone()));
-        yield_all!(CPU::$instr_f($cpu_rc.clone(), data))
+        let data = yield_ticks!($cpu_rc, CPU::$addr_mode_f($cpu_rc.clone()));
+        yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone(), data))
     }};
     // If the instruction depends on the X or M flag,
     // we pass true if the 16-bit variant should be used, else false
     ($cpu_rc: ident, $instr_f:ident, flag: $flag: ident, $addr_mode_f:ident) => {{
-        let data = yield_all!(CPU::$addr_mode_f(
-            $cpu_rc.clone(),
-            !$cpu_rc.borrow().reg.p.$flag
-        ));
-        yield_all!(CPU::$instr_f($cpu_rc.clone(), data))
+        let data = yield_ticks!(
+            $cpu_rc,
+            CPU::$addr_mode_f($cpu_rc.clone(), !$cpu_rc.borrow().reg.p.$flag)
+        );
+        yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone(), data))
     }};
     ($cpu_rc: ident, $instr_f:ident, XFlag, $addr_mode_f:ident) => {
         instr!($cpu_rc, $instr_f, flag: x_or_b, $addr_mode_f)
@@ -79,13 +99,15 @@ impl CPU {
         Self {
             reg: Registers::new(),
             bus,
+            ticks_run: 0,
         }
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
         move || loop {
             println!("CPU");
-            let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
+            let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
+            yield (YieldReason::SyncPPU, 123);
             let opcode = 0x29; // PLACEHOLDER
 
             // TODO: Make a new macro that generates this, taking a list like

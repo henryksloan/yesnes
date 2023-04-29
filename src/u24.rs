@@ -5,9 +5,19 @@ use std::ops::{Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign};
 #[allow(non_camel_case_types)]
 pub struct u24(pub u32);
 
+impl u24 {
+    pub fn lo16(&self) -> u16 {
+        (self.0 & 0xFFFF) as u16
+    }
+
+    pub fn hi8(&self) -> u8 {
+        (self.0 >> 16) as u8
+    }
+}
+
 impl<T: Into<u32>> From<T> for u24 {
     fn from(num: T) -> Self {
-        u24(num.into())
+        u24(num.into() & 0xFFFFFF)
     }
 }
 
