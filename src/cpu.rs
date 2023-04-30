@@ -137,7 +137,7 @@ macro_rules! branch_instrs {
             fn [<branch_ $flag _ $set_clear>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
                 move || {
                     let source_pc = cpu.borrow().reg.pc + 1u16;
-                    let dest_pc = source_pc + u24(fetch!(cpu) as i8 as i32 as u32);
+                    let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
                     if cpu.borrow_mut().reg.p.$flag == $val {
                         cpu.borrow_mut().reg.pc = dest_pc;
                         cpu.borrow_mut().step(1);
@@ -523,7 +523,7 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24((fetch!(cpu) << 8) as u32 | addr_lo)
+                u24(((fetch!(cpu) as u32) << 8) | addr_lo)
             };
             Pointer { addr, long }
         }
@@ -533,7 +533,7 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24(((fetch!(cpu) << 8) as u32 | addr_lo) + cpu.borrow().reg.get_x() as u32)
+                u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_x() as u32)
             };
             Pointer { addr, long }
         }
