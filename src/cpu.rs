@@ -159,28 +159,28 @@ impl CPU {
                 0x3D => instr!(cpu, and, MFlag, absolute_x),
 
                 0xA1 => instr!(cpu, lda, MFlag, indexed_indirect),
-                // 0xA3 => instr!(cpu, lda, MFlag, stack_relative),
+                0xA3 => instr!(cpu, lda, stack_relative),
                 0xA5 => instr!(cpu, lda, MFlag, direct),
-                // 0xA7 => instr!(cpu, lda, MFlag, direct_indirect_long),
+                0xA7 => instr!(cpu, lda, MFlag, indirect_long),
                 0xA9 => instr!(cpu, lda, MFlag, immediate),
                 0xAD => instr!(cpu, lda, MFlag, absolute),
-                // 0xAF => instr!(cpu, lda, MFlag, absolute_long),
+                0xAF => instr!(cpu, lda, MFlag, absolute_long),
                 0xB1 => instr!(cpu, lda, MFlag, indirect_indexed),
                 0xB2 => instr!(cpu, lda, MFlag, indirect),
-                // 0xB3 => instr!(cpu, lda, MFlag, stack_relative_indirect_indexed),
+                0xB3 => instr!(cpu, lda, MFlag, stack_relative_indirect_indexed),
                 0xB5 => instr!(cpu, lda, MFlag, direct_x),
-                // 0xB7 => instr!(cpu, lda, MFlag, direct_indirect_long_y),
+                0xB7 => instr!(cpu, lda, MFlag, indirect_long_y),
                 0xB9 => instr!(cpu, lda, MFlag, absolute_y),
                 0xBD => instr!(cpu, lda, MFlag, absolute_x),
-                // 0xBF => instr!(cpu, lda, MFlag, absolute_long_x),
-                //
-                0xA2 => instr!(cpu, ldx, MFlag, indexed_indirect),
+                0xBF => instr!(cpu, lda, MFlag, absolute_long_x),
+
+                0xA2 => instr!(cpu, ldx, MFlag, immediate),
                 0xA6 => instr!(cpu, ldx, MFlag, direct),
                 0xAE => instr!(cpu, ldx, MFlag, absolute),
                 0xB6 => instr!(cpu, ldx, MFlag, direct_y),
                 0xBE => instr!(cpu, ldx, MFlag, absolute_y),
 
-                0xA0 => instr!(cpu, ldy, MFlag, indexed_indirect),
+                0xA0 => instr!(cpu, ldy, MFlag, immediate),
                 0xA4 => instr!(cpu, ldy, MFlag, direct),
                 0xAC => instr!(cpu, ldy, MFlag, absolute),
                 0xB4 => instr!(cpu, ldy, MFlag, direct_x),
@@ -203,20 +203,7 @@ impl CPU {
     fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
             // TODO: Some clock cycles before the read, depending on region
-            // let bus = &mut cpu.borrow_mut().bus;
-            // let data = yield_all!(bus.read_u8(addr));
             let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
-            // TODO: This is like yield_all, but avoids holding the borrow across a yield; maybe
-            // factor out to a macro or somehow generalize yield_all
-            // let data = loop {
-            //     // TODO: Oh wait, this is totally wrong, because it re-creates the generator every
-            //     // time :(
-            //     let result = Pin::new(&mut cpu.borrow_mut().bus.read_u8(addr)).resume(());
-            //     match result {
-            //         GeneratorState::Yielded(yield_reason) => yield yield_reason,
-            //         GeneratorState::Complete(out) => break out,
-            //     }
-            // };
             cpu.borrow_mut().step(4);
             data
         }
@@ -323,7 +310,10 @@ impl CPU {
     // TODO: Reduce code duplication across these three
     fn absolute<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
         move || {
-            let addr = u24(fetch!(cpu) as u32 | fetch!(cpu) as u32);
+            let addr = {
+                let addr_lo = fetch!(cpu) as u32;
+                u24((fetch!(cpu) << 8) as u32 | addr_lo)
+            };
             let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
             if long {
                 data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
@@ -334,7 +324,10 @@ impl CPU {
 
     fn absolute_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
         move || {
-            let addr = u24((fetch!(cpu) as u32 | fetch!(cpu) as u32) + cpu.borrow().reg.x as u32);
+            let addr = {
+                let addr_lo = fetch!(cpu) as u32;
+                u24(((fetch!(cpu) << 8) as u32 | addr_lo) + cpu.borrow().reg.x as u32)
+            };
             let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
             if long {
                 data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
@@ -345,7 +338,41 @@ impl CPU {
 
     fn absolute_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
         move || {
-            let addr = u24((fetch!(cpu) as u32 | fetch!(cpu) as u32) + cpu.borrow().reg.y as u32);
+            let addr = {
+                let addr_lo = fetch!(cpu) as u32;
+                u24(((fetch!(cpu) << 8) as u32 | addr_lo) + cpu.borrow().reg.y as u32)
+            };
+            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    fn absolute_long<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let addr = {
+                let addr_lo = fetch!(cpu) as u32;
+                let addr_mid = fetch!(cpu) as u32;
+                u24((fetch!(cpu) << 16) as u32 | (addr_mid << 8) | addr_lo)
+            };
+            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    fn absolute_long_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let addr = {
+                let addr_lo = fetch!(cpu) as u32;
+                let addr_mid = fetch!(cpu) as u32;
+                u24(((fetch!(cpu) << 16) as u32 | (addr_mid << 8) | addr_lo)
+                    + cpu.borrow().reg.x as u32)
+            };
             let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
             if long {
                 data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
@@ -363,9 +390,9 @@ impl CPU {
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 u24((hi << 8) | lo)
             };
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
+            let mut data = yield_all!(CPU::read_u8(cpu.clone(), addr)) as u16;
             if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+                data |= (yield_all!(CPU::read_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
             }
             data
         }
@@ -402,6 +429,59 @@ impl CPU {
                 data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
             }
             data
+        }
+    }
+
+    fn indirect_long<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let indirect_addr = u24(fetch!(cpu) as u32);
+            let addr = {
+                let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
+                let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
+                u24((hi << 8) | lo)
+            };
+            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    fn indirect_long_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let indirect_addr = u24(fetch!(cpu) as u32);
+            let addr = {
+                let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
+                let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
+                u24((hi << 8) | lo)
+            } + cpu.borrow().reg.y as u32;
+            // TODO: Check the above logic; namely, the overflow of adding y
+            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
+        }
+    }
+
+    fn stack_relative<'a>(cpu: Rc<RefCell<CPU>>, _: bool) -> impl Yieldable<u16> + 'a {
+        move || {
+            let addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
+            yield_all!(CPU::read_u8(cpu.clone(), addr)) as u16
+        }
+    }
+
+    fn stack_relative_indirect_indexed<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        _: bool,
+    ) -> impl Yieldable<u16> + 'a {
+        move || {
+            let stack_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
+            let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), stack_addr)) as u32;
+            let addr = ((yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32) << 8)
+                | addr_lo + cpu.borrow().reg.y as u32;
+            yield_all!(CPU::read_u8(cpu.clone(), u24(addr))) as u16
         }
     }
 
