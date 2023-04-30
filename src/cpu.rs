@@ -141,7 +141,7 @@ macro_rules! branch_instrs {
                     if cpu.borrow_mut().reg.p.$flag == $val {
                         cpu.borrow_mut().reg.pc = dest_pc;
                         cpu.borrow_mut().step(1);
-                        // TODO: Is this right?
+                        // TODO: Is this right? Maybe only for emulation mode...
                         if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
                             cpu.borrow_mut().step(1);
                         }
@@ -278,6 +278,8 @@ impl CPU {
                 (branch_c_set, NoFlag; 0xB0=>implied)
                 (branch_z_clear, NoFlag; 0xD0=>implied)
                 (branch_z_set, NoFlag; 0xF0=>implied)
+                (jsr, NoFlag; 0x20=>absolute, 0xFC=>absolute_indirect_indexed)
+                (jsl, NoFlag; 0x22=>absolute_long)
                 (and, MFlag; 0x21=>indexed_indirect, 0x25=>direct,
                  0x29=>immediate, 0x2D=>absolute, 0x31=>indirect_indexed,
                  0x32=>indirect, 0x35=>direct_x, 0x39=>absolute_y, 0x3D=>absolute_x)
@@ -425,15 +427,18 @@ impl CPU {
     }
 
     fn stack_pull_u8<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u8> + 'a {
-        // TODO: Use stack pointer
-        move || yield_all!(CPU::read_u8(cpu.clone(), u24(0x100)))
+        // TODO: Does 0x100 ever get used, namely in emulation mode?
+        move || {
+            cpu.borrow_mut().reg.sp += 1;
+            let val = yield_all!(CPU::read_u8(cpu.clone(), u24(cpu.borrow().reg.sp as u32)));
+            val
+        }
     }
 
     fn stack_pull_u16<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u16> + 'a {
-        // TODO: Use stack pointer
         move || {
-            let hi = yield_all!(CPU::read_u8(cpu.clone(), u24(0x101)));
-            let lo = yield_all!(CPU::read_u8(cpu.clone(), u24(0x100)));
+            let lo = yield_all!(CPU::stack_pull_u8(cpu.clone()));
+            let hi = yield_all!(CPU::stack_pull_u8(cpu.clone()));
             ((hi as u16) << 8) | lo as u16
         }
     }
@@ -460,8 +465,25 @@ impl CPU {
         }
     }
 
-    // TODO: AAAAAAA, these need to return return addresses (and maybe bool long?) so they work for
-    // store instructions, too
+    fn stack_push_u8<'a>(cpu: Rc<RefCell<CPU>>, data: u8) -> impl Yieldable<()> + 'a {
+        // TODO: Does 0x100 ever get used, namely in emulation mode?
+        move || {
+            yield_all!(CPU::write_u8(
+                cpu.clone(),
+                u24(cpu.borrow().reg.sp as u32),
+                data
+            ));
+            cpu.borrow_mut().reg.sp -= 1;
+        }
+    }
+
+    fn stack_push_u16<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl Yieldable<()> + 'a {
+        move || {
+            yield_all!(CPU::stack_push_u8(cpu.clone(), (data >> 8) as u8));
+            yield_all!(CPU::stack_push_u8(cpu.clone(), (data & 0xFF) as u8));
+        }
+    }
+
     fn immediate<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             dummy_yield!();
@@ -532,7 +554,7 @@ impl CPU {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
                 let addr_mid = fetch!(cpu) as u32;
-                u24((fetch!(cpu) << 16) as u32 | (addr_mid << 8) | addr_lo)
+                u24(((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
             };
             Pointer { addr, long }
         }
@@ -543,10 +565,30 @@ impl CPU {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
                 let addr_mid = fetch!(cpu) as u32;
-                u24(((fetch!(cpu) << 16) as u32 | (addr_mid << 8) | addr_lo)
+                u24((((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
                     + cpu.borrow().reg.get_x() as u32)
             };
             Pointer { addr, long }
+        }
+    }
+
+    fn absolute_indirect_indexed<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        _: bool,
+    ) -> impl Yieldable<Pointer> + 'a {
+        move || {
+            let indirect_addr = {
+                let pb = cpu.borrow().reg.pc.hi8();
+                let addr_lo = fetch!(cpu) as u32;
+                u24(((pb << 16) as u32 | (fetch!(cpu) << 8) as u32 | addr_lo)
+                    + cpu.borrow().reg.get_x() as u32)
+            };
+            let addr = u24({
+                let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
+                ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32) << 8)
+                    | addr_lo
+            });
+            Pointer { addr, long: true }
         }
     }
 
@@ -936,6 +978,25 @@ impl CPU {
         let reg_val = cpu.borrow().reg.get_y();
         let flag = cpu.borrow().reg.p.x_or_b;
         return CPU::compare_op(cpu, pointer, reg_val, flag);
+    }
+
+    fn jsr<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let return_pc = cpu.borrow().reg.pc.lo16();
+            yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
+            cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
+            cpu.borrow_mut().reg.pc |= pointer.addr.lo16();
+        }
+    }
+
+    fn jsl<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let return_pb = cpu.borrow().reg.pc.hi8();
+            let return_pc = cpu.borrow().reg.pc.lo16();
+            yield_all!(CPU::stack_push_u8(cpu.clone(), return_pb));
+            yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
+            cpu.borrow_mut().reg.pc = pointer.addr;
+        }
     }
 
     pull_instrs!();

@@ -35,7 +35,10 @@ impl Bus {
                     } else {
                         match addr.lo16() {
                             0x0000..=0x7FFF => 0, // TODO: System area
-                            0x8000.. => bus.borrow().cart_test[(addr.lo16() - 0x8000) as usize],
+                            0x8000.. => {
+                                bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
+                                    | (addr.lo16() as usize - 0x8000)]
+                            }
                         }
                     }
                 }
