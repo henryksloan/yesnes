@@ -12,7 +12,7 @@ use paste::paste;
 /// The 65816 microprocessor, the main CPU of the SNES
 pub struct CPU {
     reg: Registers,
-    bus: Bus,
+    bus: Rc<RefCell<Bus>>,
     ticks_run: u64,
 }
 
@@ -95,7 +95,7 @@ macro_rules! fetch {
 }
 
 impl CPU {
-    pub fn new(bus: Bus) -> Self {
+    pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
         Self {
             reg: Registers::new(),
             bus,
@@ -103,12 +103,38 @@ impl CPU {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.ticks_run = 0;
+        self.reg.pc = {
+            let lo = u24({
+                let mut gen = Bus::read_u8(self.bus.clone(), u24(0xFFFC));
+                loop {
+                    match Pin::new(&mut gen).resume(()) {
+                        GeneratorState::Complete(out) => break out as u32,
+                        _ => {}
+                    }
+                }
+            });
+            let hi = u24({
+                let mut gen = Bus::read_u8(self.bus.clone(), u24(0xFFFD));
+                loop {
+                    match Pin::new(&mut gen).resume(()) {
+                        GeneratorState::Complete(out) => break out as u32,
+                        _ => {}
+                    }
+                }
+            });
+            (hi << 8) | lo
+        };
+    }
+
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
         move || loop {
-            println!("CPU");
+            print!("CPU {:#04X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
-            yield (YieldReason::SyncPPU, 123);
-            let opcode = 0x29; // PLACEHOLDER
+            println!(": {:#02X}", opcode);
+            // yield (YieldReason::SyncPPU, 123);
+            // let opcode = 0x29; // PLACEHOLDER
 
             // TODO: Make a new macro that generates this, taking a list like
             // (and, MFlag, 0x29:immediate, 0x2D:absolute, ...) etc.
@@ -127,17 +153,32 @@ impl CPU {
                 0x7A => instr!(cpu, pull_y),
                 0xAB => instr!(cpu, pull_b),
                 0xFA => instr!(cpu, pull_x),
-                _ => panic!("Invalid opcode {}", opcode),
+                _ => panic!("Invalid opcode {:#02X}", opcode),
             };
         }
     }
 
-    fn step(&mut self, n_clocks: u32) {}
+    fn step(&mut self, n_clocks: u64) {
+        self.ticks_run += n_clocks;
+    }
 
     fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
             // TODO: Some clock cycles before the read, depending on region
-            let data = yield_all!(cpu.borrow_mut().bus.read_u8(addr));
+            // let bus = &mut cpu.borrow_mut().bus;
+            // let data = yield_all!(bus.read_u8(addr));
+            let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
+            // TODO: This is like yield_all, but avoids holding the borrow across a yield; maybe
+            // factor out to a macro or somehow generalize yield_all
+            // let data = loop {
+            //     // TODO: Oh wait, this is totally wrong, because it re-creates the generator every
+            //     // time :(
+            //     let result = Pin::new(&mut cpu.borrow_mut().bus.read_u8(addr)).resume(());
+            //     match result {
+            //         GeneratorState::Yielded(yield_reason) => yield yield_reason,
+            //         GeneratorState::Complete(out) => break out,
+            //     }
+            // };
             cpu.borrow_mut().step(4);
             data
         }

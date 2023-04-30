@@ -1,3 +1,4 @@
+use crate::memory::Memory;
 use crate::ppu::PPU;
 use crate::scheduler::{YieldReason, Yieldable};
 use crate::smp::SMP;
@@ -22,13 +23,25 @@ impl Bus {
         }
     }
 
-    pub fn read_u8<'a>(&mut self, addr: u24) -> impl Yieldable<u8> + 'a {
+    pub fn read_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
             if false {
                 yield YieldReason::SyncPPU;
             }
-            println!("Read from {:?}", addr);
-            6
+            // TODO: Some generalized mapper logic
+            match addr.hi8() {
+                0x00..=0x3F | 0x80..=0xBF => {
+                    if addr.hi8() == 0x00 && (0xFF00..=0xFFFF).contains(&addr.lo16()) {
+                        bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
+                    } else {
+                        match addr.lo16() {
+                            0x0000..=0x7FFF => 0, // TODO: System area
+                            0x8000.. => bus.borrow().cart_test[(addr.lo16() - 0x8000) as usize],
+                        }
+                    }
+                }
+                _ => 0,
+            }
         }
     }
 }
