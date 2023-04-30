@@ -182,6 +182,7 @@ macro_rules! fetch {
     }};
 }
 
+#[derive(Copy, Clone)]
 struct Pointer {
     pub addr: u24,
     pub long: bool,
@@ -260,6 +261,13 @@ impl CPU {
                  0x92=>indirect,0x93=>stack_relative_indirect_indexed,
                  0x95=>direct_x, 0x97=>indirect_long_y, 0x99=>absolute_y,
                  0x9D=>absolute_x, 0x9F=>absolute_long_x)
+                (stx, XFlag; 0x86=>direct, 0x8E=>absolute, 0x96=>direct_y)
+                (sty, XFlag; 0x84=>direct, 0x8C=>absolute, 0x94=>direct_x)
+                (inc, MFlag; 0xE6=>direct, 0xEE=>absolute, 0xF6=>direct_x,
+                 0xFE=>absolute_x)
+                (ina, NoFlag; 0x1A=>implied)
+                (inx, NoFlag; 0xE8=>implied)
+                (iny, NoFlag; 0xC8=>implied)
                 (pull_d, NoFlag; 0x2B=>implied)
                 (pull_a, NoFlag; 0x68=>implied)
                 (pull_y, NoFlag; 0x7A=>implied)
@@ -676,6 +684,8 @@ impl CPU {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             cpu.borrow_mut().reg.set_x(data);
+            // TODO: Need to take into account e flag; probably factor out (maybe to
+            // StatusRegister)
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
@@ -718,6 +728,69 @@ impl CPU {
         move || {
             let data = cpu.borrow().reg.get_y();
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
+        }
+    }
+
+    fn ina<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let data = cpu.borrow().reg.get_a().wrapping_add(1);
+            cpu.borrow_mut().reg.set_a(data);
+            let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
+                8
+            } else {
+                16
+            };
+            // TODO: Factor out these flag updates
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
+        }
+    }
+
+    fn inx<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let data = cpu.borrow().reg.get_x().wrapping_add(1);
+            cpu.borrow_mut().reg.set_x(data);
+            let n_bits = if cpu.borrow().reg.p.x_or_b || cpu.borrow().reg.p.e {
+                8
+            } else {
+                16
+            };
+            // TODO: Factor out these flag updates
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
+        }
+    }
+
+    fn iny<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let data = cpu.borrow().reg.get_y().wrapping_add(1);
+            cpu.borrow_mut().reg.set_y(data);
+            let n_bits = if cpu.borrow().reg.p.x_or_b || cpu.borrow().reg.p.e {
+                8
+            } else {
+                16
+            };
+            // TODO: Factor out these flag updates
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
+        }
+    }
+
+    fn inc<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer)).wrapping_add(1);
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
+            let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
+                8
+            } else {
+                16
+            };
+            // TODO: Factor out these flag updates
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
         }
     }
 
