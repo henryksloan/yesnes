@@ -66,7 +66,7 @@ macro_rules! instr {
         yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone()))
     };
     ($cpu_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {{
-        let data = yield_ticks!($cpu_rc, CPU::$addr_mode_f($cpu_rc.clone()));
+        let data = yield_ticks!($cpu_rc, CPU::$addr_mode_f($cpu_rc.clone(), false));
         yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone(), data))
     }};
     // If the instruction depends on the X or M flag,
@@ -132,23 +132,61 @@ impl CPU {
         move || loop {
             print!("CPU {:#04X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
+            cpu.borrow_mut().reg.pc += 1u32;
             println!(": {:#02X}", opcode);
-            // yield (YieldReason::SyncPPU, 123);
-            // let opcode = 0x29; // PLACEHOLDER
 
             // TODO: Make a new macro that generates this, taking a list like
             // (and, MFlag, 0x29:immediate, 0x2D:absolute, ...) etc.
             match opcode {
+                0x18 => instr!(cpu, clc),
+                0x58 => instr!(cpu, cli),
+                0xD8 => instr!(cpu, cld),
+                0xB8 => instr!(cpu, clv),
+                0x38 => instr!(cpu, sec),
+                0x78 => instr!(cpu, sei),
+                0xF8 => instr!(cpu, sed),
+                0xC2 => instr!(cpu, rep, immediate),
+                0xFB => instr!(cpu, xce),
+
                 0x21 => instr!(cpu, and, MFlag, indexed_indirect),
-                0x25 => instr!(cpu, and, MFlag, direct_page),
+                0x25 => instr!(cpu, and, MFlag, direct),
                 0x29 => instr!(cpu, and, MFlag, immediate),
-                0x2B => instr!(cpu, pull_d),
                 0x2D => instr!(cpu, and, MFlag, absolute),
                 0x31 => instr!(cpu, and, MFlag, indirect_indexed),
                 0x32 => instr!(cpu, and, MFlag, indirect),
-                0x35 => instr!(cpu, and, MFlag, direct_page_x),
+                0x35 => instr!(cpu, and, MFlag, direct_x),
                 0x39 => instr!(cpu, and, MFlag, absolute_y),
                 0x3D => instr!(cpu, and, MFlag, absolute_x),
+
+                0xA1 => instr!(cpu, lda, MFlag, indexed_indirect),
+                // 0xA3 => instr!(cpu, lda, MFlag, stack_relative),
+                0xA5 => instr!(cpu, lda, MFlag, direct),
+                // 0xA7 => instr!(cpu, lda, MFlag, direct_indirect_long),
+                0xA9 => instr!(cpu, lda, MFlag, immediate),
+                0xAD => instr!(cpu, lda, MFlag, absolute),
+                // 0xAF => instr!(cpu, lda, MFlag, absolute_long),
+                0xB1 => instr!(cpu, lda, MFlag, indirect_indexed),
+                0xB2 => instr!(cpu, lda, MFlag, indirect),
+                // 0xB3 => instr!(cpu, lda, MFlag, stack_relative_indirect_indexed),
+                0xB5 => instr!(cpu, lda, MFlag, direct_x),
+                // 0xB7 => instr!(cpu, lda, MFlag, direct_indirect_long_y),
+                0xB9 => instr!(cpu, lda, MFlag, absolute_y),
+                0xBD => instr!(cpu, lda, MFlag, absolute_x),
+                // 0xBF => instr!(cpu, lda, MFlag, absolute_long_x),
+                //
+                0xA2 => instr!(cpu, ldx, MFlag, indexed_indirect),
+                0xA6 => instr!(cpu, ldx, MFlag, direct),
+                0xAE => instr!(cpu, ldx, MFlag, absolute),
+                0xB6 => instr!(cpu, ldx, MFlag, direct_y),
+                0xBE => instr!(cpu, ldx, MFlag, absolute_y),
+
+                0xA0 => instr!(cpu, ldy, MFlag, indexed_indirect),
+                0xA4 => instr!(cpu, ldy, MFlag, direct),
+                0xAC => instr!(cpu, ldy, MFlag, absolute),
+                0xB4 => instr!(cpu, ldy, MFlag, direct_x),
+                0xBC => instr!(cpu, ldy, MFlag, absolute_x),
+
+                0x2B => instr!(cpu, pull_d),
                 0x68 => instr!(cpu, pull_a),
                 0x7A => instr!(cpu, pull_y),
                 0xAB => instr!(cpu, pull_b),
@@ -249,7 +287,7 @@ impl CPU {
     }
 
     // TODO: Reduce code duplication across these three
-    fn direct_page<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn direct<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
         move || {
             let addr = u24(fetch!(cpu) as u32);
             let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
@@ -260,7 +298,7 @@ impl CPU {
         }
     }
 
-    fn direct_page_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn direct_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
         move || {
             let addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.x as u32);
             let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
@@ -271,7 +309,7 @@ impl CPU {
         }
     }
 
-    fn direct_page_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn direct_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
         move || {
             let addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.y as u32);
             let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
@@ -374,6 +412,106 @@ impl CPU {
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
+        }
+    }
+
+    // TODO: Make a macro for these flag instructions?
+    fn clc<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.p.c = false;
+        }
+    }
+
+    fn cli<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.p.i = false;
+        }
+    }
+
+    fn cld<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.p.d = false;
+        }
+    }
+
+    fn clv<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.p.v = false;
+        }
+    }
+
+    fn sec<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.p.c = true;
+        }
+    }
+
+    fn sei<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.p.i = true;
+        }
+    }
+
+    fn sed<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.p.d = true;
+        }
+    }
+
+    fn rep<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let p = &mut cpu.borrow_mut().reg.p;
+            p.set(p.get() & !data as u8);
+        }
+    }
+
+    fn xce<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let p = &mut cpu.borrow_mut().reg.p;
+            std::mem::swap(&mut p.c, &mut p.e);
+        }
+    }
+
+    // TODO: Factor out load instructions (macro?)
+    fn lda<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.set_a(data);
+            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            // TODO: Factor out these flag updates
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
+        }
+    }
+
+    fn ldx<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.set_x(data);
+            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            // TODO: Factor out these flag updates
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
+        }
+    }
+
+    fn ldy<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.set_y(data);
+            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            // TODO: Factor out these flag updates
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
             cpu.borrow_mut().reg.p.z = data == 0;
         }
     }

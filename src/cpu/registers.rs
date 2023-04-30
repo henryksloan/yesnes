@@ -128,4 +128,15 @@ impl StatusRegister {
             | ((self.z as u8) << 1)
             | ((self.c as u8) << 0)
     }
+
+    pub fn set(&mut self, data: u8) {
+        self.n = ((data >> 7) & 1) == 1;
+        self.v = ((data >> 6) & 1) == 1;
+        self.m = ((data >> 5) & 1) == 1;
+        self.x_or_b = ((data >> 4) & 1) == 1;
+        self.d = ((data >> 3) & 1) == 1;
+        self.i = ((data >> 2) & 1) == 1;
+        self.z = ((data >> 1) & 1) == 1;
+        self.c = ((data >> 0) & 1) == 1;
+    }
 }

@@ -1,4 +1,3 @@
-use crate::memory::Memory;
 use crate::ppu::PPU;
 use crate::scheduler::{YieldReason, Yieldable};
 use crate::smp::SMP;
