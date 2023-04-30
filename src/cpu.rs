@@ -90,6 +90,27 @@ macro_rules! pull_instrs {
     }
 }
 
+macro_rules! push_instrs {
+    (kind: $kind:ident, $($reg:ident),*) => {
+        paste! {
+            $(
+            fn [<push_ $reg>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+                move || {
+                    let data = cpu.borrow_mut().reg.[<get_ $reg>]();
+                    yield_all!(CPU::[<stack_push_ $kind>](cpu.clone(), data));
+                }
+            }
+            )*
+        }
+    };
+    () => {
+        push_instrs!(kind: m, a);
+        push_instrs!(kind: x, x, y);
+        push_instrs!(kind: u16, d);
+        push_instrs!(kind: u8, p, b);
+    }
+}
+
 macro_rules! transfer_instrs {
     (kind: $kind:ident, $from:ident => sp) => {
         paste! {
@@ -328,11 +349,19 @@ impl CPU {
                  0xDD=>absolute_x, 0xDF=>absolute_long_x)
                 (cpx, XFlag; 0xE0=>immediate, 0xE4=>direct, 0xEC=>absolute)
                 (cpy, XFlag; 0xC0=>immediate, 0xC4=>direct, 0xCC=>absolute)
-                (pull_d, NoFlag; 0x2B=>implied)
+                (push_a, NoFlag; 0x48=>implied)
+                (push_b, NoFlag; 0x8B=>implied)
+                (push_d, NoFlag; 0x0B=>implied)
+                // (push_pb, NoFlag; 0x4B=>implied)
+                (push_p, NoFlag; 0x08=>implied)
+                (push_x, NoFlag; 0xDA=>implied)
+                (push_y, NoFlag; 0x5A=>implied)
                 (pull_a, NoFlag; 0x68=>implied)
-                (pull_y, NoFlag; 0x7A=>implied)
                 (pull_b, NoFlag; 0xAB=>implied)
+                (pull_d, NoFlag; 0x2B=>implied)
+                // (pull_p, NoFlag; 0x28=>implied)
                 (pull_x, NoFlag; 0xFA=>implied)
+                (pull_y, NoFlag; 0x7A=>implied)
                 (transfer_a_x, NoFlag; 0xAA=>implied)
                 (transfer_a_y, NoFlag; 0xA8=>implied)
                 (transfer_a_d, NoFlag; 0x5B=>implied)
@@ -481,6 +510,28 @@ impl CPU {
         move || {
             yield_all!(CPU::stack_push_u8(cpu.clone(), (data >> 8) as u8));
             yield_all!(CPU::stack_push_u8(cpu.clone(), (data & 0xFF) as u8));
+        }
+    }
+
+    // Calls either the _u8 or _u16 variant of stack_push, depending on the X flag
+    fn stack_push_x<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl Yieldable<()> + 'a {
+        move || {
+            if cpu.borrow().reg.p.x_or_b {
+                yield_all!(CPU::stack_push_u8(cpu, data as u8));
+            } else {
+                yield_all!(CPU::stack_push_u16(cpu, data));
+            }
+        }
+    }
+
+    // Calls either the _u8 or _u16 variant of stack_push, depending on the M flag
+    fn stack_push_m<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl Yieldable<()> + 'a {
+        move || {
+            if cpu.borrow().reg.p.m {
+                yield_all!(CPU::stack_push_u8(cpu, data as u8));
+            } else {
+                yield_all!(CPU::stack_push_u16(cpu, data));
+            }
         }
     }
 
@@ -1000,6 +1051,7 @@ impl CPU {
     }
 
     pull_instrs!();
+    push_instrs!();
     transfer_instrs!();
     branch_instrs!();
 }

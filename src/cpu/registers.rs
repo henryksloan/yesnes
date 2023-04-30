@@ -122,6 +122,16 @@ impl Registers {
             self.sp = val;
         }
     }
+
+    // Gets the P register.
+    pub fn get_p(&self) -> u8 {
+        self.p.get()
+    }
+
+    // Sets the P register.
+    pub fn set_p(&mut self, val: u8) {
+        self.p.set(val);
+    }
 }
 
 #[derive(Default)]
