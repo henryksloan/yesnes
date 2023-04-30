@@ -131,6 +131,36 @@ macro_rules! transfer_instrs {
     }
 }
 
+macro_rules! branch_instrs {
+    ($flag:ident => $val:expr, $set_clear:ident) => {
+        paste! {
+            fn [<branch_ $flag _ $set_clear>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+                move || {
+                    let source_pc = cpu.borrow().reg.pc + 1u16;
+                    let dest_pc = source_pc + u24(fetch!(cpu) as i8 as i32 as u32);
+                    if cpu.borrow_mut().reg.p.$flag == $val {
+                        cpu.borrow_mut().reg.pc = dest_pc;
+                        cpu.borrow_mut().step(1);
+                        // TODO: Is this right?
+                        if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
+                            cpu.borrow_mut().step(1);
+                        }
+                    }
+                }
+            }
+        }
+    };
+    ($($flag:ident),+) => {
+        $(
+        branch_instrs!($flag => true, set);
+        branch_instrs!($flag => false, clear);
+        )+
+    };
+    () => {
+        branch_instrs!(n, v, c, z);
+    };
+}
+
 macro_rules! instr {
     ($cpu_rc: ident, $instr_f:ident) => {
         yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone()))
@@ -240,6 +270,14 @@ impl CPU {
                 (rep, NoFlag; 0xC2=>immediate)
                 (sep, NoFlag; 0xE2=>immediate)
                 (xce, NoFlag; 0xFB=>implied)
+                (branch_n_clear, NoFlag; 0x10=>implied)
+                (branch_n_set, NoFlag; 0x30=>implied)
+                (branch_v_clear, NoFlag; 0x50=>implied)
+                (branch_v_set, NoFlag; 0x70=>implied)
+                (branch_c_clear, NoFlag; 0x90=>implied)
+                (branch_c_set, NoFlag; 0xB0=>implied)
+                (branch_z_clear, NoFlag; 0xD0=>implied)
+                (branch_z_set, NoFlag; 0xF0=>implied)
                 (and, MFlag; 0x21=>indexed_indirect, 0x25=>direct,
                  0x29=>immediate, 0x2D=>absolute, 0x31=>indirect_indexed,
                  0x32=>indirect, 0x35=>direct_x, 0x39=>absolute_y, 0x3D=>absolute_x)
@@ -317,7 +355,7 @@ impl CPU {
         move || {
             // TODO: Some clock cycles before the read, depending on region
             let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
-            cpu.borrow_mut().step(4);
+            cpu.borrow_mut().step(1);
             data
         }
     }
@@ -902,4 +940,5 @@ impl CPU {
 
     pull_instrs!();
     transfer_instrs!();
+    branch_instrs!();
 }
