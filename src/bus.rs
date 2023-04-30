@@ -11,6 +11,8 @@ pub struct Bus {
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
     cart_test: Vec<u8>,
+    // TODO: Remove debug variable
+    debug_apu_port0: u8,
 }
 
 impl Bus {
@@ -19,6 +21,7 @@ impl Bus {
             ppu,
             smp,
             cart_test: fs::read("/home/henry/roms/snes/Harvest Moon (USA).sfc").unwrap(),
+            debug_apu_port0: 0xAA,
         }
     }
 
@@ -34,11 +37,14 @@ impl Bus {
                         bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
                     } else {
                         match addr.lo16() {
-                            0x0000..=0x7FFF => 0, // TODO: System area
+                            // TODO: System area
+                            0x2140 => bus.borrow().debug_apu_port0,
+                            0x2141 => 0xBB,
                             0x8000.. => {
                                 bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
                                     | (addr.lo16() as usize - 0x8000)]
                             }
+                            _ => 0,
                         }
                     }
                 }
@@ -51,6 +57,21 @@ impl Bus {
         move || {
             if false {
                 yield YieldReason::SyncPPU;
+            }
+            // TODO: Some generalized mapper logic
+            match addr.hi8() {
+                0x00..=0x3F | 0x80..=0xBF => {
+                    if addr.hi8() == 0x00 && (0xFF00..=0xFFFF).contains(&addr.lo16()) {
+                        // bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
+                    } else {
+                        match addr.lo16() {
+                            // TODO: System area
+                            0x2140 => bus.borrow_mut().debug_apu_port0 = data,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }

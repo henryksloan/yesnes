@@ -349,6 +349,12 @@ impl CPU {
                  0xDD=>absolute_x, 0xDF=>absolute_long_x)
                 (cpx, XFlag; 0xE0=>immediate, 0xE4=>direct, 0xEC=>absolute)
                 (cpy, XFlag; 0xC0=>immediate, 0xC4=>direct, 0xCC=>absolute)
+                (rol_a, NoFlag; 0x2A=>implied)
+                (rol, MFlag; 0x26=>direct, 0x2E=>absolute, 0x36=>direct_x,
+                 0x3E=>absolute_x)
+                (ror_a, NoFlag; 0x6A=>implied)
+                (ror, MFlag; 0x66=>direct, 0x6E=>absolute, 0x76=>direct_x,
+                 0x7E=>absolute_x)
                 (push_a, NoFlag; 0x48=>implied)
                 (push_b, NoFlag; 0x8B=>implied)
                 (push_d, NoFlag; 0x0B=>implied)
@@ -973,8 +979,8 @@ impl CPU {
                 temp as u16
             };
 
-            cpu.borrow_mut().reg.p.v =
-                ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & 0x80) != 0;
+            let overflow = ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & 0x80) != 0;
+            cpu.borrow_mut().reg.p.v = overflow;
             cpu.borrow_mut().reg.set_a(result);
             let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
                 8
@@ -1048,6 +1054,66 @@ impl CPU {
             yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
             cpu.borrow_mut().reg.pc = pointer.addr;
         }
+    }
+
+    fn rotate_through_carry(cpu: Rc<RefCell<CPU>>, data: u16, left: bool) -> u16 {
+        let n_bits = n_bits!(cpu, m);
+        let leftmost_mask = 1 << (n_bits - 1);
+        let (check_mask, carry_mask) = if left {
+            (leftmost_mask, 0x01)
+        } else {
+            (0x01, leftmost_mask)
+        };
+        let old_carry = cpu.borrow().reg.p.c;
+        cpu.borrow_mut().reg.p.c = (data & check_mask) != 0;
+        let result = {
+            let temp = if left { data << 1 } else { data >> 1 };
+            if old_carry {
+                temp | carry_mask
+            } else {
+                temp & !carry_mask
+            }
+        };
+        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+        cpu.borrow_mut().reg.p.z = result == 0;
+        result
+    }
+
+    fn rotate_op<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        pointer: Pointer,
+        left: bool,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let result = CPU::rotate_through_carry(cpu.clone(), data, left);
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
+        }
+    }
+
+    fn rol<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        CPU::rotate_op(cpu, pointer, true)
+    }
+
+    fn ror<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        CPU::rotate_op(cpu, pointer, false)
+    }
+
+    fn rotate_acc_op<'a>(cpu: Rc<RefCell<CPU>>, left: bool) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let data = cpu.borrow().reg.get_a();
+            let result = CPU::rotate_through_carry(cpu.clone(), data, left);
+            cpu.borrow_mut().reg.set_a(result);
+        }
+    }
+
+    fn rol_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        CPU::rotate_acc_op(cpu, true)
+    }
+
+    fn ror_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        CPU::rotate_acc_op(cpu, false)
     }
 
     pull_instrs!();
