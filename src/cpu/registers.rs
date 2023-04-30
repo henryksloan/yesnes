@@ -35,6 +35,8 @@ impl Registers {
         self.d = val;
     }
 
+    // TODO: These should all handle emulation flag
+
     // Gets the X register.
     // Whether it gets the whole thing or just the low bits
     // depends on the X flag.
@@ -88,13 +90,36 @@ impl Registers {
 
     // Sets the A register.
     // Whether it sets the whole thing or just the low bits
-    // depends on the X flag.
+    // depends on the M flag.
     pub fn set_a(&mut self, val: u16) {
         if self.p.m {
             self.a &= 0xFF00;
             self.a |= val & 0xFF;
         } else {
             self.a = val;
+        }
+    }
+
+    // Gets the SP register.
+    // Whether it gets the whole thing or just the low bits
+    // depends on the E flag.
+    pub fn get_sp(&self) -> u16 {
+        if self.p.e {
+            self.sp & 0xFF
+        } else {
+            self.sp
+        }
+    }
+
+    // Sets the SP register.
+    // Whether it sets the whole thing or just the low bits
+    // depends on the E flag.
+    pub fn set_sp(&mut self, val: u16) {
+        if self.p.e {
+            self.sp &= 0xFF00;
+            self.sp |= val & 0xFF;
+        } else {
+            self.sp = val;
         }
     }
 }
@@ -114,6 +139,7 @@ pub struct StatusRegister {
     pub z: bool, // Zero flag
     pub c: bool, // Carry flag
 
+    // TODO: The emulation flag is largely unimplemented
     pub e: bool, // 6502 emulation mode flag
 }
 
