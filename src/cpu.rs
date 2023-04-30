@@ -182,6 +182,11 @@ macro_rules! fetch {
     }};
 }
 
+struct Pointer {
+    pub addr: u24,
+    pub long: bool,
+}
+
 impl CPU {
     pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
         Self {
@@ -247,6 +252,14 @@ impl CPU {
                  0xB6=>direct_y, 0xBE=>absolute_y)
                 (ldy, XFlag; 0xA0=>immediate, 0xA4=>direct, 0xAC=>absolute,
                  0xB4=>direct_x, 0xBC=>absolute_x)
+                (stz, MFlag; 0x64=>direct, 0x74=>direct_x, 0x9C=>absolute,
+                 0x9E=>absolute_x)
+                (sta, MFlag; 0x81 => indexed_indirect, 0x83 => stack_relative,
+                 0x85=>direct, 0x87=>indirect_long, 0x8D=>absolute,
+                 0x8F=>absolute_long, 0x91=>indirect_indexed,
+                 0x92=>indirect,0x93=>stack_relative_indirect_indexed,
+                 0x95=>direct_x, 0x97=>indirect_long_y, 0x99=>absolute_y,
+                 0x9D=>absolute_x, 0x9F=>absolute_long_x)
                 (pull_d, NoFlag; 0x2B=>implied)
                 (pull_a, NoFlag; 0x68=>implied)
                 (pull_y, NoFlag; 0x7A=>implied)
@@ -281,22 +294,68 @@ impl CPU {
         }
     }
 
-    fn read_direct_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
+    fn write_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
         move || {
-            let addr = if cpu.borrow().reg.p.e && (cpu.borrow().reg.d & 0xFF == 0) {
-                u24(cpu.borrow().reg.d.into()) | (addr & 0xFFu8)
-            } else {
-                (u24(cpu.borrow().reg.d.into()) + addr) & 0xFFFFu32
-            };
-            yield_all!(CPU::read_u8(cpu.clone(), addr))
+            // TODO: Some clock cycles before the write, depending on region
+            yield_all!(Bus::write_u8(cpu.borrow_mut().bus.clone(), addr, data));
+            cpu.borrow_mut().step(4);
         }
     }
 
-    fn read_bank_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
+    fn read_pointer<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl Yieldable<u16> + 'a {
         move || {
-            let addr = u24((cpu.borrow().reg.b as u32) << 16) | addr;
-            yield_all!(CPU::read_u8(cpu.clone(), addr))
+            let mut data = yield_all!(CPU::read_u8(cpu.clone(), pointer.addr)) as u16;
+            if pointer.long {
+                data |= (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr + 1u32)) as u16) << 8;
+            }
+            data
         }
+    }
+
+    fn write_pointer<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        pointer: Pointer,
+        data: u16,
+    ) -> impl Yieldable<()> + 'a {
+        move || {
+            yield_all!(CPU::write_u8(
+                cpu.clone(),
+                pointer.addr,
+                (data & 0xFF) as u8
+            ));
+            if pointer.long {
+                yield_all!(CPU::write_u8(
+                    cpu.clone(),
+                    pointer.addr + 1u32,
+                    (data >> 8) as u8
+                ))
+            }
+        }
+    }
+
+    fn direct_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
+        if cpu.borrow().reg.p.e && (cpu.borrow().reg.d & 0xFF == 0) {
+            u24(cpu.borrow().reg.d.into()) | (addr & 0xFFu8)
+        } else {
+            (u24(cpu.borrow().reg.d.into()) + addr) & 0xFFFFu32
+        }
+    }
+
+    fn read_direct_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
+        move || {
+            yield_all!(CPU::read_u8(
+                cpu.clone(),
+                CPU::direct_addr(cpu.clone(), addr)
+            ))
+        }
+    }
+
+    fn bank_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
+        u24((cpu.borrow().reg.b as u32) << 16) | addr
+    }
+
+    fn read_bank_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
+        move || yield_all!(CPU::read_u8(cpu.clone(), CPU::bank_addr(cpu.clone(), addr)))
     }
 
     fn stack_pull_u8<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u8> + 'a {
@@ -337,109 +396,83 @@ impl CPU {
 
     // TODO: AAAAAAA, these need to return return addresses (and maybe bool long?) so they work for
     // store instructions, too
-    fn immediate<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn immediate<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
-            let mut data = fetch!(cpu) as u16;
-            if long {
-                data |= (fetch!(cpu) as u16) << 8;
-            }
-            data
+            dummy_yield!();
+            let addr = cpu.borrow().reg.pc;
+            cpu.borrow_mut().reg.pc += if long { u24(2) } else { u24(1) };
+            Pointer { addr, long }
         }
     }
 
     // TODO: Reduce code duplication across these three
-    fn direct<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn direct<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
-            let addr = u24(fetch!(cpu) as u32);
-            let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_direct_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            let indirect_addr = u24(fetch!(cpu) as u32);
+            let addr = CPU::direct_addr(cpu.clone(), indirect_addr);
+            Pointer { addr, long }
         }
     }
 
-    fn direct_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn direct_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
-            let addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_x() as u32);
-            let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_direct_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            let indirect_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_x() as u32);
+            let addr = CPU::direct_addr(cpu.clone(), indirect_addr);
+            Pointer { addr, long }
         }
     }
 
-    fn direct_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn direct_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
-            let addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_y() as u32);
-            let mut data = yield_all!(CPU::read_direct_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_direct_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            let indirect_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_y() as u32);
+            let addr = CPU::direct_addr(cpu.clone(), indirect_addr);
+            Pointer { addr, long }
         }
     }
 
     // TODO: Reduce code duplication across these three
-    fn absolute<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn absolute<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
                 u24((fetch!(cpu) << 8) as u32 | addr_lo)
             };
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            Pointer { addr, long }
         }
     }
 
-    fn absolute_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn absolute_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
                 u24(((fetch!(cpu) << 8) as u32 | addr_lo) + cpu.borrow().reg.get_x() as u32)
             };
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            Pointer { addr, long }
         }
     }
 
-    fn absolute_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn absolute_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
                 u24(((fetch!(cpu) << 8) as u32 | addr_lo) + cpu.borrow().reg.get_y() as u32)
             };
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            Pointer { addr, long }
         }
     }
 
-    fn absolute_long<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn absolute_long<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
                 let addr_mid = fetch!(cpu) as u32;
                 u24((fetch!(cpu) << 16) as u32 | (addr_mid << 8) | addr_lo)
             };
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            Pointer { addr, long }
         }
     }
 
-    fn absolute_long_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn absolute_long_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
@@ -447,16 +480,12 @@ impl CPU {
                 u24(((fetch!(cpu) << 16) as u32 | (addr_mid << 8) | addr_lo)
                     + cpu.borrow().reg.get_x() as u32)
             };
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            Pointer { addr, long }
         }
     }
 
     // TODO: Reduce code duplication across these three
-    fn indirect<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn indirect<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let indirect_addr = u24(fetch!(cpu) as u32);
             let addr = {
@@ -464,112 +493,91 @@ impl CPU {
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 u24((hi << 8) | lo)
             };
-            let mut data = yield_all!(CPU::read_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            Pointer { addr, long }
         }
     }
 
-    fn indexed_indirect<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn indexed_indirect<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let offset = cpu.borrow().reg.get_x() as u32;
             let indirect_addr = u24(fetch!(cpu) as u32 + offset);
-            let addr = {
+            let bank_addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 u24((hi << 8) | lo)
             };
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
+            Pointer { addr, long }
         }
     }
 
-    fn indirect_indexed<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn indirect_indexed<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let offset = cpu.borrow().reg.get_y() as u32;
             let indirect_addr = u24(fetch!(cpu) as u32);
-            let addr = {
+            let bank_addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 u24((hi << 8) | lo)
             } + offset;
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
+            Pointer { addr, long }
         }
     }
 
-    fn indirect_long<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn indirect_long<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let indirect_addr = u24(fetch!(cpu) as u32);
-            let addr = {
+            let bank_addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 u24((hi << 8) | lo)
             };
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
+            Pointer { addr, long }
         }
     }
 
-    fn indirect_long_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn indirect_long_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let indirect_addr = u24(fetch!(cpu) as u32);
-            let addr = {
+            let bank_addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 u24((hi << 8) | lo)
             } + cpu.borrow().reg.get_y() as u32;
             // TODO: Check the above logic; namely, the overflow of adding y
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
+            Pointer { addr, long }
         }
     }
 
-    fn stack_relative<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
+    fn stack_relative<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
-            let addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
-            }
-            data
+            let bank_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
+            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
+            Pointer { addr, long }
         }
     }
 
     fn stack_relative_indirect_indexed<'a>(
         cpu: Rc<RefCell<CPU>>,
         long: bool,
-    ) -> impl Yieldable<u16> + 'a {
+    ) -> impl Yieldable<Pointer> + 'a {
         move || {
             let stack_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
             let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), stack_addr)) as u32;
-            let addr = ((yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32) << 8)
+            let bank_addr = ((yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32)
+                << 8)
                 | addr_lo + cpu.borrow().reg.get_y() as u32;
-            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), u24(addr))) as u16;
-            if long {
-                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), u24(addr) + 1u32)) as u16) << 8;
-            }
-            data
+            let addr = CPU::bank_addr(cpu.clone(), u24(bank_addr));
+            Pointer { addr, long }
         }
     }
 
-    fn and<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+    fn and<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let val = cpu.borrow().reg.get_a() & data;
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
@@ -628,17 +636,17 @@ impl CPU {
         }
     }
 
-    fn rep<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+    fn rep<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let p = &mut cpu.borrow_mut().reg.p;
             p.set(p.get() & !data as u8);
         }
     }
 
-    fn sep<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+    fn sep<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let p = &mut cpu.borrow_mut().reg.p;
             p.set(p.get() | data as u8);
         }
@@ -653,9 +661,9 @@ impl CPU {
     }
 
     // TODO: Factor out load instructions (macro?)
-    fn lda<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+    fn lda<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             cpu.borrow_mut().reg.set_a(data);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             // TODO: Factor out these flag updates
@@ -664,9 +672,9 @@ impl CPU {
         }
     }
 
-    fn ldx<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+    fn ldx<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             cpu.borrow_mut().reg.set_x(data);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             // TODO: Factor out these flag updates
@@ -675,9 +683,9 @@ impl CPU {
         }
     }
 
-    fn ldy<'a>(cpu: Rc<RefCell<CPU>>, data: u16) -> impl InstructionGenerator + 'a {
+    fn ldy<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             cpu.borrow_mut().reg.set_y(data);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             // TODO: Factor out these flag updates
@@ -686,12 +694,32 @@ impl CPU {
         }
     }
 
-    // fn sta<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
-    //     move || {
-    //         let data = cpu.borrow().reg.get_a();
-    //         yield_all!(CPU::write_u8(cpu.clone(), data));
-    //     }
-    // }
+    fn stz<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, 0));
+        }
+    }
+
+    fn sta<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = cpu.borrow().reg.get_a();
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
+        }
+    }
+
+    fn stx<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = cpu.borrow().reg.get_x();
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
+        }
+    }
+
+    fn sty<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = cpu.borrow().reg.get_y();
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
+        }
+    }
 
     pull_instrs!();
     transfer_instrs!();

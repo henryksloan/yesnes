@@ -43,4 +43,12 @@ impl Bus {
             }
         }
     }
+
+    pub fn write_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
+        move || {
+            if false {
+                yield YieldReason::SyncPPU;
+            }
+        }
+    }
 }
