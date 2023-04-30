@@ -84,6 +84,24 @@ macro_rules! instr {
     ($cpu_rc: ident, $instr_f:ident, MFlag, $addr_mode_f:ident) => {
         instr!($cpu_rc, $instr_f, flag: m, $addr_mode_f)
     };
+    ($cpu_rc: ident, $instr_f:ident, NoFlag, implied) => {
+        instr!($cpu_rc, $instr_f)
+    };
+    ($cpu_rc: ident, $instr_f:ident, NoFlag, $addr_mode_f:ident) => {
+        instr!($cpu_rc, $instr_f, $addr_mode_f)
+    };
+}
+
+macro_rules! instrs {
+    ($cpu_rc:ident, $opcode_expr:expr, $(($instr_f:ident , $flag:tt; $($opcode:expr => $addr_mode_f:tt),+))+) => {
+        let opcode_val = $opcode_expr;
+        match opcode_val {
+            $(
+                $($opcode => instr!($cpu_rc, $instr_f, $flag, $addr_mode_f),)+
+            )+
+            _ => panic!("Invalid opcode {:#02X}", opcode_val),
+        }
+    };
 }
 
 macro_rules! fetch {
@@ -135,64 +153,35 @@ impl CPU {
             cpu.borrow_mut().reg.pc += 1u32;
             println!(": {:#02X}", opcode);
 
-            // TODO: Make a new macro that generates this, taking a list like
-            // (and, MFlag, 0x29:immediate, 0x2D:absolute, ...) etc.
-            match opcode {
-                0x18 => instr!(cpu, clc),
-                0x58 => instr!(cpu, cli),
-                0xD8 => instr!(cpu, cld),
-                0xB8 => instr!(cpu, clv),
-                0x38 => instr!(cpu, sec),
-                0x78 => instr!(cpu, sei),
-                0xF8 => instr!(cpu, sed),
-                0xC2 => instr!(cpu, rep, immediate),
-                0xFB => instr!(cpu, xce),
-
-                0x21 => instr!(cpu, and, MFlag, indexed_indirect),
-                0x25 => instr!(cpu, and, MFlag, direct),
-                0x29 => instr!(cpu, and, MFlag, immediate),
-                0x2D => instr!(cpu, and, MFlag, absolute),
-                0x31 => instr!(cpu, and, MFlag, indirect_indexed),
-                0x32 => instr!(cpu, and, MFlag, indirect),
-                0x35 => instr!(cpu, and, MFlag, direct_x),
-                0x39 => instr!(cpu, and, MFlag, absolute_y),
-                0x3D => instr!(cpu, and, MFlag, absolute_x),
-
-                0xA1 => instr!(cpu, lda, MFlag, indexed_indirect),
-                0xA3 => instr!(cpu, lda, stack_relative),
-                0xA5 => instr!(cpu, lda, MFlag, direct),
-                0xA7 => instr!(cpu, lda, MFlag, indirect_long),
-                0xA9 => instr!(cpu, lda, MFlag, immediate),
-                0xAD => instr!(cpu, lda, MFlag, absolute),
-                0xAF => instr!(cpu, lda, MFlag, absolute_long),
-                0xB1 => instr!(cpu, lda, MFlag, indirect_indexed),
-                0xB2 => instr!(cpu, lda, MFlag, indirect),
-                0xB3 => instr!(cpu, lda, MFlag, stack_relative_indirect_indexed),
-                0xB5 => instr!(cpu, lda, MFlag, direct_x),
-                0xB7 => instr!(cpu, lda, MFlag, indirect_long_y),
-                0xB9 => instr!(cpu, lda, MFlag, absolute_y),
-                0xBD => instr!(cpu, lda, MFlag, absolute_x),
-                0xBF => instr!(cpu, lda, MFlag, absolute_long_x),
-
-                0xA2 => instr!(cpu, ldx, MFlag, immediate),
-                0xA6 => instr!(cpu, ldx, MFlag, direct),
-                0xAE => instr!(cpu, ldx, MFlag, absolute),
-                0xB6 => instr!(cpu, ldx, MFlag, direct_y),
-                0xBE => instr!(cpu, ldx, MFlag, absolute_y),
-
-                0xA0 => instr!(cpu, ldy, MFlag, immediate),
-                0xA4 => instr!(cpu, ldy, MFlag, direct),
-                0xAC => instr!(cpu, ldy, MFlag, absolute),
-                0xB4 => instr!(cpu, ldy, MFlag, direct_x),
-                0xBC => instr!(cpu, ldy, MFlag, absolute_x),
-
-                0x2B => instr!(cpu, pull_d),
-                0x68 => instr!(cpu, pull_a),
-                0x7A => instr!(cpu, pull_y),
-                0xAB => instr!(cpu, pull_b),
-                0xFA => instr!(cpu, pull_x),
-                _ => panic!("Invalid opcode {:#02X}", opcode),
-            };
+            instrs!(cpu, opcode,
+                (clc, NoFlag; 0x18=>implied)
+                (cli, NoFlag; 0x58=>implied)
+                (cld, NoFlag; 0xD8=>implied)
+                (clv, NoFlag; 0xB8=>implied)
+                (sec, NoFlag; 0x38=>implied)
+                (sei, NoFlag; 0x78=>implied)
+                (sed, NoFlag; 0xF8=>implied)
+                (rep, NoFlag; 0xC2=>immediate)
+                (xce, NoFlag; 0xFB=>implied)
+                (and, MFlag; 0x21=>indexed_indirect, 0x25=>direct,
+                 0x29=>immediate, 0x2D=>absolute, 0x31=>indirect_indexed,
+                 0x32=>indirect, 0x35=>direct_x, 0x39=>absolute_y, 0x3D=>absolute_x)
+                (lda, MFlag; 0xA1 => indexed_indirect, 0xA3 => stack_relative,
+                 0xA5=>direct, 0xA7=>indirect_long, 0xA9=>immediate,
+                 0xAD=>absolute, 0xAF=>absolute_long, 0xB1=>indirect_indexed,
+                 0xB2=>indirect,0xB3=>stack_relative_indirect_indexed,
+                 0xB5=>direct_x, 0xB7=>indirect_long_y, 0xB9=>absolute_y,
+                 0xBD=>absolute_x, 0xBF=>absolute_long_x)
+                (ldx, XFlag; 0xA2=>immediate, 0xA6=>direct, 0xAE=>absolute,
+                 0xB6=>direct_y, 0xBE=>absolute_y)
+                (ldy, XFlag; 0xA0=>immediate, 0xA4=>direct, 0xAC=>absolute,
+                 0xB4=>direct_x, 0xBC=>absolute_x)
+                (pull_d, NoFlag; 0x2B=>implied)
+                (pull_a, NoFlag; 0x68=>implied)
+                (pull_y, NoFlag; 0x7A=>implied)
+                (pull_b, NoFlag; 0xAB=>implied)
+                (pull_x, NoFlag; 0xFA=>implied)
+            );
         }
     }
 
@@ -465,23 +454,31 @@ impl CPU {
         }
     }
 
-    fn stack_relative<'a>(cpu: Rc<RefCell<CPU>>, _: bool) -> impl Yieldable<u16> + 'a {
+    fn stack_relative<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<u16> + 'a {
         move || {
             let addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
-            yield_all!(CPU::read_u8(cpu.clone(), addr)) as u16
+            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), addr)) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), addr + 1u32)) as u16) << 8;
+            }
+            data
         }
     }
 
     fn stack_relative_indirect_indexed<'a>(
         cpu: Rc<RefCell<CPU>>,
-        _: bool,
+        long: bool,
     ) -> impl Yieldable<u16> + 'a {
         move || {
             let stack_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
             let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), stack_addr)) as u32;
             let addr = ((yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32) << 8)
                 | addr_lo + cpu.borrow().reg.y as u32;
-            yield_all!(CPU::read_u8(cpu.clone(), u24(addr))) as u16
+            let mut data = yield_all!(CPU::read_bank_u8(cpu.clone(), u24(addr))) as u16;
+            if long {
+                data |= (yield_all!(CPU::read_bank_u8(cpu.clone(), u24(addr) + 1u32)) as u16) << 8;
+            }
+            data
         }
     }
 
