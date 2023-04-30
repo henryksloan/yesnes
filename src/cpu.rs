@@ -243,7 +243,7 @@ impl CPU {
                 (and, MFlag; 0x21=>indexed_indirect, 0x25=>direct,
                  0x29=>immediate, 0x2D=>absolute, 0x31=>indirect_indexed,
                  0x32=>indirect, 0x35=>direct_x, 0x39=>absolute_y, 0x3D=>absolute_x)
-                (lda, MFlag; 0xA1 => indexed_indirect, 0xA3 => stack_relative,
+                (lda, MFlag; 0xA1=>indexed_indirect, 0xA3=>stack_relative,
                  0xA5=>direct, 0xA7=>indirect_long, 0xA9=>immediate,
                  0xAD=>absolute, 0xAF=>absolute_long, 0xB1=>indirect_indexed,
                  0xB2=>indirect,0xB3=>stack_relative_indirect_indexed,
@@ -255,7 +255,7 @@ impl CPU {
                  0xB4=>direct_x, 0xBC=>absolute_x)
                 (stz, MFlag; 0x64=>direct, 0x74=>direct_x, 0x9C=>absolute,
                  0x9E=>absolute_x)
-                (sta, MFlag; 0x81 => indexed_indirect, 0x83 => stack_relative,
+                (sta, MFlag; 0x81=>indexed_indirect, 0x83=>stack_relative,
                  0x85=>direct, 0x87=>indirect_long, 0x8D=>absolute,
                  0x8F=>absolute_long, 0x91=>indirect_indexed,
                  0x92=>indirect,0x93=>stack_relative_indirect_indexed,
@@ -268,6 +268,26 @@ impl CPU {
                 (ina, NoFlag; 0x1A=>implied)
                 (inx, NoFlag; 0xE8=>implied)
                 (iny, NoFlag; 0xC8=>implied)
+                (adc, MFlag; 0x61=>indexed_indirect, 0x63=>stack_relative,
+                 0x65=>direct, 0x67=>indirect_long, 0x69=>immediate,
+                 0x6D=>absolute, 0x6F=>absolute_long, 0x71=>indirect_indexed,
+                 0x72=>indirect,0x73=>stack_relative_indirect_indexed,
+                 0x75=>direct_x, 0x77=>indirect_long_y, 0x79=>absolute_y,
+                 0x7D=>absolute_x, 0x7F=>absolute_long_x)
+                (sbc, MFlag; 0xE1=>indexed_indirect, 0xE3=>stack_relative,
+                 0xE5=>direct, 0xE7=>indirect_long, 0xE9=>immediate,
+                 0xED=>absolute, 0xEF=>absolute_long, 0xF1=>indirect_indexed,
+                 0xF2=>indirect,0xF3=>stack_relative_indirect_indexed,
+                 0xF5=>direct_x, 0xF7=>indirect_long_y, 0xF9=>absolute_y,
+                 0xFD=>absolute_x, 0xFF=>absolute_long_x)
+                (cmp, MFlag; 0xC1=>indexed_indirect, 0xC3=>stack_relative,
+                 0xC5=>direct, 0xC7=>indirect_long, 0xC9=>immediate,
+                 0xCD=>absolute, 0xCF=>absolute_long, 0xD1=>indirect_indexed,
+                 0xD2=>indirect,0xD3=>stack_relative_indirect_indexed,
+                 0xD5=>direct_x, 0xD7=>indirect_long_y, 0xD9=>absolute_y,
+                 0xDD=>absolute_x, 0xDF=>absolute_long_x)
+                (cpx, XFlag; 0xE0=>immediate, 0xE4=>direct, 0xEC=>absolute)
+                (cpy, XFlag; 0xC0=>immediate, 0xC4=>direct, 0xCC=>absolute)
                 (pull_d, NoFlag; 0x2B=>implied)
                 (pull_a, NoFlag; 0x68=>implied)
                 (pull_y, NoFlag; 0x7A=>implied)
@@ -792,6 +812,92 @@ impl CPU {
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
             cpu.borrow_mut().reg.p.z = data == 0;
         }
+    }
+
+    fn arithmetic_op<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        pointer: Pointer,
+        subtract: bool,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            // TODO: Really need to check the 8- and 16-bit flag logic
+            let data = {
+                let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+                if subtract {
+                    ((mem_val as i16).wrapping_neg().wrapping_sub(1)) as u16
+                } else {
+                    mem_val
+                }
+            };
+
+            let carry = cpu.borrow().reg.p.c as u16;
+            let result = if cpu.borrow().reg.p.d {
+                // let temp = bcd_to_bin(self.a).unwrap() + bcd_to_bin(data).unwrap() + carry as u8;
+                // self.p.set(StatusRegister::CARRY, temp > 99);
+                // bin_to_bcd(temp % 100).unwrap()
+                unimplemented!("BCD Decimal mode is not yet");
+            } else {
+                let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
+                cpu.borrow_mut().reg.p.c = temp > 0xFFFF;
+                temp as u16
+            };
+
+            cpu.borrow_mut().reg.p.v =
+                ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & 0x80) != 0;
+            cpu.borrow_mut().reg.set_a(result);
+            let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
+                8
+            } else {
+                16
+            };
+            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = result == 0;
+        }
+    }
+
+    fn adc<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        return CPU::arithmetic_op(cpu, pointer, false);
+    }
+
+    fn sbc<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        return CPU::arithmetic_op(cpu, pointer, true);
+    }
+
+    fn compare_op<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        pointer: Pointer,
+        reg_val: u16,
+        flag: bool,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            // TODO: Really need to check the 8- and 16-bit flag logic
+
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let result = reg_val as i32 - data as i32;
+
+            let n_bits = if flag || cpu.borrow().reg.p.e { 8 } else { 16 };
+            cpu.borrow_mut().reg.p.c = result >= 0;
+            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = result == 0;
+        }
+    }
+
+    fn cmp<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        let reg_val = cpu.borrow().reg.get_a();
+        let flag = cpu.borrow().reg.p.m;
+        return CPU::compare_op(cpu, pointer, reg_val, flag);
+    }
+
+    fn cpx<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        let reg_val = cpu.borrow().reg.get_x();
+        let flag = cpu.borrow().reg.p.x_or_b;
+        return CPU::compare_op(cpu, pointer, reg_val, flag);
+    }
+
+    fn cpy<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        let reg_val = cpu.borrow().reg.get_y();
+        let flag = cpu.borrow().reg.p.x_or_b;
+        return CPU::compare_op(cpu, pointer, reg_val, flag);
     }
 
     pull_instrs!();
