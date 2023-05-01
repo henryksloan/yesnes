@@ -1,7 +1,5 @@
 use crate::u24::u24;
 
-use paste::paste;
-
 #[derive(Default)]
 pub struct Registers {
     pub a: u16, // Accumulator register
@@ -12,7 +10,7 @@ pub struct Registers {
     pub pc: u24,
     pub sp: u16, // Stack pointer
     pub p: StatusRegister,
-    pub d: u16, // Zero page offset
+    pub d: u16, // Direct page
     pub b: u8,  // Data bank
 }
 
@@ -36,6 +34,8 @@ impl Registers {
     pub fn set_d(&mut self, val: u16) {
         self.d = val;
     }
+
+    // TODO: These should all handle emulation flag
 
     // Gets the X register.
     // Whether it gets the whole thing or just the low bits
@@ -90,7 +90,7 @@ impl Registers {
 
     // Sets the A register.
     // Whether it sets the whole thing or just the low bits
-    // depends on the X flag.
+    // depends on the M flag.
     pub fn set_a(&mut self, val: u16) {
         if self.p.m {
             self.a &= 0xFF00;
@@ -98,6 +98,39 @@ impl Registers {
         } else {
             self.a = val;
         }
+    }
+
+    // Gets the SP register.
+    // Whether it gets the whole thing or just the low bits
+    // depends on the E flag.
+    pub fn get_sp(&self) -> u16 {
+        if self.p.e {
+            self.sp & 0xFF
+        } else {
+            self.sp
+        }
+    }
+
+    // Sets the SP register.
+    // Whether it sets the whole thing or just the low bits
+    // depends on the E flag.
+    pub fn set_sp(&mut self, val: u16) {
+        if self.p.e {
+            self.sp &= 0xFF00;
+            self.sp |= val & 0xFF;
+        } else {
+            self.sp = val;
+        }
+    }
+
+    // Gets the P register.
+    pub fn get_p(&self) -> u8 {
+        self.p.get()
+    }
+
+    // Sets the P register.
+    pub fn set_p(&mut self, val: u8) {
+        self.p.set(val);
     }
 }
 
@@ -116,6 +149,7 @@ pub struct StatusRegister {
     pub z: bool, // Zero flag
     pub c: bool, // Carry flag
 
+    // TODO: The emulation flag is largely unimplemented
     pub e: bool, // 6502 emulation mode flag
 }
 
@@ -129,5 +163,16 @@ impl StatusRegister {
             | ((self.i as u8) << 2)
             | ((self.z as u8) << 1)
             | ((self.c as u8) << 0)
+    }
+
+    pub fn set(&mut self, data: u8) {
+        self.n = ((data >> 7) & 1) == 1;
+        self.v = ((data >> 6) & 1) == 1;
+        self.m = ((data >> 5) & 1) == 1;
+        self.x_or_b = ((data >> 4) & 1) == 1;
+        self.d = ((data >> 3) & 1) == 1;
+        self.i = ((data >> 2) & 1) == 1;
+        self.z = ((data >> 1) & 1) == 1;
+        self.c = ((data >> 0) & 1) == 1;
     }
 }

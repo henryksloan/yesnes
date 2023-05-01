@@ -3,25 +3,26 @@ use crate::scheduler::DeviceThread;
 /// Tracks the relative time of two processors.
 /// When counter >= 0, processor A is ahead;
 /// when counter < 0, processor B is ahead.
-/// Note that, hen counter == 0, they are perfectly synchronized;
+/// Note that, when counter == 0, they are perfectly synchronized;
 /// processor A is arbitrarily chosen to tick next.
 /// https://near.sh/articles/design/schedulers
 pub struct RelativeClock {
     counter: i64,
     processor_a: DeviceThread,
     processor_b: DeviceThread,
-    scalar_a: u32,
-    scalar_b: u32,
+    scalar_a: u64,
+    scalar_b: u64,
 }
 
+// TODO: Subtract the smaller value sometimes to avoid overflow
 impl RelativeClock {
     pub fn new(
         processor_a: DeviceThread,
         processor_b: DeviceThread,
-        frequency_a: u32,
-        frequency_b: u32,
+        frequency_a: u64,
+        frequency_b: u64,
     ) -> Self {
-        let factor = gcd::binary_u32(frequency_a, frequency_b);
+        let factor = gcd::binary_u64(frequency_a, frequency_b);
         Self {
             counter: 0,
             processor_a,
@@ -31,7 +32,7 @@ impl RelativeClock {
         }
     }
 
-    pub fn tick(&mut self, processor: DeviceThread, n_ticks: u32) {
+    pub fn tick(&mut self, processor: DeviceThread, n_ticks: u64) {
         if processor == self.processor_a {
             self.tick_a(n_ticks);
         } else if processor == self.processor_b {
@@ -60,12 +61,12 @@ impl RelativeClock {
     /// Increments the counter by the number of processor A ticks.
     /// Note that each processor tick moves the counter in proportion
     /// to the *other* processor's frequency.
-    fn tick_a(&mut self, n_ticks: u32) {
+    fn tick_a(&mut self, n_ticks: u64) {
         self.counter += (n_ticks * self.scalar_b) as i64;
     }
 
     /// Like tick_a, but for processor B
-    fn tick_b(&mut self, n_ticks: u32) {
+    fn tick_b(&mut self, n_ticks: u64) {
         self.counter -= (n_ticks * self.scalar_a) as i64;
     }
 
