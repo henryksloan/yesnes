@@ -326,6 +326,8 @@ impl CPU {
                 (and, MFlag; 0x21=>indexed_indirect, 0x25=>direct,
                  0x29=>immediate, 0x2D=>absolute, 0x31=>indirect_indexed,
                  0x32=>indirect, 0x35=>direct_x, 0x39=>absolute_y, 0x3D=>absolute_x)
+                (bit, MFlag; 0x24=>direct, 0x2C=>absolute, 0x34=>direct_x,
+                 0x3C=>absolute_x, 0x89=>immediate)
                 (lda, MFlag; 0xA1=>indexed_indirect, 0xA3=>stack_relative,
                  0xA5=>direct, 0xA7=>indirect_long, 0xA9=>immediate,
                  0xAD=>absolute, 0xAF=>absolute_long, 0xB1=>indirect_indexed,
@@ -811,6 +813,17 @@ impl CPU {
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
             cpu.borrow_mut().reg.p.z = data == 0;
+        }
+    }
+
+    fn bit<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let zero = (cpu.borrow().reg.get_a() & data) == 0;
+            cpu.borrow_mut().reg.p.z = zero;
+            let msb = n_bits!(cpu, m) - 1;
+            cpu.borrow_mut().reg.p.n = (data >> msb) & 1 == 1;
+            cpu.borrow_mut().reg.p.v = (data >> (msb - 1)) & 1 == 1;
         }
     }
 
