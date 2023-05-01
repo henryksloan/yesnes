@@ -250,6 +250,7 @@ impl CPU {
 
     pub fn reset(&mut self) {
         self.ticks_run = 0;
+        // TODO: Simplify
         self.reg.pc = {
             let lo = u24({
                 let mut gen = Bus::read_u8(self.bus.clone(), u24(0xFFFC));
@@ -271,14 +272,27 @@ impl CPU {
             });
             (hi << 8) | lo
         };
+        self.reg.set_p(0xF4);
+        self.reg.p.e = true;
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
         move || loop {
-            print!("CPU {:#04X}", cpu.borrow().reg.pc.raw());
+            print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             cpu.borrow_mut().reg.pc += 1u32;
-            println!(": {:#02X}", opcode);
+            {
+                let reg = &cpu.borrow().reg;
+                println!(
+                    ": {opcode:#04X}    A:{:04X} X:{:04X} Y:{:04X} SP:{:04X} P:{:02X} E:{}",
+                    reg.get_a(),
+                    reg.get_x(),
+                    reg.get_y(),
+                    reg.get_sp(),
+                    reg.get_p(),
+                    if reg.p.e { 1 } else { 0 },
+                );
+            }
 
             instrs!(cpu, opcode,
                 (clc, NoFlag; 0x18=>implied)
@@ -303,6 +317,8 @@ impl CPU {
                 (bra, NoFlag; 0x80=>implied)
                 (jsr, NoFlag; 0x20=>absolute, 0xFC=>absolute_indirect_indexed)
                 (jsl, NoFlag; 0x22=>absolute_long)
+                (rtl, NoFlag; 0x6B=>implied)
+                (rts, NoFlag; 0x60=>implied)
                 (and, MFlag; 0x21=>indexed_indirect, 0x25=>direct,
                  0x29=>immediate, 0x2D=>absolute, 0x31=>indirect_indexed,
                  0x32=>indirect, 0x35=>direct_x, 0x39=>absolute_y, 0x3D=>absolute_x)
@@ -1210,6 +1226,29 @@ impl CPU {
                 cpu.borrow_mut().step(1);
             }
         }
+    }
+
+    fn return_op<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl InstructionGenerator + 'a {
+        move || {
+            cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
+            let addr = yield_all!(CPU::stack_pull_u16(cpu.clone()));
+            println!("Popped addr: {addr:#04X}");
+            cpu.borrow_mut().reg.pc |= addr;
+            if long {
+                cpu.borrow_mut().reg.pc &= 0x00_FFFFu32;
+                let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;
+                println!("Popped pb: {pb:#02X}");
+                cpu.borrow_mut().reg.pc |= pb << 16;
+            }
+        }
+    }
+
+    fn rts<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        CPU::return_op(cpu, false)
+    }
+
+    fn rtl<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        CPU::return_op(cpu, true)
     }
 
     fn pull_p<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {

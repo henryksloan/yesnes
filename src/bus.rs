@@ -13,6 +13,7 @@ pub struct Bus {
     cart_test: Vec<u8>,
     // TODO: Remove debug variable
     debug_apu_port0: u8,
+    wram: Vec<u8>,
 }
 
 impl Bus {
@@ -22,6 +23,7 @@ impl Bus {
             smp,
             cart_test: fs::read("/home/henry/roms/snes/Harvest Moon (USA).sfc").unwrap(),
             debug_apu_port0: 0xAA,
+            wram: vec![0; 0x20000],
         }
     }
 
@@ -38,6 +40,7 @@ impl Bus {
                     } else {
                         match addr.lo16() {
                             // TODO: System area
+                            0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
                             0x2140 => bus.borrow().debug_apu_port0,
                             0x2141 => 0xBB,
                             0x8000.. => {
@@ -47,6 +50,9 @@ impl Bus {
                             _ => 0,
                         }
                     }
+                }
+                0x7E..=0x7F => {
+                    bus.borrow().wram[0x10000 * (addr.hi8() as usize - 0x7E) + addr.lo16() as usize]
                 }
                 _ => 0,
             }
@@ -66,10 +72,15 @@ impl Bus {
                     } else {
                         match addr.lo16() {
                             // TODO: System area
+                            0x0000..=0x1FFF => bus.borrow_mut().wram[addr.lo16() as usize] = data,
                             0x2140 => bus.borrow_mut().debug_apu_port0 = data,
                             _ => {}
                         }
                     }
+                }
+                0x7E..=0x7F => {
+                    bus.borrow_mut().wram
+                        [0x10000 * (addr.hi8() as usize - 0x7E) + addr.lo16() as usize] = data
                 }
                 _ => {}
             }
