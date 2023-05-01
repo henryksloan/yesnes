@@ -274,6 +274,7 @@ impl CPU {
         };
         self.reg.set_p(0xF4);
         self.reg.p.e = true;
+        self.reg.set_sp(0x1FF);
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
@@ -316,6 +317,9 @@ impl CPU {
                 (branch_z_set, NoFlag; 0xF0=>implied)
                 (bra, NoFlag; 0x80=>implied)
                 (jsr, NoFlag; 0x20=>absolute, 0xFC=>absolute_indirect_indexed)
+                (jmp, NoFlag; 0x4C=>absolute, 0x6C=>absolute_indirect,
+                 0x7C=>absolute_indirect_indexed)
+                (jml, NoFlag; 0x5C=>absolute_long, 0xDC=>absolute_indirect_long)
                 (jsl, NoFlag; 0x22=>absolute_long)
                 (rtl, NoFlag; 0x6B=>implied)
                 (rts, NoFlag; 0x60=>implied)
@@ -378,6 +382,7 @@ impl CPU {
                 (ror_a, NoFlag; 0x6A=>implied)
                 (ror, MFlag; 0x66=>direct, 0x6E=>absolute, 0x76=>direct_x,
                  0x7E=>absolute_x)
+                (nop, NoFlag; 0xEA=>implied)
                 (push_a, NoFlag; 0x48=>implied)
                 (push_b, NoFlag; 0x8B=>implied)
                 (push_d, NoFlag; 0x0B=>implied)
@@ -648,6 +653,41 @@ impl CPU {
                 u24((((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
                     + cpu.borrow().reg.get_x() as u32)
             };
+            Pointer { addr, long }
+        }
+    }
+
+    fn absolute_indirect<'a>(cpu: Rc<RefCell<CPU>>, _: bool) -> impl Yieldable<Pointer> + 'a {
+        move || {
+            let indirect_addr = {
+                let addr_lo = fetch!(cpu) as u32;
+                u24((fetch!(cpu) << 8) as u32 | addr_lo)
+            };
+            let addr = u24({
+                let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
+                ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32) << 8)
+                    | addr_lo
+            });
+            Pointer { addr, long: true }
+        }
+    }
+
+    fn absolute_indirect_long<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        long: bool,
+    ) -> impl Yieldable<Pointer> + 'a {
+        move || {
+            let indirect_addr = {
+                let addr_lo = fetch!(cpu) as u32;
+                u24((fetch!(cpu) << 8) as u32 | addr_lo)
+            };
+            let addr = u24({
+                let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
+                let addr_mid = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
+                ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 2u32)) as u32) << 8)
+                    | (addr_mid << 8)
+                    | addr_lo
+            });
             Pointer { addr, long }
         }
     }
@@ -1136,6 +1176,21 @@ impl CPU {
         return CPU::compare_op(cpu, pointer, reg_val, flag);
     }
 
+    fn jmp<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
+            cpu.borrow_mut().reg.pc |= pointer.addr.lo16();
+        }
+    }
+
+    fn jml<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            cpu.borrow_mut().reg.pc = pointer.addr;
+        }
+    }
+
     fn jsr<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
             let return_pc = cpu.borrow().reg.pc.lo16();
@@ -1262,6 +1317,12 @@ impl CPU {
         move || {
             let data = cpu.borrow_mut().reg.pc.hi8();
             yield_all!(CPU::stack_push_u8(cpu.clone(), data));
+        }
+    }
+
+    fn nop<'a>(_: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
         }
     }
 

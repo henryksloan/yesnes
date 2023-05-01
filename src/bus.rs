@@ -13,6 +13,9 @@ pub struct Bus {
     cart_test: Vec<u8>,
     // TODO: Remove debug variable
     debug_apu_port0: u8,
+    debug_apu_port1: u8,
+    debug_apu_port2: u8,
+    debug_apu_port3: u8,
     wram: Vec<u8>,
 }
 
@@ -21,8 +24,17 @@ impl Bus {
         Self {
             ppu,
             smp,
-            cart_test: fs::read("/home/henry/roms/snes/Harvest Moon (USA).sfc").unwrap(),
+            cart_test: fs::read(
+                &std::env::args()
+                    .collect::<Vec<String>>()
+                    .get(1)
+                    .expect("Expected a rom file"),
+            )
+            .unwrap(),
             debug_apu_port0: 0xAA,
+            debug_apu_port1: 0xBB,
+            debug_apu_port2: 0,
+            debug_apu_port3: 0,
             wram: vec![0; 0x20000],
         }
     }
@@ -42,7 +54,9 @@ impl Bus {
                             // TODO: System area
                             0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
                             0x2140 => bus.borrow().debug_apu_port0,
-                            0x2141 => 0xBB,
+                            0x2141 => bus.borrow().debug_apu_port1,
+                            0x2142 => bus.borrow().debug_apu_port2,
+                            0x2143 => bus.borrow().debug_apu_port3,
                             0x8000.. => {
                                 bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
                                     | (addr.lo16() as usize - 0x8000)]
@@ -74,6 +88,9 @@ impl Bus {
                             // TODO: System area
                             0x0000..=0x1FFF => bus.borrow_mut().wram[addr.lo16() as usize] = data,
                             0x2140 => bus.borrow_mut().debug_apu_port0 = data,
+                            0x2141 => bus.borrow_mut().debug_apu_port1 = data,
+                            0x2142 => bus.borrow_mut().debug_apu_port2 = data,
+                            0x2143 => bus.borrow_mut().debug_apu_port3 = data,
                             _ => {}
                         }
                     }
