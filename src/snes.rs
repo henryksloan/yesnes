@@ -4,7 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct SNES {
-    cpu: Rc<RefCell<CPU>>,
+    pub cpu: Rc<RefCell<CPU>>,
+    pub bus: Rc<RefCell<Bus>>,
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
 
@@ -16,7 +17,7 @@ impl SNES {
         let ppu = Rc::new(RefCell::new(PPU::new()));
         let smp = Rc::new(RefCell::new(SMP::new()));
         let bus = Rc::new(RefCell::new(Bus::new(ppu.clone(), smp.clone())));
-        let cpu = Rc::new(RefCell::new(CPU::new(bus)));
+        let cpu = Rc::new(RefCell::new(CPU::new(bus.clone())));
 
         let cpu_thread = Box::from(CPU::run(cpu.clone()));
         let ppu_thread = Box::from(ppu.borrow_mut().run());
@@ -29,11 +30,16 @@ impl SNES {
             cpu,
             ppu,
             smp,
+            bus,
             scheduler,
         }
     }
 
-    pub fn tick(&mut self) {
-        self.scheduler.tick();
+    pub fn run(&mut self) {
+        self.scheduler.run();
+    }
+
+    pub fn run_instruction(&mut self) {
+        self.scheduler.run_instruction();
     }
 }

@@ -1,4 +1,4 @@
-use crate::scheduler::{DeviceGenerator, YieldReason};
+use crate::scheduler::{device_thread::DeviceThread, DeviceGenerator, YieldReason};
 
 pub struct SMP {}
 
@@ -10,7 +10,7 @@ impl SMP {
     pub fn run(&mut self) -> impl DeviceGenerator {
         move || loop {
             println!("SMP");
-            yield (YieldReason::SyncCPU, 5);
+            yield (YieldReason::Sync(DeviceThread::CPU), 5);
         }
     }
 }

@@ -1,6 +1,6 @@
 pub mod yield_reason;
 
-mod device_thread;
+pub mod device_thread;
 mod relative_clock;
 
 pub use yield_reason::{YieldReason, YieldTicks};
@@ -41,7 +41,8 @@ pub(crate) use yield_all;
 macro_rules! dummy_yield {
     () => {
         if false {
-            yield YieldReason::SyncCPU;
+            use crate::scheduler::device_thread::DeviceThread;
+            yield YieldReason::Sync(DeviceThread::CPU);
         }
     };
 }
@@ -55,6 +56,8 @@ pub struct Scheduler {
     curr: DeviceThread,
     // TODO: Really, these relative clocks only make sense if they're all relative to the same
     // thing, like CPU. Should refactor to that effect, but should work for now?
+    // Correction... I think these have to form a tree.
+    // TODO: Represent these with an abstraction with the right structure (tree?)
     cpu_ppu_clock: RelativeClock,
     cpu_smp_clock: RelativeClock,
 }
@@ -81,7 +84,8 @@ impl Scheduler {
         }
     }
 
-    pub fn tick(&mut self) {
+    // DO NOT SUBMIT: These two functions (and more like them) can be abstracted nicely (arbitrary termination conditions)
+    pub fn run(&mut self) {
         let current_generator = match self.curr {
             DeviceThread::CPU => &mut self.cpu,
             DeviceThread::PPU => &mut self.ppu,
@@ -90,8 +94,29 @@ impl Scheduler {
         let yielded = Pin::new(&mut *current_generator).resume(());
         match yielded {
             GeneratorState::Yielded((yield_reason, n_ticks)) => {
-                println!("Yielded {n_ticks} to {yield_reason:?}");
-                self.sync_curr(yield_reason, n_ticks)
+                if let YieldReason::Sync(other_device) = yield_reason {
+                    println!("Yielded {n_ticks} to {other_device:?}");
+                    self.sync_curr(other_device, n_ticks)
+                }
+            }
+            _ => panic!("unexpected value from resume"),
+        }
+    }
+
+    pub fn run_instruction(&mut self) {
+        let current_generator = match self.curr {
+            DeviceThread::CPU => &mut self.cpu,
+            DeviceThread::PPU => &mut self.ppu,
+            DeviceThread::SMP => &mut self.smp,
+        };
+        let yielded = Pin::new(&mut *current_generator).resume(());
+        match yielded {
+            GeneratorState::Yielded((YieldReason::Sync(other_device), n_ticks)) => {
+                println!("Yielded {n_ticks} to {other_device:?}");
+                self.sync_curr(other_device, n_ticks)
+            }
+            GeneratorState::Yielded((YieldReason::FinishedInstruction, n_ticks)) => {
+                println!("Finished an instruction");
             }
             _ => panic!("unexpected value from resume"),
         }
@@ -116,13 +141,22 @@ impl Scheduler {
         }
     }
 
-    fn sync_curr(&mut self, yield_reason: YieldReason, n_ticks: u64) {
-        // TODO: The CPU syncing should update ALL clocks relative to the CPU (what about DSP
-        // relative to SMP?)
+    fn get_relative_clocks(&mut self, processor: DeviceThread) -> Vec<&mut RelativeClock> {
+        match processor {
+            DeviceThread::CPU => vec![&mut self.cpu_ppu_clock, &mut self.cpu_smp_clock],
+            DeviceThread::PPU => vec![&mut self.cpu_ppu_clock],
+            DeviceThread::SMP => vec![&mut self.cpu_smp_clock],
+        }
+    }
+
+    fn sync_curr(&mut self, other_device: DeviceThread, n_ticks: u64) {
         let curr_device = self.curr;
-        let other_device = yield_reason.to_thread();
+        for relative_clock in self.get_relative_clocks(curr_device) {
+            relative_clock.tick(curr_device, n_ticks);
+        }
+        // DO NOT SUBMIT: AAAAA, this doesn't work. There's no guarantee that control won't return to A before B has fully synced.
+        // Ah!, but the scheduler itself can handle that! Handling a `Sync(B)` means to keep resuming B until it's synced with A.
         let relative_clock: &mut RelativeClock = self.get_relative_clock(curr_device, other_device);
-        relative_clock.tick(curr_device, n_ticks);
         if relative_clock.is_ahead(curr_device) {
             self.curr = other_device;
         }
