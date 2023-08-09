@@ -1,4 +1,4 @@
-use crate::scheduler::DeviceThread;
+use crate::scheduler::Device;
 
 /// Tracks the relative time of two processors.
 /// When counter >= 0, processor A is ahead;
@@ -8,8 +8,8 @@ use crate::scheduler::DeviceThread;
 /// https://near.sh/articles/design/schedulers
 pub struct RelativeClock {
     counter: i64,
-    processor_a: DeviceThread,
-    processor_b: DeviceThread,
+    processor_a: Device,
+    processor_b: Device,
     scalar_a: u64,
     scalar_b: u64,
 }
@@ -17,8 +17,8 @@ pub struct RelativeClock {
 // TODO: Subtract the smaller value sometimes to avoid overflow
 impl RelativeClock {
     pub fn new(
-        processor_a: DeviceThread,
-        processor_b: DeviceThread,
+        processor_a: Device,
+        processor_b: Device,
         frequency_a: u64,
         frequency_b: u64,
     ) -> Self {
@@ -32,7 +32,7 @@ impl RelativeClock {
         }
     }
 
-    pub fn tick(&mut self, processor: DeviceThread, n_ticks: u64) {
+    pub fn tick(&mut self, processor: Device, n_ticks: u64) {
         if processor == self.processor_a {
             self.tick_a(n_ticks);
         } else if processor == self.processor_b {
@@ -45,7 +45,7 @@ impl RelativeClock {
         }
     }
 
-    pub fn is_ahead(&self, processor: DeviceThread) -> bool {
+    pub fn is_ahead(&self, processor: Device) -> bool {
         if processor == self.processor_a {
             self.a_ahead()
         } else if processor == self.processor_b {

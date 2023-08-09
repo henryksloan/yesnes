@@ -1,5 +1,5 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DeviceThread {
+pub enum Device {
     CPU,
     PPU,
     SMP,

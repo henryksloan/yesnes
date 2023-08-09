@@ -1,8 +1,8 @@
-use crate::scheduler::DeviceThread;
+use crate::scheduler::Device;
 
 #[derive(Clone, Copy, Debug)]
 pub enum YieldReason {
-    Sync(DeviceThread),
+    Sync(Device),
     FinishedInstruction,
 }
 

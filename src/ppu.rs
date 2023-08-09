@@ -1,4 +1,4 @@
-use crate::scheduler::{device_thread::DeviceThread, DeviceGenerator, YieldReason};
+use crate::scheduler::{device::Device, DeviceGenerator, YieldReason};
 
 pub struct PPU {}
 
@@ -10,7 +10,7 @@ impl PPU {
     pub fn run(&mut self) -> impl DeviceGenerator {
         move || loop {
             println!("PPU");
-            yield (YieldReason::Sync(DeviceThread::CPU), 5);
+            yield (YieldReason::Sync(Device::CPU), 5);
         }
     }
 }
