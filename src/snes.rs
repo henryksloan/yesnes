@@ -4,7 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct SNES {
-    cpu: Rc<RefCell<CPU>>,
+    pub cpu: Rc<RefCell<CPU>>,
+    pub bus: Rc<RefCell<Bus>>,
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
 
@@ -16,24 +17,35 @@ impl SNES {
         let ppu = Rc::new(RefCell::new(PPU::new()));
         let smp = Rc::new(RefCell::new(SMP::new()));
         let bus = Rc::new(RefCell::new(Bus::new(ppu.clone(), smp.clone())));
-        let cpu = Rc::new(RefCell::new(CPU::new(bus)));
+        let cpu = Rc::new(RefCell::new(CPU::new(bus.clone())));
 
         let cpu_thread = Box::from(CPU::run(cpu.clone()));
         let ppu_thread = Box::from(ppu.borrow_mut().run());
         let smp_thread = Box::from(smp.borrow_mut().run());
         let scheduler = Scheduler::new(cpu_thread, ppu_thread, smp_thread);
 
-        cpu.borrow_mut().reset();
-
-        Self {
+        let mut snes = Self {
             cpu,
             ppu,
             smp,
+            bus,
             scheduler,
-        }
+        };
+        snes.reset();
+
+        snes
     }
 
-    pub fn tick(&mut self) {
-        self.scheduler.tick();
+    pub fn reset(&mut self) {
+        self.cpu.borrow_mut().reset();
+        self.bus.borrow_mut().reset();
+    }
+
+    pub fn run(&mut self) {
+        self.scheduler.run();
+    }
+
+    pub fn run_instruction(&mut self) {
+        self.scheduler.run_instruction();
     }
 }

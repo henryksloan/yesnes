@@ -18,6 +18,7 @@ pub struct CPU {
 
 macro_rules! yield_ticks {
     ($gen_expr:expr) => {{
+        // TODO: Is this unused/invalid?
         let ticks_to_yield = cpu.borrow().ticks_run;
         cpu.borrow_mut().ticks_run = 0;
         yield_all!($gen_expr, ticks_to_yield);
@@ -248,6 +249,10 @@ impl CPU {
         }
     }
 
+    pub fn registers(&mut self) -> &mut Registers {
+        &mut self.reg
+    }
+
     pub fn reset(&mut self) {
         self.ticks_run = 0;
         // TODO: Simplify
@@ -278,6 +283,7 @@ impl CPU {
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
+        // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         move || loop {
             print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
@@ -411,6 +417,11 @@ impl CPU {
                 (transfer_y_a, NoFlag; 0x98=>implied)
                 (transfer_y_x, NoFlag; 0xBB=>implied)
             );
+
+            // TODO: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
+            // But I think it's good enough if we just attach ticks_run to whatever this function yield (like yield_all).
+            // In fact, this is wrong, as we're returning from the device generator without flushing our cycles.
+            yield (YieldReason::FinishedInstruction, 0);
         }
     }
 

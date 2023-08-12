@@ -1,7 +1,7 @@
 use std::ops::*;
 
 // A faux primative to store 24-bit addresses
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 #[allow(non_camel_case_types)]
 pub struct u24(pub u32);
 
