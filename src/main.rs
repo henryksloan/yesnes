@@ -78,6 +78,30 @@ fn register_drag_value<T: eframe::emath::Numeric>(
     );
 }
 
+fn registers_panel(ui: &mut egui::Ui, registers: &mut cpu::registers::Registers) {
+    // DO NOT SUBMIT: The min width should depend on the M, X and E flags
+    register_drag_value(ui, &mut registers.a, "A=", 4);
+    register_drag_value(ui, &mut registers.x, "X=", 4);
+    register_drag_value(ui, &mut registers.y, "Y=", 4);
+    register_drag_value(ui, &mut registers.pc, "PC=", 6);
+    register_drag_value(ui, &mut registers.sp, "SP=", 4);
+    register_drag_value(ui, &mut registers.p, "P=", 2);
+    // DO NOT SUBMIT: Figure out if D is supposed to be 8 bits; if so, change this
+    register_drag_value(ui, &mut registers.d, "D=", 4);
+    register_drag_value(ui, &mut registers.b, "B=", 2);
+}
+
+fn status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::registers::StatusRegister) {
+    ui.checkbox(&mut status_register.n, "N");
+    ui.checkbox(&mut status_register.v, "V");
+    ui.checkbox(&mut status_register.m, "M");
+    ui.checkbox(&mut status_register.x_or_b, "X");
+    ui.checkbox(&mut status_register.d, "D");
+    ui.checkbox(&mut status_register.i, "I");
+    ui.checkbox(&mut status_register.z, "B");
+    ui.checkbox(&mut status_register.c, "C");
+}
+
 impl Default for MyApp {
     fn default() -> Self {
         Self {
@@ -90,35 +114,30 @@ impl Default for MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::Frame::none()
-                .fill(ui.style().visuals.faint_bg_color)
-                .inner_margin(egui::Margin::same(8.0))
-                .outer_margin(egui::Margin {
-                    bottom: 6.0,
-                    ..Default::default()
-                })
-                .show(ui, |ui| {
-                    // DO NOT SUBMIT: The min width should depend on the M, X and E flags
-                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().a, "A=", 4);
-                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().x, "X=", 4);
-                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().y, "Y=", 4);
-                    register_drag_value(
-                        ui,
-                        &mut self.snes.cpu.borrow_mut().registers().pc,
-                        "PC=",
-                        6,
-                    );
-                    register_drag_value(
-                        ui,
-                        &mut self.snes.cpu.borrow_mut().registers().sp,
-                        "SP=",
-                        4,
-                    );
-                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().p, "P=", 2);
-                    // DO NOT SUBMIT: Figure out if D is supposed to be 8 bits; if so, change this
-                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().d, "D=", 4);
-                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().b, "B=", 2);
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    egui::Frame::group(ui.style())
+                        .outer_margin(egui::Margin {
+                            right: 4.0,
+                            bottom: 6.0,
+                            ..Default::default()
+                        })
+                        .show(ui, |ui| {
+                            ui.set_min_width(75.0);
+                            registers_panel(ui, self.snes.cpu.borrow_mut().registers())
+                        });
                 });
+                ui.vertical(|ui| {
+                    egui::Frame::group(ui.style())
+                        .outer_margin(egui::Margin {
+                            bottom: 6.0,
+                            ..Default::default()
+                        })
+                        .show(ui, |ui| {
+                            status_register_panel(ui, &mut self.snes.cpu.borrow_mut().registers().p)
+                        });
+                });
+            });
             let cpu_pc = self.snes.cpu.borrow_mut().registers().pc;
             ui.horizontal(|ui| {
                 if ui.button("Go to PC").clicked() {
