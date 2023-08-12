@@ -283,7 +283,7 @@ impl CPU {
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
-        // DO NOT SUBMIT: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
+        // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         move || loop {
             print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
@@ -418,8 +418,9 @@ impl CPU {
                 (transfer_y_x, NoFlag; 0xBB=>implied)
             );
 
-            // DO NOT SUBMIT: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
-            // But I think it's good enough if we just attach ticks_run to whatever this function yield (like yield_all)
+            // TODO: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
+            // But I think it's good enough if we just attach ticks_run to whatever this function yield (like yield_all).
+            // In fact, this is wrong, as we're returning from the device generator without flushing our cycles.
             yield (YieldReason::FinishedInstruction, 0);
         }
     }

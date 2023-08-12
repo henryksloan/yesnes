@@ -90,7 +90,7 @@ impl Scheduler {
         }
     }
 
-    // DO NOT SUBMIT: These two functions (and more like them) can be abstracted nicely (arbitrary termination conditions)
+    // TODO: These two functions (and more like them) can be abstracted nicely (arbitrary termination conditions)
     pub fn run(&mut self) {
         loop {
             let yielded = self.resume();
@@ -117,7 +117,6 @@ impl Scheduler {
                             self.curr_thread().waiting_for = Some(other_device);
                         }
                         YieldReason::FinishedInstruction => {
-                            println!("Finished an instruction");
                             break;
                         }
                     }

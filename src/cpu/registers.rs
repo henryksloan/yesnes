@@ -10,7 +10,6 @@ pub struct Registers {
     pub pc: u24,
     pub sp: u16, // Stack pointer
     pub p: StatusRegister,
-    // DO NOT SUBMIT: Is d just supposed to be 8 bits?
     pub d: u16, // Direct page
     pub b: u8,  // Data bank
 }

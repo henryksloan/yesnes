@@ -106,7 +106,6 @@ fn registers_panel(ui: &mut egui::Ui, registers: &mut cpu::registers::Registers)
     register_drag_value(ui, &mut registers.pc, "PC=", 6);
     register_drag_value(ui, &mut registers.sp, "SP=", sp_width);
     register_drag_value(ui, &mut registers.p, "P=", 2);
-    // DO NOT SUBMIT: Figure out if D is supposed to be 8 bits; if so, change this
     register_drag_value(ui, &mut registers.d, "D=", 4);
     register_drag_value(ui, &mut registers.b, "B=", 2);
 }
@@ -173,6 +172,14 @@ impl eframe::App for MyApp {
                 }
                 if ui.button("Trace").clicked() {
                     self.snes.run_instruction();
+                    // TODO: One there's a disassembler, Trace and Reset should do slightly smarter stuff.
+                    // Trace should scroll only so as to keep the cursor on the 2nd to bottom row.
+                    // Reset should probably bring the cursor to the center or top of the table.
+                    self.scroll_to_row = Some(cpu_pc.raw());
+                }
+                if ui.button("Reset").clicked() {
+                    self.snes.reset();
+                    self.scroll_to_row = Some(cpu_pc.raw());
                 }
             });
             let text_height = egui::TextStyle::Body.resolve(ui.style()).size;

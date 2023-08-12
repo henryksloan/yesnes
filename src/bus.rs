@@ -31,14 +31,23 @@ impl Bus {
                     .expect("Expected a rom file"),
             )
             .unwrap(),
-            debug_apu_port0: 0xAA,
-            debug_apu_port1: 0xBB,
+            debug_apu_port0: 0,
+            debug_apu_port1: 0,
             debug_apu_port2: 0,
             debug_apu_port3: 0,
             wram: vec![0; 0x20000],
         }
     }
 
+    pub fn reset(&mut self) {
+        self.debug_apu_port0 = 0xAA;
+        self.debug_apu_port1 = 0xBB;
+        self.debug_apu_port2 = 0;
+        self.debug_apu_port3 = 0;
+        self.wram.fill(0);
+    }
+
+    // TODO: I have FORGOTTEN why these don't take &self. Look into why.
     pub fn peak_u8(bus: Rc<RefCell<Bus>>, addr: u24) -> u8 {
         // TODO: Some generalized mapper logic
         match addr.hi8() {

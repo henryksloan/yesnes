@@ -24,15 +24,21 @@ impl SNES {
         let smp_thread = Box::from(smp.borrow_mut().run());
         let scheduler = Scheduler::new(cpu_thread, ppu_thread, smp_thread);
 
-        cpu.borrow_mut().reset();
-
-        Self {
+        let mut snes = Self {
             cpu,
             ppu,
             smp,
             bus,
             scheduler,
-        }
+        };
+        snes.reset();
+
+        snes
+    }
+
+    pub fn reset(&mut self) {
+        self.cpu.borrow_mut().reset();
+        self.bus.borrow_mut().reset();
     }
 
     pub fn run(&mut self) {
