@@ -17,10 +17,11 @@ mod u24;
 use bus::Bus;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
+use log::{debug, error, info, log_enabled, Level};
 use snes::SNES;
 
 fn main() -> Result<(), eframe::Error> {
-    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+    env_logger::init();
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(860.0, 620.0)),
         ..Default::default()
@@ -53,53 +54,80 @@ impl eframe::emath::Numeric for cpu::registers::StatusRegister {
     const MAX: Self = cpu::registers::StatusRegister::new(0xFF);
 
     fn to_f64(self) -> f64 {
-        self.get() as f64
+        (self.get() as u32 | ((self.e as u32) << 8)) as f64
     }
 
     fn from_f64(num: f64) -> Self {
         let mut new_register = Self::default();
-        new_register.set(num as u8);
+        new_register.set(num as u32 as u8);
+        new_register.e = ((num as u32) >> 8) & 1 == 1;
         new_register
     }
 }
 
+/// Add an editable view of the given CPU register, masked to its bottom `hex_digits` nybbles.
 fn register_drag_value<T: eframe::emath::Numeric>(
     ui: &mut egui::Ui,
     register: &mut T,
     prefix: &str,
-    min_width: usize,
+    hex_digits: usize,
 ) {
+    let mask = (1 << (hex_digits * 4)) - 1;
+    let mut reg_ui_val = (register.to_f64() as usize) & mask;
     ui.add(
-        egui::DragValue::new(register)
+        egui::DragValue::new(&mut reg_ui_val)
             .prefix(prefix)
             .speed(0)
-            .clamp_range(0..=((T::MAX).to_f64() as usize))
-            .hexadecimal(min_width, false, true),
+            .clamp_range(0..=mask)
+            .hexadecimal(hex_digits, false, true)
+            .custom_parser(|s| {
+                u32::from_str_radix(s, 16)
+                    .map(|n| (n as usize & mask) as f64)
+                    .ok()
+            }),
     );
+    let mut reg_val = register.to_f64() as usize;
+    reg_val &= !mask;
+    reg_val |= reg_ui_val;
+    *register = T::from_f64(reg_val as f64);
 }
 
+/// Adds editable view of all CPU registers.
 fn registers_panel(ui: &mut egui::Ui, registers: &mut cpu::registers::Registers) {
-    // DO NOT SUBMIT: The min width should depend on the M, X and E flags
-    register_drag_value(ui, &mut registers.a, "A=", 4);
-    register_drag_value(ui, &mut registers.x, "X=", 4);
-    register_drag_value(ui, &mut registers.y, "Y=", 4);
+    let x_y_16_bits = registers.index_reg_16_bits();
+    let x_y_width = if x_y_16_bits { 4 } else { 2 };
+    let a_16_bits = registers.accumulator_16_bits();
+    let a_width = if a_16_bits { 4 } else { 2 };
+    let sp_16_bits = registers.stack_pointer_16_bits();
+    let sp_width = if sp_16_bits { 4 } else { 2 };
+    register_drag_value(ui, &mut registers.a, "A=", a_width);
+    register_drag_value(ui, &mut registers.x, "X=", x_y_width);
+    register_drag_value(ui, &mut registers.y, "Y=", x_y_width);
     register_drag_value(ui, &mut registers.pc, "PC=", 6);
-    register_drag_value(ui, &mut registers.sp, "SP=", 4);
+    register_drag_value(ui, &mut registers.sp, "SP=", sp_width);
     register_drag_value(ui, &mut registers.p, "P=", 2);
     // DO NOT SUBMIT: Figure out if D is supposed to be 8 bits; if so, change this
     register_drag_value(ui, &mut registers.d, "D=", 4);
     register_drag_value(ui, &mut registers.b, "B=", 2);
 }
 
+/// Add checkboxes for the bits of the status register.
 fn status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::registers::StatusRegister) {
-    ui.checkbox(&mut status_register.n, "N");
-    ui.checkbox(&mut status_register.v, "V");
-    ui.checkbox(&mut status_register.m, "M");
-    ui.checkbox(&mut status_register.x_or_b, "X");
-    ui.checkbox(&mut status_register.d, "D");
-    ui.checkbox(&mut status_register.i, "I");
-    ui.checkbox(&mut status_register.z, "B");
-    ui.checkbox(&mut status_register.c, "C");
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.checkbox(&mut status_register.n, "N");
+            ui.checkbox(&mut status_register.v, "V");
+            ui.checkbox(&mut status_register.m, "M");
+            ui.checkbox(&mut status_register.x_or_b, "X");
+            ui.checkbox(&mut status_register.d, "D");
+            ui.checkbox(&mut status_register.i, "I");
+            ui.checkbox(&mut status_register.z, "B");
+            ui.checkbox(&mut status_register.c, "C");
+        });
+        ui.vertical(|ui| {
+            ui.checkbox(&mut status_register.e, "E");
+        });
+    });
 }
 
 impl Default for MyApp {
@@ -123,8 +151,8 @@ impl eframe::App for MyApp {
                             ..Default::default()
                         })
                         .show(ui, |ui| {
-                            ui.set_min_width(75.0);
-                            registers_panel(ui, self.snes.cpu.borrow_mut().registers())
+                            registers_panel(ui, self.snes.cpu.borrow_mut().registers());
+                            ui.set_width(75.0);
                         });
                 });
                 ui.vertical(|ui| {

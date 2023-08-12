@@ -36,16 +36,26 @@ impl Registers {
         self.d = val;
     }
 
-    // TODO: These should all handle emulation flag
+    pub fn index_reg_16_bits(&self) -> bool {
+        !self.p.e && !self.p.x_or_b
+    }
+
+    pub fn accumulator_16_bits(&self) -> bool {
+        !self.p.e && !self.p.m
+    }
+
+    pub fn stack_pointer_16_bits(&self) -> bool {
+        !self.p.e
+    }
 
     // Gets the X register.
     // Whether it gets the whole thing or just the low bits
     // depends on the X flag.
     pub fn get_x(&self) -> u16 {
-        if self.p.x_or_b {
-            self.x & 0xFF
-        } else {
+        if self.index_reg_16_bits() {
             self.x
+        } else {
+            self.x & 0xFF
         }
     }
 
@@ -53,28 +63,28 @@ impl Registers {
     // Whether it sets the whole thing or just the low bits
     // depends on the X flag.
     pub fn set_x(&mut self, val: u16) {
-        if self.p.x_or_b {
+        if self.index_reg_16_bits() {
+            self.x = val;
+        } else {
             self.x &= 0xFF00;
             self.x |= val & 0xFF;
-        } else {
-            self.x = val;
         }
     }
 
     pub fn get_y(&self) -> u16 {
-        if self.p.x_or_b {
-            self.y & 0xFF
-        } else {
+        if self.index_reg_16_bits() {
             self.y
+        } else {
+            self.y & 0xFF
         }
     }
 
     pub fn set_y(&mut self, val: u16) {
-        if self.p.x_or_b {
+        if self.index_reg_16_bits() {
+            self.y = val;
+        } else {
             self.y &= 0xFF00;
             self.y |= val & 0xFF;
-        } else {
-            self.y = val;
         }
     }
 
@@ -82,10 +92,10 @@ impl Registers {
     // Whether it gets the whole thing or just the low bits
     // depends on the M flag.
     pub fn get_a(&self) -> u16 {
-        if self.p.m {
-            self.a & 0xFF
-        } else {
+        if self.accumulator_16_bits() {
             self.a
+        } else {
+            self.a & 0xFF
         }
     }
 
@@ -93,11 +103,11 @@ impl Registers {
     // Whether it sets the whole thing or just the low bits
     // depends on the M flag.
     pub fn set_a(&mut self, val: u16) {
-        if self.p.m {
+        if self.accumulator_16_bits() {
+            self.a = val;
+        } else {
             self.a &= 0xFF00;
             self.a |= val & 0xFF;
-        } else {
-            self.a = val;
         }
     }
 
@@ -105,10 +115,10 @@ impl Registers {
     // Whether it gets the whole thing or just the low bits
     // depends on the E flag.
     pub fn get_sp(&self) -> u16 {
-        if self.p.e {
-            self.sp & 0xFF
-        } else {
+        if self.stack_pointer_16_bits() {
             self.sp
+        } else {
+            self.sp & 0xFF
         }
     }
 
@@ -116,11 +126,11 @@ impl Registers {
     // Whether it sets the whole thing or just the low bits
     // depends on the E flag.
     pub fn set_sp(&mut self, val: u16) {
-        if self.p.e {
+        if self.stack_pointer_16_bits() {
+            self.sp = val;
+        } else {
             self.sp &= 0xFF00;
             self.sp |= val & 0xFF;
-        } else {
-            self.sp = val;
         }
     }
 
