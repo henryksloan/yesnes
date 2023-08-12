@@ -10,6 +10,7 @@ pub struct Registers {
     pub pc: u24,
     pub sp: u16, // Stack pointer
     pub p: StatusRegister,
+    // DO NOT SUBMIT: Is d just supposed to be 8 bits?
     pub d: u16, // Direct page
     pub b: u8,  // Data bank
 }
@@ -134,7 +135,7 @@ impl Registers {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub struct StatusRegister {
     pub n: bool, // Negative flag
     pub v: bool, // Overflow flag
@@ -154,6 +155,20 @@ pub struct StatusRegister {
 }
 
 impl StatusRegister {
+    pub const fn new(data: u8) -> Self {
+        Self {
+            n: ((data >> 7) & 1) == 1,
+            v: ((data >> 6) & 1) == 1,
+            m: ((data >> 5) & 1) == 1,
+            x_or_b: ((data >> 4) & 1) == 1,
+            d: ((data >> 3) & 1) == 1,
+            i: ((data >> 2) & 1) == 1,
+            z: ((data >> 1) & 1) == 1,
+            c: ((data >> 0) & 1) == 1,
+            e: false,
+        }
+    }
+
     pub fn get(&self) -> u8 {
         ((self.n as u8) << 7)
             | ((self.v as u8) << 6)
@@ -174,5 +189,17 @@ impl StatusRegister {
         self.i = ((data >> 2) & 1) == 1;
         self.z = ((data >> 1) & 1) == 1;
         self.c = ((data >> 0) & 1) == 1;
+    }
+}
+
+impl Ord for StatusRegister {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.get().cmp(&other.get())
+    }
+}
+
+impl PartialOrd for StatusRegister {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }

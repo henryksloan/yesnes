@@ -249,8 +249,8 @@ impl CPU {
         }
     }
 
-    pub fn registers(&self) -> &Registers {
-        &self.reg
+    pub fn registers(&mut self) -> &mut Registers {
+        &mut self.reg
     }
 
     pub fn reset(&mut self) {
@@ -283,6 +283,7 @@ impl CPU {
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
+        // DO NOT SUBMIT: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         move || loop {
             print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));

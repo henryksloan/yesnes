@@ -6,6 +6,7 @@
 
 mod bus;
 mod cpu;
+mod disassembler;
 mod memory;
 mod ppu;
 mod scheduler;
@@ -21,28 +22,65 @@ use snes::SNES;
 fn main() -> Result<(), eframe::Error> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(320.0, 240.0)),
+        initial_window_size: Some(egui::vec2(860.0, 620.0)),
         ..Default::default()
     };
-    eframe::run_native(
-        "My egui App",
-        options,
-        Box::new(|_cc| Box::<MyApp>::default()),
-    )
+    eframe::run_native("yesnes", options, Box::new(|_cc| Box::<MyApp>::default()))
 }
 
 struct MyApp {
-    name: String,
-    age: u32,
     snes: SNES,
     scroll_to_row: Option<usize>,
+}
+
+impl eframe::emath::Numeric for u24::u24 {
+    const INTEGRAL: bool = true;
+    const MIN: Self = u24::u24(0);
+    const MAX: Self = u24::u24(0xFF_FFFF);
+
+    fn to_f64(self) -> f64 {
+        self.0 as f64
+    }
+
+    fn from_f64(num: f64) -> Self {
+        Self(num as u32)
+    }
+}
+
+impl eframe::emath::Numeric for cpu::registers::StatusRegister {
+    const INTEGRAL: bool = true;
+    const MIN: Self = cpu::registers::StatusRegister::new(0x00);
+    const MAX: Self = cpu::registers::StatusRegister::new(0xFF);
+
+    fn to_f64(self) -> f64 {
+        self.get() as f64
+    }
+
+    fn from_f64(num: f64) -> Self {
+        let mut new_register = Self::default();
+        new_register.set(num as u8);
+        new_register
+    }
+}
+
+fn register_drag_value<T: eframe::emath::Numeric>(
+    ui: &mut egui::Ui,
+    register: &mut T,
+    prefix: &str,
+    min_width: usize,
+) {
+    ui.add(
+        egui::DragValue::new(register)
+            .prefix(prefix)
+            .speed(0)
+            .clamp_range(0..=((T::MAX).to_f64() as usize))
+            .hexadecimal(min_width, false, true),
+    );
 }
 
 impl Default for MyApp {
     fn default() -> Self {
         Self {
-            name: "Arthur".to_owned(),
-            age: 42,
             snes: SNES::new(),
             scroll_to_row: None,
         }
@@ -52,26 +90,47 @@ impl Default for MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("My egui Application");
+            egui::Frame::none()
+                .fill(ui.style().visuals.faint_bg_color)
+                .inner_margin(egui::Margin::same(8.0))
+                .outer_margin(egui::Margin {
+                    bottom: 6.0,
+                    ..Default::default()
+                })
+                .show(ui, |ui| {
+                    // DO NOT SUBMIT: The min width should depend on the M, X and E flags
+                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().a, "A=", 4);
+                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().x, "X=", 4);
+                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().y, "Y=", 4);
+                    register_drag_value(
+                        ui,
+                        &mut self.snes.cpu.borrow_mut().registers().pc,
+                        "PC=",
+                        6,
+                    );
+                    register_drag_value(
+                        ui,
+                        &mut self.snes.cpu.borrow_mut().registers().sp,
+                        "SP=",
+                        4,
+                    );
+                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().p, "P=", 2);
+                    // DO NOT SUBMIT: Figure out if D is supposed to be 8 bits; if so, change this
+                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().d, "D=", 4);
+                    register_drag_value(ui, &mut self.snes.cpu.borrow_mut().registers().b, "B=", 2);
+                });
+            let cpu_pc = self.snes.cpu.borrow_mut().registers().pc;
             ui.horizontal(|ui| {
-                let name_label = ui.label("Your name: ");
-                ui.text_edit_singleline(&mut self.name)
-                    .labelled_by(name_label.id);
+                if ui.button("Go to PC").clicked() {
+                    self.scroll_to_row = Some(cpu_pc.raw());
+                }
+                if ui.button("Trace").clicked() {
+                    self.snes.run_instruction();
+                }
             });
-            ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
-            let cpu_pc = self.snes.cpu.borrow().registers().pc;
-            if ui.button("Go to PC").clicked() {
-                self.age += 1;
-                self.scroll_to_row = Some(cpu_pc.raw());
-            }
-            if ui.button("Trace").clicked() {
-                self.snes.run_instruction();
-            }
-            ui.label(format!("Hello '{}', age {}", self.name, self.age));
             let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
             let mut table = TableBuilder::new(ui)
                 .striped(true)
-                // .resizable(self.resizable)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .column(Column::auto())
                 .column(Column::initial(100.0).range(40.0..=300.0))
@@ -79,7 +138,7 @@ impl eframe::App for MyApp {
                 .column(Column::remainder())
                 .min_scrolled_height(0.0);
             if let Some(row_nr) = self.scroll_to_row.take() {
-                table = table.scroll_to_row(row_nr, None);
+                table = table.scroll_to_row(row_nr, Some(egui::Align::Center));
             }
             table
                 .header(20.0, |mut header| {
