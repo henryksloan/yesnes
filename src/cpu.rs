@@ -9,6 +9,8 @@ use std::rc::Rc;
 
 use paste::paste;
 
+pub const RESET_VECTOR: u24 = u24(0xFFFC);
+
 /// The 65816 microprocessor, the main CPU of the SNES
 pub struct CPU {
     reg: Registers,
@@ -36,6 +38,7 @@ macro_rules! yield_ticks {
     }};
 }
 
+// TODO: Replace some of these with e.g. index_reg_16_bits
 macro_rules! n_bits {
     ($cpu_rc:ident, u8) => {
         8
@@ -256,28 +259,16 @@ impl CPU {
     pub fn reset(&mut self) {
         self.ticks_run = 0;
         // TODO: Simplify
-        self.reg.pc = {
-            let lo = u24({
-                let mut gen = Bus::read_u8(self.bus.clone(), u24(0xFFFC));
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u32,
-                        _ => {}
-                    }
+        self.reg.pc = u24({
+            let mut gen = Bus::read_u16(self.bus.clone(), RESET_VECTOR);
+            loop {
+                match Pin::new(&mut gen).resume(()) {
+                    GeneratorState::Complete(out) => break out as u32,
+                    _ => {}
                 }
-            });
-            let hi = u24({
-                let mut gen = Bus::read_u8(self.bus.clone(), u24(0xFFFD));
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u32,
-                        _ => {}
-                    }
-                }
-            });
-            (hi << 8) | lo
-        };
-        self.reg.set_p(0xF4);
+            }
+        });
+        self.reg.set_p(0x34);
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
     }
