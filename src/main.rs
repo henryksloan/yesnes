@@ -65,7 +65,7 @@ impl eframe::emath::Numeric for cpu::registers::StatusRegister {
     }
 }
 
-/// Add an editable view of the given CPU register, masked to its bottom `hex_digits` nybbles.
+/// Add an editable view of the given CPU register, masked to its bottom `hex_digits` nybbles
 fn register_drag_value<T: eframe::emath::Numeric>(
     ui: &mut egui::Ui,
     register: &mut T,
@@ -92,7 +92,7 @@ fn register_drag_value<T: eframe::emath::Numeric>(
     *register = T::from_f64(reg_val as f64);
 }
 
-/// Adds editable view of all CPU registers.
+/// Adds editable view of all CPU registers
 fn registers_panel(ui: &mut egui::Ui, registers: &mut cpu::registers::Registers) {
     let x_y_16_bits = registers.index_reg_16_bits();
     let x_y_width = if x_y_16_bits { 4 } else { 2 };
@@ -110,7 +110,7 @@ fn registers_panel(ui: &mut egui::Ui, registers: &mut cpu::registers::Registers)
     register_drag_value(ui, &mut registers.b, "B=", 2);
 }
 
-/// Add checkboxes for the bits of the status register.
+/// Add checkboxes for the bits of the status register
 fn status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::registers::StatusRegister) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
@@ -120,7 +120,7 @@ fn status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::registers
             ui.checkbox(&mut status_register.x_or_b, "X");
             ui.checkbox(&mut status_register.d, "D");
             ui.checkbox(&mut status_register.i, "I");
-            ui.checkbox(&mut status_register.z, "B");
+            ui.checkbox(&mut status_register.z, "Z");
             ui.checkbox(&mut status_register.c, "C");
         });
         ui.vertical(|ui| {
