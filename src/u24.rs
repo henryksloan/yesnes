@@ -1,3 +1,4 @@
+use std::fmt;
 use std::ops::*;
 
 // A faux primative to store 24-bit addresses
@@ -16,6 +17,24 @@ impl u24 {
 
     pub fn hi8(&self) -> u8 {
         (self.0 >> 16) as u8
+    }
+}
+
+impl fmt::Display for u24 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:#08X}", self.0)
+    }
+}
+
+impl fmt::UpperHex for u24 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::UpperHex::fmt(&self.0, f)
+    }
+}
+
+impl fmt::LowerHex for u24 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
     }
 }
 

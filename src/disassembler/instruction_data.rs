@@ -1,3 +1,6 @@
+use crate::disassembler::RegisterState;
+
+#[derive(Debug, Clone, Copy)]
 pub enum AddressingMode {
     Implied,
     ImmediateMFlag,
@@ -6,7 +9,6 @@ pub enum AddressingMode {
     PcRelative,
     PcRelativeLong,
     Direct,
-    DirectY,
     DirectIndexedX,
     DirectIndexedY,
     Indirect,
@@ -27,9 +29,42 @@ pub enum AddressingMode {
     BlockMove,
 }
 
+impl AddressingMode {
+    pub fn operand_bytes(&self, register_state: &RegisterState) -> usize {
+        match *self {
+            Implied => 0,
+            ImmediateMFlag => 2 - register_state.m as usize,
+            ImmediateXFlag => 2 - register_state.x as usize,
+            ImmediateByte => 1,
+            PcRelative => 1,
+            PcRelativeLong => 2,
+            Direct => 1,
+            DirectIndexedX => 1,
+            DirectIndexedY => 1,
+            Indirect => 1,
+            IndexedIndirectX => 1,
+            IndirectIndexedY => 1,
+            IndirectLong => 1,
+            IndirectIndexedYLong => 1,
+            Absolute => 2,
+            AbsoluteX => 2,
+            AbsoluteY => 2,
+            AbsoluteLong => 3,
+            AbsoluteLongX => 3,
+            StackRelative => 1,
+            StackRelativeIndirectIndexed => 1,
+            AbsoluteIndirect => 2,
+            AbsoluteIndirectLong => 2,
+            AbsoluteIndirectIndexed => 2,
+            BlockMove => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct InstructionData {
-    mnemonic: &'static str,
-    mode: AddressingMode,
+    pub mnemonic: &'static str,
+    pub mode: AddressingMode,
 }
 
 use AddressingMode::*;
@@ -195,7 +230,7 @@ pub const INSTRUCTION_DATA: [InstructionData; 256] = [
     InstructionData { mnemonic: "STA", mode: StackRelativeIndirectIndexed },
     InstructionData { mnemonic: "STY", mode: DirectIndexedX },
     InstructionData { mnemonic: "STA", mode: DirectIndexedX },
-    InstructionData { mnemonic: "STX", mode: DirectY },
+    InstructionData { mnemonic: "STX", mode: DirectIndexedY },
     InstructionData { mnemonic: "STA", mode: IndirectIndexedYLong },
     InstructionData { mnemonic: "TYA", mode: Implied },
     InstructionData { mnemonic: "STA", mode: AbsoluteY },
@@ -229,7 +264,7 @@ pub const INSTRUCTION_DATA: [InstructionData; 256] = [
     InstructionData { mnemonic: "LDA", mode: StackRelativeIndirectIndexed },
     InstructionData { mnemonic: "LDY", mode: DirectIndexedX },
     InstructionData { mnemonic: "LDA", mode: DirectIndexedX },
-    InstructionData { mnemonic: "LDX", mode: DirectY },
+    InstructionData { mnemonic: "LDX", mode: DirectIndexedY },
     InstructionData { mnemonic: "LDA", mode: IndirectIndexedYLong },
     InstructionData { mnemonic: "CLV", mode: Implied },
     InstructionData { mnemonic: "LDA", mode: AbsoluteY },
