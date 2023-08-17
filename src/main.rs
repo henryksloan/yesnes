@@ -245,7 +245,7 @@ impl eframe::App for YesnesApp {
                             row.col(|ui| {
                                 ui.label(format!(
                                     "{} {:?}({:08X})",
-                                    disassembly_line.instruction.instruction_data.mnemonic,
+                                    disassembly_line.instruction.instruction_data.mnemonic(),
                                     disassembly_line.instruction.instruction_data.mode,
                                     disassembly_line.instruction.operand,
                                 ));
