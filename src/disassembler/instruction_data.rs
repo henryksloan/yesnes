@@ -59,6 +59,20 @@ impl AddressingMode {
             BlockMove => 2,
         }
     }
+
+    pub fn is_indirect(&self) -> bool {
+        matches!(
+            *self,
+            IndexedIndirectX
+                | IndirectIndexedY
+                | IndirectLong
+                | IndirectIndexedYLong
+                | StackRelativeIndirectIndexed
+                | AbsoluteIndirect
+                | AbsoluteIndirectLong
+                | AbsoluteIndirectIndexed
+        )
+    }
 }
 
 #[rustfmt::skip]

@@ -277,6 +277,7 @@ impl CPU {
         // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         move || loop {
             print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
+            // TODO: Why not `fetch!`?
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             cpu.borrow_mut().reg.pc += 1u32;
             {

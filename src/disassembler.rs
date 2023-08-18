@@ -27,6 +27,7 @@ impl RegisterState {
     }
 }
 
+#[derive(Clone)]
 struct AnalysisState {
     pub reg: RegisterState,
     pub p_stack: Vec<RegisterState>,
@@ -54,7 +55,7 @@ pub struct DisassemblerInstruction {
 }
 
 impl DisassemblerInstruction {
-    pub fn new(instruction_data: InstructionData, operand: u32) -> Self {
+    pub(self) fn new(instruction_data: InstructionData, operand: u32) -> Self {
         let (new_m_flag, new_x_flag) = match instruction_data.instruction {
             Instruction::REP => {
                 let resets_x = (operand >> 4) & 1 == 1;
@@ -77,7 +78,7 @@ impl DisassemblerInstruction {
         }
     }
 
-    pub(self) fn update_register_state(&self, analysis_state: &mut AnalysisState) {
+    pub(self) fn update_analysis_state(&self, analysis_state: &mut AnalysisState) {
         if let Some(new_m_flag) = self.new_m_flag {
             analysis_state.reg.m = new_m_flag;
         }
@@ -95,6 +96,38 @@ impl DisassemblerInstruction {
                 analysis_state.reg = popped;
             }
         }
+    }
+
+    pub fn is_conditional_branch(&self) -> bool {
+        use Instruction::*;
+        matches!(
+            self.instruction_data.instruction,
+            BCC | BCS | BEQ | BMI | BNE | BPL | BVC | BVS
+        )
+    }
+
+    pub fn is_unconditional_branch(&self) -> bool {
+        use Instruction::*;
+        matches!(self.instruction_data.instruction, BRA | BRL | JMP | JML)
+    }
+
+    pub fn is_call(&self) -> bool {
+        use Instruction::*;
+        matches!(self.instruction_data.instruction, JSR | JSL)
+    }
+
+    pub fn is_return(&self) -> bool {
+        use Instruction::*;
+        matches!(self.instruction_data.instruction, RTI | RTL | RTS)
+    }
+
+    pub fn is_indirect(&self) -> bool {
+        self.instruction_data.mode.is_indirect()
+    }
+
+    pub fn halts(&self) -> bool {
+        use Instruction::*;
+        matches!(self.instruction_data.instruction, BRK | STP)
     }
 }
 
@@ -121,7 +154,7 @@ impl Disassembler {
 
     pub fn disassemble(&mut self) {
         let pc = u24(Bus::peak_u16(self.bus.clone(), cpu::RESET_VECTOR) as u32);
-        // DO NOT SUBMIT: Also analyze other vectors
+        // DO NOT SUBMIT: Also analyze other vectors. Can/do any vectors contain 65C816-mode code?
         self.analyze(pc, &mut AnalysisState::new());
         for (addr, instruction) in self.disassembly_cache.iter().enumerate() {
             if let Some(instruction) = instruction {
@@ -133,7 +166,6 @@ impl Disassembler {
         }
     }
 
-    // DO NOT SUBMIT: Should recurse on jumps, calls, etc.
     fn analyze(&mut self, start_addr: u24, analysis_state: &mut AnalysisState) {
         let mut addr = start_addr;
         loop {
@@ -143,7 +175,6 @@ impl Disassembler {
             let opcode = Bus::peak_u8(self.bus.clone(), addr);
             let instr = INSTRUCTION_DATA[opcode as usize];
             let operand_bytes = instr.mode.operand_bytes(&analysis_state);
-            // info!("{:?} ({})", instr, operand_bytes);
             let mut operand: u32 = 0;
             for i in 0..operand_bytes {
                 let operand_byte_offset = operand_bytes - i;
@@ -151,12 +182,63 @@ impl Disassembler {
                 operand |= Bus::peak_u8(self.bus.clone(), addr + operand_byte_offset as u32) as u32;
             }
             let disassembled = DisassemblerInstruction::new(instr, operand);
-            disassembled.update_register_state(analysis_state);
+            disassembled.update_analysis_state(analysis_state);
             self.disassembly_cache[addr.raw()] = Some(disassembled);
-            addr += (instr.mode.operand_bytes(analysis_state) + 1) as u32;
-            // Check for overflow
-            if addr <= start_addr {
-                return;
+
+            if disassembled.halts() {
+                break;
+            }
+
+            if disassembled.is_conditional_branch() {
+                // TODO: More general solution to addressing modes in analyze()
+                let offset = match disassembled.instruction_data.mode {
+                    AddressingMode::PcRelative => operand as i8 as i32 + 2,
+                    AddressingMode::PcRelativeLong => operand as i16 as i32 + 3,
+                    _ => panic!(
+                        "Unexpected addressing mode for {:?}: {:?}",
+                        disassembled.instruction_data.instruction,
+                        disassembled.instruction_data.mode
+                    ),
+                };
+                let dest_addr = u24((addr.raw() as i32 + offset) as u32);
+                // Take the branch with a copy of the analysis state.
+                // Branches don't "return", so afterwards we proceed as if the condition has failed.
+                self.analyze(dest_addr, &mut analysis_state.clone());
+            } else if disassembled.is_call() && !disassembled.is_indirect() {
+                // Send the analysis state as a reference. Calls return, so
+                // modifications to registers should be preserved.
+                // TODO: More general solution to addressing modes in analyze()
+                // TODO: This logic isn't totally sound. For example, if we
+                // already analyzed the code, we won't correctly modify registers.
+                self.analyze(u24(operand), analysis_state);
+            }
+
+            if disassembled.is_unconditional_branch() && !disassembled.is_indirect() {
+                // No need to recurse for an unconditional branch, as there's only one execution path.
+                // TODO: More general solution to addressing modes in analyze()
+                addr = match disassembled.instruction_data.mode {
+                    AddressingMode::PcRelative => {
+                        u24((addr.raw() as i32 + operand as i8 as i32 + 2) as u32)
+                    }
+                    AddressingMode::PcRelativeLong => {
+                        u24((addr.raw() as i32 + operand as i16 as i32 + 3) as u32)
+                    }
+                    AddressingMode::Absolute | AddressingMode::AbsoluteLong => u24(operand),
+                    _ => panic!(
+                        "Unexpected addressing mode for {:?}: {:?}",
+                        disassembled.instruction_data.instruction,
+                        disassembled.instruction_data.mode
+                    ),
+                };
+            } else if disassembled.is_return()
+                || (disassembled.is_indirect()
+                    && (disassembled.is_call() || disassembled.is_unconditional_branch()))
+            {
+                // We either hit a return or an indirect call/branch. Either way, we can't
+                // correctly disassemble past this point.
+                break;
+            } else {
+                addr += (instr.mode.operand_bytes(analysis_state) + 1) as u32;
             }
         }
     }
