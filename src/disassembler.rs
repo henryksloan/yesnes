@@ -1,8 +1,8 @@
+// Some of the design ideas for this disassembler come from bsnes-plus and Higan-S
 pub mod instruction_data;
 
 pub use instruction_data::{AddressingMode, Instruction, InstructionData, INSTRUCTION_DATA};
 
-use log::info;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -10,7 +10,8 @@ use crate::bus::Bus;
 use crate::cpu;
 use crate::u24::u24;
 
-pub struct RegisterState {
+#[derive(Clone, Copy)]
+struct RegisterState {
     pub m: bool,
     pub x: bool,
     pub e: bool,
@@ -22,6 +23,20 @@ impl RegisterState {
             m: true,
             x: true,
             e: false,
+        }
+    }
+}
+
+struct AnalysisState {
+    pub reg: RegisterState,
+    pub p_stack: Vec<RegisterState>,
+}
+
+impl AnalysisState {
+    pub fn new() -> Self {
+        Self {
+            reg: RegisterState::new(),
+            p_stack: Vec::new(),
         }
     }
 }
@@ -62,15 +77,23 @@ impl DisassemblerInstruction {
         }
     }
 
-    pub fn update_register_state(&self, register_state: &mut RegisterState) {
+    pub(self) fn update_register_state(&self, analysis_state: &mut AnalysisState) {
         if let Some(new_m_flag) = self.new_m_flag {
-            register_state.m = new_m_flag;
+            analysis_state.reg.m = new_m_flag;
         }
         if let Some(new_x_flag) = self.new_x_flag {
-            register_state.x = new_x_flag;
+            analysis_state.reg.x = new_x_flag;
         }
         if self.assume_clears_e {
-            register_state.e = false;
+            analysis_state.reg.e = false;
+        }
+        if matches!(self.instruction_data.instruction, Instruction::PHP) {
+            analysis_state.p_stack.push(analysis_state.reg);
+        }
+        if matches!(self.instruction_data.instruction, Instruction::PLP) {
+            if let Some(popped) = analysis_state.p_stack.pop() {
+                analysis_state.reg = popped;
+            }
         }
     }
 }
@@ -99,7 +122,7 @@ impl Disassembler {
     pub fn disassemble(&mut self) {
         let pc = u24(Bus::peak_u16(self.bus.clone(), cpu::RESET_VECTOR) as u32);
         // DO NOT SUBMIT: Also analyze other vectors
-        self.analyze(pc, &mut RegisterState::new());
+        self.analyze(pc, &mut AnalysisState::new());
         for (addr, instruction) in self.disassembly_cache.iter().enumerate() {
             if let Some(instruction) = instruction {
                 self.disassembly_result.push(DisassemblerEntry {
@@ -111,8 +134,7 @@ impl Disassembler {
     }
 
     // DO NOT SUBMIT: Should recurse on jumps, calls, etc.
-    // DO NOT SUBMIT: Instructions may push P.
-    fn analyze(&mut self, start_addr: u24, register_state: &mut RegisterState) {
+    fn analyze(&mut self, start_addr: u24, analysis_state: &mut AnalysisState) {
         let mut addr = start_addr;
         loop {
             if self.disassembly_cache[addr.raw()].is_some() {
@@ -120,7 +142,7 @@ impl Disassembler {
             }
             let opcode = Bus::peak_u8(self.bus.clone(), addr);
             let instr = INSTRUCTION_DATA[opcode as usize];
-            let operand_bytes = instr.mode.operand_bytes(&register_state);
+            let operand_bytes = instr.mode.operand_bytes(&analysis_state);
             // info!("{:?} ({})", instr, operand_bytes);
             let mut operand: u32 = 0;
             for i in 0..operand_bytes {
@@ -129,9 +151,9 @@ impl Disassembler {
                 operand |= Bus::peak_u8(self.bus.clone(), addr + operand_byte_offset as u32) as u32;
             }
             let disassembled = DisassemblerInstruction::new(instr, operand);
-            disassembled.update_register_state(register_state);
+            disassembled.update_register_state(analysis_state);
             self.disassembly_cache[addr.raw()] = Some(disassembled);
-            addr += (instr.mode.operand_bytes(register_state) + 1) as u32;
+            addr += (instr.mode.operand_bytes(analysis_state) + 1) as u32;
             // Check for overflow
             if addr <= start_addr {
                 return;

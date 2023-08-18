@@ -1,4 +1,4 @@
-use crate::disassembler::RegisterState;
+use crate::disassembler::AnalysisState;
 
 #[derive(Debug, Clone, Copy)]
 pub enum AddressingMode {
@@ -30,11 +30,11 @@ pub enum AddressingMode {
 }
 
 impl AddressingMode {
-    pub fn operand_bytes(&self, register_state: &RegisterState) -> usize {
+    pub(super) fn operand_bytes(&self, analysis_state: &AnalysisState) -> usize {
         match *self {
             Implied => 0,
-            ImmediateMFlag => 2 - (register_state.m | register_state.e) as usize,
-            ImmediateXFlag => 2 - (register_state.x | register_state.e) as usize,
+            ImmediateMFlag => 2 - (analysis_state.reg.m | analysis_state.reg.e) as usize,
+            ImmediateXFlag => 2 - (analysis_state.reg.x | analysis_state.reg.e) as usize,
             ImmediateByte => 1,
             PcRelative => 1,
             PcRelativeLong => 2,
