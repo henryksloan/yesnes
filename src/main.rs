@@ -139,12 +139,6 @@ impl Default for YesnesApp {
         let snes = SNES::new();
         let mut disassembler = Disassembler::new(snes.bus.clone());
         disassembler.disassemble();
-        let line_index = disassembler.get_line_index(cpu::RESET_VECTOR);
-        let line = disassembler.get_line(line_index);
-        info!(
-            "{line_index}: {} {:?}",
-            line.addr, line.instruction.instruction_data
-        );
         Self {
             snes,
             disassembler,
@@ -205,9 +199,7 @@ impl eframe::App for YesnesApp {
             let mut table = TableBuilder::new(ui)
                 .striped(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::auto())
-                .column(Column::initial(100.0).range(40.0..=300.0))
-                .column(Column::initial(100.0).at_least(40.0).clip(true))
+                .column(Column::initial(60.0))
                 .column(Column::remainder())
                 .min_scrolled_height(0.0);
             if let Some(row_nr) = self.scroll_to_row.take() {
@@ -216,16 +208,10 @@ impl eframe::App for YesnesApp {
             table
                 .header(20.0, |mut header| {
                     header.col(|ui| {
-                        ui.strong("Row");
+                        ui.strong("Address");
                     });
                     header.col(|ui| {
-                        ui.strong("Expanding content");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Clipped text");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Content");
+                        ui.strong("Instruction");
                     });
                 })
                 .body(|body| {
@@ -249,15 +235,6 @@ impl eframe::App for YesnesApp {
                                     disassembly_line.instruction.instruction_data.mode,
                                     disassembly_line.instruction.operand,
                                 ));
-                            });
-                            row.col(|ui| {
-                                ui.label(row_index.to_string());
-                            });
-                            row.col(|ui| {
-                                ui.add(
-                                    egui::Label::new("Thousands of rows of even height")
-                                        .wrap(false),
-                                );
                             });
                         },
                     );
