@@ -14,10 +14,10 @@ mod smp;
 mod snes;
 mod u24;
 
-use bus::Bus;
+use disassembler::Disassembler;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use log::{debug, error, info, log_enabled, Level};
+use log::info;
 use snes::SNES;
 
 fn main() -> Result<(), eframe::Error> {
@@ -26,12 +26,11 @@ fn main() -> Result<(), eframe::Error> {
         initial_window_size: Some(egui::vec2(860.0, 620.0)),
         ..Default::default()
     };
-    eframe::run_native("yesnes", options, Box::new(|_cc| Box::<MyApp>::default()))
-}
-
-struct MyApp {
-    snes: SNES,
-    scroll_to_row: Option<usize>,
+    eframe::run_native(
+        "yesnes",
+        options,
+        Box::new(|_cc| Box::<YesnesApp>::default()),
+    )
 }
 
 impl eframe::emath::Numeric for u24::u24 {
@@ -65,7 +64,7 @@ impl eframe::emath::Numeric for cpu::registers::StatusRegister {
     }
 }
 
-/// Add an editable view of the given CPU register, masked to its bottom `hex_digits` nybbles.
+/// Add an editable view of the given CPU register, masked to its bottom `hex_digits` nybbles
 fn register_drag_value<T: eframe::emath::Numeric>(
     ui: &mut egui::Ui,
     register: &mut T,
@@ -92,7 +91,7 @@ fn register_drag_value<T: eframe::emath::Numeric>(
     *register = T::from_f64(reg_val as f64);
 }
 
-/// Adds editable view of all CPU registers.
+/// Adds editable view of all CPU registers
 fn registers_panel(ui: &mut egui::Ui, registers: &mut cpu::registers::Registers) {
     let x_y_16_bits = registers.index_reg_16_bits();
     let x_y_width = if x_y_16_bits { 4 } else { 2 };
@@ -110,7 +109,7 @@ fn registers_panel(ui: &mut egui::Ui, registers: &mut cpu::registers::Registers)
     register_drag_value(ui, &mut registers.b, "B=", 2);
 }
 
-/// Add checkboxes for the bits of the status register.
+/// Add checkboxes for the bits of the status register
 fn status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::registers::StatusRegister) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
@@ -120,7 +119,7 @@ fn status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::registers
             ui.checkbox(&mut status_register.x_or_b, "X");
             ui.checkbox(&mut status_register.d, "D");
             ui.checkbox(&mut status_register.i, "I");
-            ui.checkbox(&mut status_register.z, "B");
+            ui.checkbox(&mut status_register.z, "Z");
             ui.checkbox(&mut status_register.c, "C");
         });
         ui.vertical(|ui| {
@@ -129,16 +128,40 @@ fn status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::registers
     });
 }
 
-impl Default for MyApp {
+struct YesnesApp {
+    snes: SNES,
+    disassembler: Disassembler,
+    scroll_to_row: Option<(usize, egui::Align)>,
+    prev_top_row: Option<usize>,
+    prev_bottom_row: Option<usize>,
+}
+
+impl Default for YesnesApp {
     fn default() -> Self {
-        Self {
-            snes: SNES::new(),
+        let snes = SNES::new();
+        let mut disassembler = Disassembler::new(snes.bus.clone());
+        disassembler.disassemble();
+        let mut app = Self {
+            snes,
+            disassembler,
             scroll_to_row: None,
-        }
+            prev_top_row: None,
+            prev_bottom_row: None,
+        };
+        app.scroll_pc_near_top();
+        app
     }
 }
 
-impl eframe::App for MyApp {
+impl YesnesApp {
+    fn scroll_pc_near_top(&mut self) {
+        let new_pc = self.snes.cpu.borrow_mut().registers().pc;
+        let cpu_pc_line = self.disassembler.get_line_index(new_pc).saturating_sub(1);
+        self.scroll_to_row = Some((cpu_pc_line, egui::Align::TOP));
+    }
+}
+
+impl eframe::App for YesnesApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -165,75 +188,80 @@ impl eframe::App for MyApp {
                         });
                 });
             });
+            let prev_top_row = self.prev_top_row.take();
+            let prev_bottom_row = self.prev_bottom_row.take();
             let cpu_pc = self.snes.cpu.borrow_mut().registers().pc;
             ui.horizontal(|ui| {
                 if ui.button("Go to PC").clicked() {
-                    self.scroll_to_row = Some(cpu_pc.raw());
+                    let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
+                    self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
                 }
                 if ui.button("Trace").clicked() {
                     self.snes.run_instruction();
-                    // TODO: One there's a disassembler, Trace and Reset should do slightly smarter stuff.
-                    // Trace should scroll only so as to keep the cursor on the 2nd to bottom row.
-                    // Reset should probably bring the cursor to the center or top of the table.
-                    self.scroll_to_row = Some(cpu_pc.raw());
+                    let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
+                    if let Some(prev_top_row) = prev_top_row {
+                        if let Some(prev_bottom_row) = prev_bottom_row {
+                            if cpu_pc_line < (prev_top_row + 2) {
+                                self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                            } else if cpu_pc_line >= (prev_bottom_row - 2) {
+                                let new_bottom_line = cpu_pc_line + 2;
+                                self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
+                            }
+                        }
+                    }
                 }
                 if ui.button("Reset").clicked() {
                     self.snes.reset();
-                    self.scroll_to_row = Some(cpu_pc.raw());
+                    self.scroll_pc_near_top();
                 }
             });
             let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
             let mut table = TableBuilder::new(ui)
                 .striped(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::auto())
-                .column(Column::initial(100.0).range(40.0..=300.0))
-                .column(Column::initial(100.0).at_least(40.0).clip(true))
+                .column(Column::initial(60.0))
                 .column(Column::remainder())
                 .min_scrolled_height(0.0);
-            if let Some(row_nr) = self.scroll_to_row.take() {
-                table = table.scroll_to_row(row_nr, Some(egui::Align::Center));
+            if let Some((row_nr, align)) = self.scroll_to_row.take() {
+                table = table.scroll_to_row(row_nr, Some(align));
             }
             table
                 .header(20.0, |mut header| {
                     header.col(|ui| {
-                        ui.strong("Row");
+                        ui.strong("Address");
                     });
                     header.col(|ui| {
-                        ui.strong("Expanding content");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Clipped text");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Content");
+                        ui.strong("Instruction");
                     });
                 })
-                .body(|mut body| {
-                    body.rows(text_height, 0xFF_FFFF, |row_index, mut row| {
-                        let row_addr = u24::u24(row_index as u32);
-                        row.col(|ui| {
-                            if row_addr == cpu_pc {
-                                ui.style_mut().visuals.override_text_color =
-                                    Some(egui::Color32::KHAKI);
+                .body(|body| {
+                    body.rows(
+                        text_height,
+                        self.disassembler.get_num_lines(),
+                        |row_index, mut row| {
+                            if self.prev_top_row.is_none() {
+                                self.prev_top_row = Some(row_index);
                             }
-                            ui.label(format!("{:08X}", row_addr.raw()));
-                        });
-                        row.col(|ui| {
-                            ui.label(format!(
-                                "{:02X}",
-                                Bus::peak_u8(self.snes.bus.clone(), row_addr)
-                            ));
-                        });
-                        row.col(|ui| {
-                            ui.label(row_index.to_string());
-                        });
-                        row.col(|ui| {
-                            ui.add(
-                                egui::Label::new("Thousands of rows of even height").wrap(false),
-                            );
-                        });
-                    });
+                            self.prev_bottom_row = Some(row_index);
+                            let disassembly_line = self.disassembler.get_line(row_index);
+                            let row_addr = disassembly_line.addr;
+                            row.col(|ui| {
+                                if row_addr == cpu_pc {
+                                    ui.style_mut().visuals.override_text_color =
+                                        Some(egui::Color32::KHAKI);
+                                }
+                                ui.label(format!("{:08X}", row_addr));
+                            });
+                            row.col(|ui| {
+                                ui.label(format!(
+                                    "{} {:?}({:08X})",
+                                    disassembly_line.instruction.instruction_data.mnemonic(),
+                                    disassembly_line.instruction.instruction_data.mode,
+                                    disassembly_line.instruction.operand,
+                                ));
+                            });
+                        },
+                    );
                 });
         });
     }

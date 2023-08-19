@@ -9,6 +9,8 @@ use std::rc::Rc;
 
 use paste::paste;
 
+pub const RESET_VECTOR: u24 = u24(0xFFFC);
+
 /// The 65816 microprocessor, the main CPU of the SNES
 pub struct CPU {
     reg: Registers,
@@ -36,6 +38,7 @@ macro_rules! yield_ticks {
     }};
 }
 
+// TODO: Replace some of these with e.g. index_reg_16_bits
 macro_rules! n_bits {
     ($cpu_rc:ident, u8) => {
         8
@@ -256,28 +259,16 @@ impl CPU {
     pub fn reset(&mut self) {
         self.ticks_run = 0;
         // TODO: Simplify
-        self.reg.pc = {
-            let lo = u24({
-                let mut gen = Bus::read_u8(self.bus.clone(), u24(0xFFFC));
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u32,
-                        _ => {}
-                    }
+        self.reg.pc = u24({
+            let mut gen = Bus::read_u16(self.bus.clone(), RESET_VECTOR);
+            loop {
+                match Pin::new(&mut gen).resume(()) {
+                    GeneratorState::Complete(out) => break out as u32,
+                    _ => {}
                 }
-            });
-            let hi = u24({
-                let mut gen = Bus::read_u8(self.bus.clone(), u24(0xFFFD));
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u32,
-                        _ => {}
-                    }
-                }
-            });
-            (hi << 8) | lo
-        };
-        self.reg.set_p(0xF4);
+            }
+        });
+        self.reg.set_p(0x34);
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
     }
@@ -285,22 +276,27 @@ impl CPU {
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
         // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         move || loop {
-            print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
+            // print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
+            // TODO: Why not `fetch!`?
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             cpu.borrow_mut().reg.pc += 1u32;
-            {
-                let reg = &cpu.borrow().reg;
-                println!(
-                    ": {opcode:#04X}    A:{:04X} X:{:04X} Y:{:04X} SP:{:04X} P:{:02X} E:{}",
-                    reg.get_a(),
-                    reg.get_x(),
-                    reg.get_y(),
-                    reg.get_sp(),
-                    reg.get_p(),
-                    if reg.p.e { 1 } else { 0 },
-                );
-            }
+            // {
+            //     let reg = &cpu.borrow().reg;
+            //     println!(
+            //         ": {opcode:#04X}    A:{:04X} X:{:04X} Y:{:04X} SP:{:04X} P:{:02X} E:{}",
+            //         reg.get_a(),
+            //         reg.get_x(),
+            //         reg.get_y(),
+            //         reg.get_sp(),
+            //         reg.get_p(),
+            //         if reg.p.e { 1 } else { 0 },
+            //     );
+            // }
 
+            // TODO: Add BRK
+            // TODO: Add block move instructions
+            // TODO: Add COP (coprocessor interrupt)
+            // TODO: Add ASL and LSR
             instrs!(cpu, opcode,
                 (clc, NoFlag; 0x18=>implied)
                 (cli, NoFlag; 0x58=>implied)
@@ -329,15 +325,30 @@ impl CPU {
                 (jsl, NoFlag; 0x22=>absolute_long)
                 (rtl, NoFlag; 0x6B=>implied)
                 (rts, NoFlag; 0x60=>implied)
-                (and, MFlag; 0x21=>indexed_indirect, 0x25=>direct,
-                 0x29=>immediate, 0x2D=>absolute, 0x31=>indirect_indexed,
-                 0x32=>indirect, 0x35=>direct_x, 0x39=>absolute_y, 0x3D=>absolute_x)
+                (ora, MFlag; 0x01=>indexed_indirect, 0x03=>stack_relative,
+                 0x05=>direct, 0x07=>indirect_long, 0x09=>immediate,
+                 0x0D=>absolute, 0x0F=>absolute_long, 0x11=>indirect_indexed,
+                 0x12=>indirect, 0x13=>stack_relative_indirect_indexed,
+                 0x15=>direct_x, 0x17=>indirect_long_y, 0x19=>absolute_y,
+                 0x1D=>absolute_x, 0x1F=>absolute_long_x)
+                (and, MFlag; 0x21=>indexed_indirect, 0x23=>stack_relative,
+                 0x25=>direct, 0x27=>indirect_long, 0x29=>immediate,
+                 0x2D=>absolute, 0x2F=>absolute_long, 0x31=>indirect_indexed,
+                 0x32=>indirect, 0x33=>stack_relative_indirect_indexed,
+                 0x35=>direct_x, 0x37=>indirect_long_y, 0x39=>absolute_y,
+                 0x3D=>absolute_x, 0x3F=>absolute_long_x)
+                (eor, MFlag; 0x41=>indexed_indirect, 0x43=>stack_relative,
+                 0x45=>direct, 0x47=>indirect_long, 0x49=>immediate,
+                 0x4D=>absolute, 0x4F=>absolute_long, 0x51=>indirect_indexed,
+                 0x52=>indirect, 0x53=>stack_relative_indirect_indexed,
+                 0x55=>direct_x, 0x57=>indirect_long_y, 0x59=>absolute_y,
+                 0x5D=>absolute_x, 0x5F=>absolute_long_x)
                 (bit, MFlag; 0x24=>direct, 0x2C=>absolute, 0x34=>direct_x,
                  0x3C=>absolute_x, 0x89=>immediate)
                 (lda, MFlag; 0xA1=>indexed_indirect, 0xA3=>stack_relative,
                  0xA5=>direct, 0xA7=>indirect_long, 0xA9=>immediate,
                  0xAD=>absolute, 0xAF=>absolute_long, 0xB1=>indirect_indexed,
-                 0xB2=>indirect,0xB3=>stack_relative_indirect_indexed,
+                 0xB2=>indirect, 0xB3=>stack_relative_indirect_indexed,
                  0xB5=>direct_x, 0xB7=>indirect_long_y, 0xB9=>absolute_y,
                  0xBD=>absolute_x, 0xBF=>absolute_long_x)
                 (ldx, XFlag; 0xA2=>immediate, 0xA6=>direct, 0xAE=>absolute,
@@ -349,7 +360,7 @@ impl CPU {
                 (sta, MFlag; 0x81=>indexed_indirect, 0x83=>stack_relative,
                  0x85=>direct, 0x87=>indirect_long, 0x8D=>absolute,
                  0x8F=>absolute_long, 0x91=>indirect_indexed,
-                 0x92=>indirect,0x93=>stack_relative_indirect_indexed,
+                 0x92=>indirect, 0x93=>stack_relative_indirect_indexed,
                  0x95=>direct_x, 0x97=>indirect_long_y, 0x99=>absolute_y,
                  0x9D=>absolute_x, 0x9F=>absolute_long_x)
                 (stx, XFlag; 0x86=>direct, 0x8E=>absolute, 0x96=>direct_y)
@@ -367,19 +378,19 @@ impl CPU {
                 (adc, MFlag; 0x61=>indexed_indirect, 0x63=>stack_relative,
                  0x65=>direct, 0x67=>indirect_long, 0x69=>immediate,
                  0x6D=>absolute, 0x6F=>absolute_long, 0x71=>indirect_indexed,
-                 0x72=>indirect,0x73=>stack_relative_indirect_indexed,
+                 0x72=>indirect, 0x73=>stack_relative_indirect_indexed,
                  0x75=>direct_x, 0x77=>indirect_long_y, 0x79=>absolute_y,
                  0x7D=>absolute_x, 0x7F=>absolute_long_x)
                 (sbc, MFlag; 0xE1=>indexed_indirect, 0xE3=>stack_relative,
                  0xE5=>direct, 0xE7=>indirect_long, 0xE9=>immediate,
                  0xED=>absolute, 0xEF=>absolute_long, 0xF1=>indirect_indexed,
-                 0xF2=>indirect,0xF3=>stack_relative_indirect_indexed,
+                 0xF2=>indirect, 0xF3=>stack_relative_indirect_indexed,
                  0xF5=>direct_x, 0xF7=>indirect_long_y, 0xF9=>absolute_y,
                  0xFD=>absolute_x, 0xFF=>absolute_long_x)
                 (cmp, MFlag; 0xC1=>indexed_indirect, 0xC3=>stack_relative,
                  0xC5=>direct, 0xC7=>indirect_long, 0xC9=>immediate,
                  0xCD=>absolute, 0xCF=>absolute_long, 0xD1=>indirect_indexed,
-                 0xD2=>indirect,0xD3=>stack_relative_indirect_indexed,
+                 0xD2=>indirect, 0xD3=>stack_relative_indirect_indexed,
                  0xD5=>direct_x, 0xD7=>indirect_long_y, 0xD9=>absolute_y,
                  0xDD=>absolute_x, 0xDF=>absolute_long_x)
                 (cpx, XFlag; 0xE0=>immediate, 0xE4=>direct, 0xEC=>absolute)
@@ -813,6 +824,28 @@ impl CPU {
                 | addr_lo + cpu.borrow().reg.get_y() as u32;
             let addr = CPU::bank_addr(cpu.clone(), u24(bank_addr));
             Pointer { addr, long }
+        }
+    }
+
+    fn ora<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let val = cpu.borrow().reg.get_a() | data;
+            cpu.borrow_mut().reg.set_a(val);
+            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
+        }
+    }
+
+    fn eor<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let val = cpu.borrow().reg.get_a() | data;
+            cpu.borrow_mut().reg.set_a(val);
+            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = data == 0;
         }
     }
 

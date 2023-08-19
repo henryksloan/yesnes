@@ -5,6 +5,8 @@ use crate::u24::u24;
 
 use std::cell::RefCell;
 use std::fs;
+use std::ops::GeneratorState;
+use std::pin::Pin;
 use std::rc::Rc;
 
 pub struct Bus {
@@ -77,6 +79,12 @@ impl Bus {
         }
     }
 
+    pub fn peak_u16(bus: Rc<RefCell<Bus>>, addr: u24) -> u16 {
+        let lo = Bus::peak_u8(bus.clone(), addr) as u16;
+        let hi = Bus::peak_u8(bus.clone(), addr + 1u32) as u16;
+        (hi << 8) | lo
+    }
+
     pub fn read_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
             dummy_yield!();
@@ -106,6 +114,30 @@ impl Bus {
                 }
                 _ => 0,
             }
+        }
+    }
+
+    pub fn read_u16<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u16> + 'a {
+        move || {
+            let lo = {
+                let mut gen = Bus::read_u8(bus.clone(), addr);
+                loop {
+                    match Pin::new(&mut gen).resume(()) {
+                        GeneratorState::Complete(out) => break out as u16,
+                        GeneratorState::Yielded(yielded) => yield yielded,
+                    }
+                }
+            };
+            let hi = {
+                let mut gen = Bus::read_u8(bus.clone(), addr + 1u32);
+                loop {
+                    match Pin::new(&mut gen).resume(()) {
+                        GeneratorState::Complete(out) => break out as u16,
+                        GeneratorState::Yielded(yielded) => yield yielded,
+                    }
+                }
+            };
+            (hi << 8) | lo
         }
     }
 
