@@ -17,8 +17,12 @@ mod u24;
 use disassembler::Disassembler;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use log::info;
 use snes::SNES;
+
+const GO_TO_ADDRESS_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::G);
+const RUN_TO_ADDRESS_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::R);
 
 fn main() -> Result<(), eframe::Error> {
     env_logger::init();
@@ -128,12 +132,65 @@ fn status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::registers
     });
 }
 
+struct LineInputWindow {
+    title: String,
+    open: bool,
+    text: String,
+    request_focus_once: bool,
+}
+
+impl LineInputWindow {
+    pub fn new(title: String) -> Self {
+        Self {
+            title,
+            open: false,
+            text: String::new(),
+            request_focus_once: false,
+        }
+    }
+
+    // If the window is closed, open it and clear+focus the textbox.
+    pub fn open(&mut self) {
+        self.text.clear();
+        self.open = true;
+        self.request_focus_once = true;
+    }
+
+    // If open, show the input window, calling the callback with the
+    // input text if it was just submitted.
+    pub fn show<F>(&mut self, ctx: &egui::Context, callback: F)
+    where
+        F: FnOnce(&str),
+    {
+        let mut submitted = false;
+        egui::Window::new(&self.title)
+            .open(&mut self.open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                let text_edit = ui.add(egui::TextEdit::singleline(&mut self.text));
+                if text_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    submitted = true;
+                    callback(&self.text);
+                }
+                if std::mem::take(&mut self.request_focus_once) {
+                    text_edit.request_focus();
+                }
+            });
+        if submitted {
+            self.open = false;
+        }
+    }
+}
+
 struct YesnesApp {
     snes: SNES,
     disassembler: Disassembler,
     scroll_to_row: Option<(usize, egui::Align)>,
     prev_top_row: Option<usize>,
     prev_bottom_row: Option<usize>,
+    go_to_address_window: LineInputWindow,
+    run_to_address_window: LineInputWindow,
 }
 
 impl Default for YesnesApp {
@@ -147,6 +204,8 @@ impl Default for YesnesApp {
             scroll_to_row: None,
             prev_top_row: None,
             prev_bottom_row: None,
+            go_to_address_window: LineInputWindow::new("Go to address".to_string()),
+            run_to_address_window: LineInputWindow::new("Run to address".to_string()),
         };
         app.scroll_pc_near_top();
         app
@@ -215,6 +274,34 @@ impl eframe::App for YesnesApp {
                     self.scroll_pc_near_top();
                 }
             });
+
+            if ctx.input_mut(|i| i.consume_shortcut(&GO_TO_ADDRESS_SHORTCUT)) {
+                self.go_to_address_window.open();
+            }
+            self.go_to_address_window.show(ctx, |text| {
+                let lower_input = text.to_lowercase();
+                let trimmed_input = lower_input.trim().trim_start_matches("0x");
+                let parsed_addr = u32::from_str_radix(trimmed_input, 16);
+                if let Ok(addr) = parsed_addr {
+                    let addr_line = self.disassembler.get_line_index(u24::u24(addr));
+                    self.scroll_to_row = Some((addr_line, egui::Align::Center));
+                }
+            });
+
+            if ctx.input_mut(|i| i.consume_shortcut(&RUN_TO_ADDRESS_SHORTCUT)) {
+                self.run_to_address_window.open();
+            }
+            self.run_to_address_window.show(ctx, |text| {
+                let lower_input = text.to_lowercase();
+                let trimmed_input = lower_input.trim().trim_start_matches("0x");
+                let parsed_addr = u32::from_str_radix(trimmed_input, 16);
+                if let Ok(addr) = parsed_addr {
+                    while self.snes.cpu.borrow_mut().registers().pc != u24::u24(addr) {
+                        self.snes.run_instruction();
+                    }
+                }
+            });
+
             let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
             let mut table = TableBuilder::new(ui)
                 .striped(true)
