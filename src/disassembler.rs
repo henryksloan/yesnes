@@ -249,7 +249,7 @@ impl Disassembler {
             if addr == entry.addr {
                 return line_i;
             } else if prev_addr < addr && addr < entry.addr {
-                return line_i - 1;
+                return line_i.saturating_sub(1);
             }
             prev_addr = entry.addr;
         }

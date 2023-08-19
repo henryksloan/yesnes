@@ -3,7 +3,7 @@ pub mod yield_reason;
 pub mod device;
 mod relative_clock;
 
-pub use yield_reason::{YieldReason, YieldTicks};
+pub use yield_reason::{Access, AccessType, DebugPoint, YieldReason, YieldTicks};
 
 use device::Device;
 use relative_clock::RelativeClock;
@@ -118,6 +118,15 @@ impl Scheduler {
                         }
                         YieldReason::FinishedInstruction => {
                             break;
+                        }
+                        YieldReason::Debug(debug_point) => {
+                            if let DebugPoint::UnimplementedAccess(access) = debug_point {
+                                log::debug!(
+                                    "Unimplemented {:?} of {:#08}",
+                                    access.access_type,
+                                    access.addr
+                                );
+                            }
                         }
                     }
                 }
