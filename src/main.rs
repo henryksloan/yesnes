@@ -222,6 +222,36 @@ impl YesnesApp {
 
 impl eframe::App for YesnesApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("Run", |ui| {
+                    let address_shortcut_pressed =
+                        ctx.input_mut(|i| i.consume_shortcut(&RUN_TO_ADDRESS_SHORTCUT));
+                    let address_button = egui::Button::new("To address...")
+                        .shortcut_text(ui.ctx().format_shortcut(&RUN_TO_ADDRESS_SHORTCUT));
+                    if ui.add(address_button).clicked() || address_shortcut_pressed {
+                        self.run_to_address_window.open();
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("Search", |ui| {
+                    ui.menu_button("Go to", |ui| {
+                        let address_shortcut_pressed =
+                            ctx.input_mut(|i| i.consume_shortcut(&GO_TO_ADDRESS_SHORTCUT));
+                        let address_button = egui::Button::new("Address...")
+                            .shortcut_text(ui.ctx().format_shortcut(&GO_TO_ADDRESS_SHORTCUT));
+                        if ui.add(address_button).clicked() || address_shortcut_pressed {
+                            self.go_to_address_window.open();
+                            ui.close_menu();
+                        }
+                        if ui.button("Program Counter").clicked() {
+                            ui.close_menu();
+                        }
+                    });
+                });
+            });
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
