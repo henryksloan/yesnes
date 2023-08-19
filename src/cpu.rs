@@ -276,22 +276,22 @@ impl CPU {
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
         // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         move || loop {
-            print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
+            // print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
             // TODO: Why not `fetch!`?
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             cpu.borrow_mut().reg.pc += 1u32;
-            {
-                let reg = &cpu.borrow().reg;
-                println!(
-                    ": {opcode:#04X}    A:{:04X} X:{:04X} Y:{:04X} SP:{:04X} P:{:02X} E:{}",
-                    reg.get_a(),
-                    reg.get_x(),
-                    reg.get_y(),
-                    reg.get_sp(),
-                    reg.get_p(),
-                    if reg.p.e { 1 } else { 0 },
-                );
-            }
+            // {
+            //     let reg = &cpu.borrow().reg;
+            //     println!(
+            //         ": {opcode:#04X}    A:{:04X} X:{:04X} Y:{:04X} SP:{:04X} P:{:02X} E:{}",
+            //         reg.get_a(),
+            //         reg.get_x(),
+            //         reg.get_y(),
+            //         reg.get_sp(),
+            //         reg.get_p(),
+            //         if reg.p.e { 1 } else { 0 },
+            //     );
+            // }
 
             // TODO: Add BRK
             // TODO: Add block move instructions

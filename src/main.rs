@@ -33,12 +33,6 @@ fn main() -> Result<(), eframe::Error> {
     )
 }
 
-struct YesnesApp {
-    snes: SNES,
-    disassembler: Disassembler,
-    scroll_to_row: Option<usize>,
-}
-
 impl eframe::emath::Numeric for u24::u24 {
     const INTEGRAL: bool = true;
     const MIN: Self = u24::u24(0);
@@ -134,16 +128,36 @@ fn status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::registers
     });
 }
 
+struct YesnesApp {
+    snes: SNES,
+    disassembler: Disassembler,
+    scroll_to_row: Option<(usize, egui::Align)>,
+    prev_top_row: Option<usize>,
+    prev_bottom_row: Option<usize>,
+}
+
 impl Default for YesnesApp {
     fn default() -> Self {
         let snes = SNES::new();
         let mut disassembler = Disassembler::new(snes.bus.clone());
         disassembler.disassemble();
-        Self {
+        let mut app = Self {
             snes,
             disassembler,
             scroll_to_row: None,
-        }
+            prev_top_row: None,
+            prev_bottom_row: None,
+        };
+        app.scroll_pc_near_top();
+        app
+    }
+}
+
+impl YesnesApp {
+    fn scroll_pc_near_top(&mut self) {
+        let new_pc = self.snes.cpu.borrow_mut().registers().pc;
+        let cpu_pc_line = self.disassembler.get_line_index(new_pc).saturating_sub(1);
+        self.scroll_to_row = Some((cpu_pc_line, egui::Align::TOP));
     }
 }
 
@@ -174,25 +188,31 @@ impl eframe::App for YesnesApp {
                         });
                 });
             });
+            let prev_top_row = self.prev_top_row.take();
+            let prev_bottom_row = self.prev_bottom_row.take();
             let cpu_pc = self.snes.cpu.borrow_mut().registers().pc;
             ui.horizontal(|ui| {
                 if ui.button("Go to PC").clicked() {
                     let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
-                    self.scroll_to_row = Some(cpu_pc_line);
+                    self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
                 }
                 if ui.button("Trace").clicked() {
                     self.snes.run_instruction();
-                    // TODO: One there's a disassembler, Trace and Reset should do slightly smarter stuff.
-                    // Trace should scroll only so as to keep the cursor on the 2nd to bottom row.
-                    // Reset should probably bring the cursor to the center or top of the table.
                     let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
-                    self.scroll_to_row = Some(cpu_pc_line);
+                    if let Some(prev_top_row) = prev_top_row {
+                        if let Some(prev_bottom_row) = prev_bottom_row {
+                            if cpu_pc_line < (prev_top_row + 2) {
+                                self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                            } else if cpu_pc_line >= (prev_bottom_row - 2) {
+                                let new_bottom_line = cpu_pc_line + 2;
+                                self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
+                            }
+                        }
+                    }
                 }
                 if ui.button("Reset").clicked() {
                     self.snes.reset();
-                    let new_pc = self.snes.cpu.borrow_mut().registers().pc;
-                    let cpu_pc_line = self.disassembler.get_line_index(new_pc);
-                    self.scroll_to_row = Some(cpu_pc_line);
+                    self.scroll_pc_near_top();
                 }
             });
             let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
@@ -202,8 +222,8 @@ impl eframe::App for YesnesApp {
                 .column(Column::initial(60.0))
                 .column(Column::remainder())
                 .min_scrolled_height(0.0);
-            if let Some(row_nr) = self.scroll_to_row.take() {
-                table = table.scroll_to_row(row_nr, Some(egui::Align::Center));
+            if let Some((row_nr, align)) = self.scroll_to_row.take() {
+                table = table.scroll_to_row(row_nr, Some(align));
             }
             table
                 .header(20.0, |mut header| {
@@ -219,6 +239,10 @@ impl eframe::App for YesnesApp {
                         text_height,
                         self.disassembler.get_num_lines(),
                         |row_index, mut row| {
+                            if self.prev_top_row.is_none() {
+                                self.prev_top_row = Some(row_index);
+                            }
+                            self.prev_bottom_row = Some(row_index);
                             let disassembly_line = self.disassembler.get_line(row_index);
                             let row_addr = disassembly_line.addr;
                             row.col(|ui| {
