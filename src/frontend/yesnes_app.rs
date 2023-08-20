@@ -133,9 +133,12 @@ impl YesnesApp {
                 let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
                 if let Some(prev_top_row) = prev_top_row {
                     if let Some(prev_bottom_row) = prev_bottom_row {
-                        if cpu_pc_line < (prev_top_row + 2) {
+                        if (cpu_pc_line < prev_top_row) || (cpu_pc_line > prev_bottom_row) {
+                            // Recenter PC if it jumped off-screen
                             self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
                         } else if cpu_pc_line >= (prev_bottom_row - 2) {
+                            // Keep the PC just above the bottom of the disassembly output
+                            // TODO: This accounts for the table hiding some lines on my machine. Change this once I fix that.
                             let new_bottom_line = cpu_pc_line + 2;
                             self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
                         }
@@ -148,86 +151,92 @@ impl YesnesApp {
             }
         });
     }
+
+    fn show_windows(&mut self, ctx: &egui::Context) {
+        self.go_to_address_window.show(ctx, |text| {
+            let lower_input = text.to_lowercase();
+            let trimmed_input = lower_input.trim().trim_start_matches("0x");
+            let parsed_addr = u32::from_str_radix(trimmed_input, 16);
+            if let Ok(addr) = parsed_addr {
+                let addr_line = self.disassembler.get_line_index(u24(addr));
+                self.scroll_to_row = Some((addr_line, egui::Align::Center));
+            }
+        });
+
+        self.run_to_address_window.show(ctx, |text| {
+            let lower_input = text.to_lowercase();
+            let trimmed_input = lower_input.trim().trim_start_matches("0x");
+            let parsed_addr = u32::from_str_radix(trimmed_input, 16);
+            if let Ok(addr) = parsed_addr {
+                while self.snes.cpu.borrow_mut().registers().pc != u24(addr) {
+                    self.snes.run_instruction();
+                }
+            }
+        });
+    }
+
+    fn disassembly_row(&mut self, row_index: usize, mut row: egui_extras::TableRow) {
+        if self.prev_top_row.is_none() {
+            self.prev_top_row = Some(row_index);
+        }
+        self.prev_bottom_row = Some(row_index);
+        let disassembly_line = self.disassembler.get_line(row_index);
+        let row_addr = disassembly_line.addr;
+        row.col(|ui| {
+            let cpu_pc = self.snes.cpu.borrow_mut().registers().pc;
+            if row_addr == cpu_pc {
+                ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
+            }
+            ui.label(format!("{:08X}", row_addr));
+        });
+        row.col(|ui| {
+            ui.label(format!(
+                "{} {:?}({:08X})",
+                disassembly_line.instruction.instruction_data.mnemonic(),
+                disassembly_line.instruction.instruction_data.mode,
+                disassembly_line.instruction.operand,
+            ));
+        });
+    }
+
+    fn disassembly_table(&mut self, ui: &mut egui::Ui) {
+        let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
+        let mut table = TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::initial(60.0))
+            .column(Column::remainder())
+            .min_scrolled_height(0.0);
+        if let Some((row_nr, align)) = self.scroll_to_row.take() {
+            table = table.scroll_to_row(row_nr, Some(align));
+        }
+        table
+            .header(20.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("Address");
+                });
+                header.col(|ui| {
+                    ui.strong("Instruction");
+                });
+            })
+            .body(|body| {
+                body.rows(
+                    text_height,
+                    self.disassembler.get_num_lines(),
+                    |row_index, row| self.disassembly_row(row_index, row),
+                );
+            });
+    }
 }
 
 impl eframe::App for YesnesApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.show_windows(ctx);
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| self.menu_bar(ctx, ui));
-
         egui::CentralPanel::default().show(ctx, |ui| {
             self.register_area(ui);
             self.control_area(ui);
-
-            self.go_to_address_window.show(ctx, |text| {
-                let lower_input = text.to_lowercase();
-                let trimmed_input = lower_input.trim().trim_start_matches("0x");
-                let parsed_addr = u32::from_str_radix(trimmed_input, 16);
-                if let Ok(addr) = parsed_addr {
-                    let addr_line = self.disassembler.get_line_index(u24(addr));
-                    self.scroll_to_row = Some((addr_line, egui::Align::Center));
-                }
-            });
-
-            self.run_to_address_window.show(ctx, |text| {
-                let lower_input = text.to_lowercase();
-                let trimmed_input = lower_input.trim().trim_start_matches("0x");
-                let parsed_addr = u32::from_str_radix(trimmed_input, 16);
-                if let Ok(addr) = parsed_addr {
-                    while self.snes.cpu.borrow_mut().registers().pc != u24(addr) {
-                        self.snes.run_instruction();
-                    }
-                }
-            });
-
-            let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
-            let mut table = TableBuilder::new(ui)
-                .striped(true)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::initial(60.0))
-                .column(Column::remainder())
-                .min_scrolled_height(0.0);
-            if let Some((row_nr, align)) = self.scroll_to_row.take() {
-                table = table.scroll_to_row(row_nr, Some(align));
-            }
-            table
-                .header(20.0, |mut header| {
-                    header.col(|ui| {
-                        ui.strong("Address");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Instruction");
-                    });
-                })
-                .body(|body| {
-                    body.rows(
-                        text_height,
-                        self.disassembler.get_num_lines(),
-                        |row_index, mut row| {
-                            if self.prev_top_row.is_none() {
-                                self.prev_top_row = Some(row_index);
-                            }
-                            self.prev_bottom_row = Some(row_index);
-                            let disassembly_line = self.disassembler.get_line(row_index);
-                            let row_addr = disassembly_line.addr;
-                            row.col(|ui| {
-                                let cpu_pc = self.snes.cpu.borrow_mut().registers().pc;
-                                if row_addr == cpu_pc {
-                                    ui.style_mut().visuals.override_text_color =
-                                        Some(egui::Color32::KHAKI);
-                                }
-                                ui.label(format!("{:08X}", row_addr));
-                            });
-                            row.col(|ui| {
-                                ui.label(format!(
-                                    "{} {:?}({:08X})",
-                                    disassembly_line.instruction.instruction_data.mnemonic(),
-                                    disassembly_line.instruction.instruction_data.mode,
-                                    disassembly_line.instruction.operand,
-                                ));
-                            });
-                        },
-                    );
-                });
+            self.disassembly_table(ui);
         });
     }
 }
