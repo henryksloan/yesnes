@@ -1,16 +1,22 @@
-pub const GO_TO_ADDRESS_SHORTCUT: egui::KeyboardShortcut =
-    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::G);
-pub const RUN_TO_ADDRESS_SHORTCUT: egui::KeyboardShortcut =
-    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::R);
+use egui::{Key, KeyboardShortcut, Modifiers};
 
-pub fn button_with_shortcut(
-    ctx: &egui::Context,
-    ui: &mut egui::Ui,
-    text: impl Into<egui::WidgetText>,
-    shortcut: &egui::KeyboardShortcut,
-) -> bool {
-    let shortcut_pressed = ctx.input_mut(|i| i.consume_shortcut(shortcut));
-    let button = egui::Button::new(text).shortcut_text(ui.ctx().format_shortcut(&shortcut));
-    let response = ui.add(button);
-    response.clicked() || shortcut_pressed
+pub enum Shortcut {
+    GoToAddress,
+    RunToAddress,
+}
+
+use Shortcut::*;
+// Iterated over by the frontend to register and consume all shortcuts each frame.
+pub const ALL_SHORTCUTS: [Shortcut; 2] = [GoToAddress, RunToAddress];
+
+impl Shortcut {
+    const GO_TO_ADDRESS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
+    const RUN_TO_ADDRESS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::R);
+
+    pub fn to_egui_shortcut(&self) -> &'static KeyboardShortcut {
+        match *self {
+            GoToAddress => &Self::GO_TO_ADDRESS,
+            RunToAddress => &Self::RUN_TO_ADDRESS,
+        }
+    }
 }

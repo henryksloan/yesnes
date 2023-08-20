@@ -45,20 +45,45 @@ impl YesnesApp {
         self.scroll_to_row = Some((cpu_pc_line, egui::Align::TOP));
     }
 
+    fn handle_shortcut(&mut self, shortcut: Shortcut) {
+        match shortcut {
+            Shortcut::RunToAddress => {
+                self.run_to_address_window.open();
+            }
+            Shortcut::GoToAddress => {
+                self.go_to_address_window.open();
+            }
+        }
+    }
+
+    fn menu_button_with_shortcut(
+        &mut self,
+        ui: &mut egui::Ui,
+        shortcut: Shortcut,
+        text: impl Into<egui::WidgetText>,
+    ) {
+        let button = egui::Button::new(text)
+            .shortcut_text(ui.ctx().format_shortcut(&shortcut.to_egui_shortcut()));
+        if ui.add(button).clicked() {
+            self.handle_shortcut(shortcut);
+            ui.close_menu();
+        }
+    }
+
     fn menu_bar(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
-            ui.menu_button("Run", |ui| {
-                if button_with_shortcut(ctx, ui, "To address...", &RUN_TO_ADDRESS_SHORTCUT) {
-                    self.run_to_address_window.open();
-                    ui.close_menu();
+            // Consume all shortcuts. This must be done in an unconditionally visible UI element so shortcuts always work.
+            for shortcut in ALL_SHORTCUTS {
+                if ctx.input_mut(|i| i.consume_shortcut(&shortcut.to_egui_shortcut())) {
+                    self.handle_shortcut(shortcut);
                 }
+            }
+            ui.menu_button("Run", |ui| {
+                self.menu_button_with_shortcut(ui, Shortcut::RunToAddress, "To address...");
             });
             ui.menu_button("Search", |ui| {
                 ui.menu_button("Go to", |ui| {
-                    if button_with_shortcut(ctx, ui, "Address...", &GO_TO_ADDRESS_SHORTCUT) {
-                        self.go_to_address_window.open();
-                        ui.close_menu();
-                    }
+                    self.menu_button_with_shortcut(ui, Shortcut::GoToAddress, "Address...");
                     if ui.button("Program Counter").clicked() {
                         ui.close_menu();
                     }
@@ -133,9 +158,6 @@ impl eframe::App for YesnesApp {
             self.register_area(ui);
             self.control_area(ui);
 
-            if ctx.input_mut(|i| i.consume_shortcut(&GO_TO_ADDRESS_SHORTCUT)) {
-                self.go_to_address_window.open();
-            }
             self.go_to_address_window.show(ctx, |text| {
                 let lower_input = text.to_lowercase();
                 let trimmed_input = lower_input.trim().trim_start_matches("0x");
@@ -146,9 +168,6 @@ impl eframe::App for YesnesApp {
                 }
             });
 
-            if ctx.input_mut(|i| i.consume_shortcut(&RUN_TO_ADDRESS_SHORTCUT)) {
-                self.run_to_address_window.open();
-            }
             self.run_to_address_window.show(ctx, |text| {
                 let lower_input = text.to_lowercase();
                 let trimmed_input = lower_input.trim().trim_start_matches("0x");
