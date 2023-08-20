@@ -2,6 +2,9 @@ use super::keyboard_shortcuts::*;
 use super::line_input_window::*;
 use super::registers::*;
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
@@ -10,7 +13,7 @@ use crate::snes::SNES;
 use crate::u24::u24;
 
 struct YesnesApp {
-    snes: SNES,
+    snes: Arc<Mutex<SNES>>,
     disassembler: Disassembler,
     scroll_to_row: Option<(usize, egui::Align)>,
     prev_top_row: Option<usize>,
@@ -21,8 +24,8 @@ struct YesnesApp {
 
 impl Default for YesnesApp {
     fn default() -> Self {
-        let snes = SNES::new();
-        let mut disassembler = Disassembler::new(snes.bus.clone());
+        let snes = Arc::new(Mutex::new(SNES::new()));
+        let mut disassembler = Disassembler::new(snes.lock().unwrap().bus.clone());
         disassembler.disassemble();
         let mut app = Self {
             snes,
@@ -40,9 +43,11 @@ impl Default for YesnesApp {
 
 impl YesnesApp {
     fn scroll_pc_near_top(&mut self) {
-        let new_pc = self.snes.cpu.borrow_mut().registers().pc;
-        let cpu_pc_line = self.disassembler.get_line_index(new_pc).saturating_sub(1);
-        self.scroll_to_row = Some((cpu_pc_line, egui::Align::TOP));
+        if let Ok(snes) = self.snes.try_lock() {
+            let pc = snes.cpu.borrow().registers().pc;
+            let cpu_pc_line = self.disassembler.get_line_index(pc).saturating_sub(1);
+            self.scroll_to_row = Some((cpu_pc_line, egui::Align::TOP));
+        }
     }
 
     fn handle_shortcut(&mut self, shortcut: Shortcut) {
@@ -102,7 +107,15 @@ impl YesnesApp {
                         ..Default::default()
                     })
                     .show(ui, |ui| {
-                        registers_panel(ui, self.snes.cpu.borrow_mut().registers());
+                        // DO NOT SUBMIT: We don't necessarily want to be locking all throughout these functions.
+                        // And certainly don't want to return if they're unavailable. Once I have an emulation thread:
+                        // 1) Controls like "trace" and "run to address" should first pause emulation.
+                        // 2) Register controls/views should refer to a frontend copy which is frozen (with
+                        //    controls disabled) while emulating, and forwards changes to the emulator when paused.
+                        let Ok(snes) = self.snes.try_lock() else {
+                            return;
+                        };
+                        registers_panel(ui, snes.cpu.borrow_mut().registers_mut());
                         ui.set_width(75.0);
                     });
             });
@@ -113,7 +126,10 @@ impl YesnesApp {
                         ..Default::default()
                     })
                     .show(ui, |ui| {
-                        status_register_panel(ui, &mut self.snes.cpu.borrow_mut().registers().p)
+                        let Ok(snes) = self.snes.try_lock() else {
+                            return;
+                        };
+                        status_register_panel(ui, &mut snes.cpu.borrow_mut().registers_mut().p);
                     });
             });
         });
@@ -122,31 +138,37 @@ impl YesnesApp {
     fn control_area(&mut self, ui: &mut egui::Ui) {
         let prev_top_row = self.prev_top_row.take();
         let prev_bottom_row = self.prev_bottom_row.take();
-        let cpu_pc = self.snes.cpu.borrow_mut().registers().pc;
         ui.horizontal(|ui| {
             if ui.button("Go to PC").clicked() {
-                let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
-                self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                if let Ok(snes) = self.snes.try_lock() {
+                    let cpu_pc = snes.cpu.borrow().registers().pc;
+                    let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
+                    self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                }
             }
             if ui.button("Trace").clicked() {
-                self.snes.run_instruction();
-                let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
-                if let Some(prev_top_row) = prev_top_row {
-                    if let Some(prev_bottom_row) = prev_bottom_row {
-                        if (cpu_pc_line < prev_top_row) || (cpu_pc_line > prev_bottom_row) {
-                            // Recenter PC if it jumped off-screen
-                            self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
-                        } else if cpu_pc_line >= (prev_bottom_row - 2) {
-                            // Keep the PC just above the bottom of the disassembly output
-                            // TODO: This accounts for the table hiding some lines on my machine. Change this once I fix that.
-                            let new_bottom_line = cpu_pc_line + 2;
-                            self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
+                if let Ok(mut snes) = self.snes.try_lock() {
+                    snes.run_instruction();
+                    let cpu_pc = snes.cpu.borrow().registers().pc;
+                    let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
+                    if let Some(prev_top_row) = prev_top_row {
+                        if let Some(prev_bottom_row) = prev_bottom_row {
+                            if (cpu_pc_line < prev_top_row) || (cpu_pc_line > prev_bottom_row) {
+                                // Recenter PC if it jumped off-screen
+                                self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                            } else if cpu_pc_line >= (prev_bottom_row - 1) {
+                                // Keep the PC just above the bottom of the disassembly output
+                                let new_bottom_line = cpu_pc_line + 1;
+                                self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
+                            }
                         }
                     }
                 }
             }
             if ui.button("Reset").clicked() {
-                self.snes.reset();
+                if let Ok(mut snes) = self.snes.try_lock() {
+                    snes.reset();
+                }
                 self.scroll_pc_near_top();
             }
         });
@@ -164,12 +186,15 @@ impl YesnesApp {
         });
 
         self.run_to_address_window.show(ctx, |text| {
+            let Ok(mut snes) = self.snes.try_lock() else {
+                return;
+            };
             let lower_input = text.to_lowercase();
             let trimmed_input = lower_input.trim().trim_start_matches("0x");
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
-                while self.snes.cpu.borrow_mut().registers().pc != u24(addr) {
-                    self.snes.run_instruction();
+                while snes.cpu.borrow().registers().pc != u24(addr) {
+                    snes.run_instruction();
                 }
             }
         });
@@ -183,7 +208,10 @@ impl YesnesApp {
         let disassembly_line = self.disassembler.get_line(row_index);
         let row_addr = disassembly_line.addr;
         row.col(|ui| {
-            let cpu_pc = self.snes.cpu.borrow_mut().registers().pc;
+            let Ok(snes) = self.snes.try_lock() else {
+                return;
+            };
+            let cpu_pc = snes.cpu.borrow().registers().pc;
             if row_addr == cpu_pc {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }

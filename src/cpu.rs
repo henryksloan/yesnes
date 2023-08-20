@@ -252,7 +252,11 @@ impl CPU {
         }
     }
 
-    pub fn registers(&mut self) -> &mut Registers {
+    pub fn registers(&self) -> &Registers {
+        &self.reg
+    }
+
+    pub fn registers_mut(&mut self) -> &mut Registers {
         &mut self.reg
     }
 
