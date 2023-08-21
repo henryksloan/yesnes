@@ -200,6 +200,10 @@ impl YesnesApp {
                     });
             });
         });
+        if paused {
+            let snes = self.snes.lock().unwrap();
+            *snes.cpu.borrow_mut().registers_mut() = self.registers_mirror;
+        }
     }
 
     fn control_area(&mut self, ui: &mut egui::Ui) {
@@ -269,19 +273,22 @@ impl YesnesApp {
         });
     }
 
-    fn disassembly_row(&mut self, row_index: usize, mut row: egui_extras::TableRow) {
-        if self.prev_top_row.is_none() {
-            self.prev_top_row = Some(row_index);
+    fn disassembly_row(
+        disassembler: &Disassembler,
+        registers_mirror: &Registers,
+        prev_top_row: &mut Option<usize>,
+        prev_bottom_row: &mut Option<usize>,
+        row_index: usize,
+        mut row: egui_extras::TableRow,
+    ) {
+        if prev_top_row.is_none() {
+            *prev_top_row = Some(row_index);
         }
-        self.prev_bottom_row = Some(row_index);
-        let disassembly_line = self.disassembler.lock().unwrap().get_line(row_index);
+        *prev_bottom_row = Some(row_index);
+        let disassembly_line = disassembler.get_line(row_index);
         let row_addr = disassembly_line.addr;
         row.col(|ui| {
-            let Ok(snes) = self.snes.try_lock() else {
-                return;
-            };
-            let cpu_pc = snes.cpu.borrow().registers().pc;
-            if row_addr == cpu_pc {
+            if row_addr == registers_mirror.pc {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }
             ui.label(format!("{:08X}", row_addr));
@@ -318,8 +325,16 @@ impl YesnesApp {
                 });
             })
             .body(|body| {
+                let disassembler = self.disassembler.lock().unwrap();
                 body.rows(text_height, total_lines, |row_index, row| {
-                    self.disassembly_row(row_index, row)
+                    Self::disassembly_row(
+                        &disassembler,
+                        &self.registers_mirror,
+                        &mut self.prev_top_row,
+                        &mut self.prev_bottom_row,
+                        row_index,
+                        row,
+                    )
                 });
             });
     }
