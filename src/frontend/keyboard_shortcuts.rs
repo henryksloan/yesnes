@@ -8,6 +8,7 @@ pub enum Shortcut {
     Pause,
     Trace,
     RunToAddress,
+    Reset,
 }
 
 use Shortcut::*;
@@ -19,6 +20,7 @@ pub const ALL_SHORTCUTS: &'static [Shortcut] = &[
     Pause,
     Trace,
     RunToAddress,
+    Reset,
 ];
 
 impl Shortcut {
@@ -28,7 +30,8 @@ impl Shortcut {
     const CONTINUE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F5);
     const PAUSE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F6);
     const TRACE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F7);
-    const RUN_TO_ADDRESS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::R);
+    const RUN_TO_ADDRESS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::T);
+    const RESET: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::R);
 
     pub fn to_egui_shortcut(&self) -> &'static KeyboardShortcut {
         match *self {
@@ -38,6 +41,7 @@ impl Shortcut {
             Pause => &Self::PAUSE,
             Trace => &Self::TRACE,
             RunToAddress => &Self::RUN_TO_ADDRESS,
+            Reset => &Self::RESET,
         }
     }
 }

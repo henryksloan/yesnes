@@ -176,6 +176,13 @@ impl YesnesApp {
             Shortcut::RunToAddress => {
                 self.run_to_address_window.open();
             }
+            Shortcut::Reset => {
+                *self.emu_paused.lock().unwrap() = true;
+                if let Ok(mut snes) = self.snes.try_lock() {
+                    snes.reset();
+                }
+                self.scroll_pc_near_top();
+            }
         }
     }
 
@@ -241,6 +248,7 @@ impl YesnesApp {
                 self.menu_button_with_shortcut(ui, Pause, "Pause");
                 self.menu_button_with_shortcut(ui, Trace, "Trace");
                 self.menu_button_with_shortcut(ui, RunToAddress, "To address...");
+                self.menu_button_with_shortcut(ui, Reset, "Reset");
             });
             ui.menu_button("Search", |ui| {
                 ui.menu_button("Go to", |ui| {
@@ -292,13 +300,7 @@ impl YesnesApp {
             self.button_with_shortcut(ui, Shortcut::Continue, "Continue");
             self.button_with_shortcut(ui, Shortcut::Pause, "Pause");
             self.button_with_shortcut(ui, Shortcut::Trace, "Trace");
-            // TODO: Add this to the menu bar, too
-            if ui.button("Reset").clicked() {
-                if let Ok(mut snes) = self.snes.try_lock() {
-                    snes.reset();
-                }
-                self.scroll_pc_near_top();
-            }
+            self.button_with_shortcut(ui, Shortcut::Reset, "Reset");
         });
     }
 
