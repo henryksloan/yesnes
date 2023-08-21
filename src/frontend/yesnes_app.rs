@@ -2,15 +2,50 @@ use super::keyboard_shortcuts::*;
 use super::line_input_window::*;
 use super::registers::*;
 
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
+use crossbeam::channel;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
 use crate::disassembler::Disassembler;
 use crate::snes::SNES;
 use crate::u24::u24;
+
+enum EmuThreadMessage {
+    RunToAddress(u24),
+}
+
+fn run_emu_thread(
+    snes: Arc<Mutex<SNES>>,
+    receiver: channel::Receiver<EmuThreadMessage>,
+    paused: Arc<Mutex<bool>>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || loop {
+        let Ok(message) = receiver.recv() else {
+            log::debug!("Exiting emulation thread");
+            return;
+        };
+        match message {
+            EmuThreadMessage::RunToAddress(addr) => {
+                *paused.lock().unwrap() = false;
+                loop {
+                    if *paused.lock().unwrap() {
+                        break;
+                    }
+                    let mut snes = snes.lock().unwrap();
+                    if snes.cpu.borrow().registers().pc == addr {
+                        *paused.lock().unwrap() = true;
+                        break;
+                    } else {
+                        snes.run_instruction();
+                    }
+                }
+            }
+        }
+    })
+}
 
 struct YesnesApp {
     snes: Arc<Mutex<SNES>>,
@@ -20,6 +55,8 @@ struct YesnesApp {
     prev_bottom_row: Option<usize>,
     go_to_address_window: LineInputWindow,
     run_to_address_window: LineInputWindow,
+    emu_message_sender: channel::Sender<EmuThreadMessage>,
+    emu_paused: Arc<Mutex<bool>>,
 }
 
 impl Default for YesnesApp {
@@ -27,14 +64,19 @@ impl Default for YesnesApp {
         let snes = Arc::new(Mutex::new(SNES::new()));
         let mut disassembler = Disassembler::new(snes.lock().unwrap().bus.clone());
         disassembler.disassemble();
+        let (sender, receiver) = channel::bounded(1024);
+        let emu_paused = Arc::new(Mutex::new(true));
+        run_emu_thread(snes.clone(), receiver, emu_paused.clone());
         let mut app = Self {
-            snes,
+            snes: snes.clone(),
             disassembler,
             scroll_to_row: None,
             prev_top_row: None,
             prev_bottom_row: None,
             go_to_address_window: LineInputWindow::new("Go to address".to_string()),
             run_to_address_window: LineInputWindow::new("Run to address".to_string()),
+            emu_message_sender: sender,
+            emu_paused: emu_paused.clone(),
         };
         app.scroll_pc_near_top();
         app
@@ -147,6 +189,7 @@ impl YesnesApp {
                 }
             }
             if ui.button("Trace").clicked() {
+                *self.emu_paused.lock().unwrap() = true;
                 if let Ok(mut snes) = self.snes.try_lock() {
                     snes.run_instruction();
                     let cpu_pc = snes.cpu.borrow().registers().pc;
@@ -186,16 +229,13 @@ impl YesnesApp {
         });
 
         self.run_to_address_window.show(ctx, |text| {
-            let Ok(mut snes) = self.snes.try_lock() else {
-                return;
-            };
             let lower_input = text.to_lowercase();
             let trimmed_input = lower_input.trim().trim_start_matches("0x");
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
-                while snes.cpu.borrow().registers().pc != u24(addr) {
-                    snes.run_instruction();
-                }
+                let _ = self
+                    .emu_message_sender
+                    .send(EmuThreadMessage::RunToAddress(u24(addr)));
             }
         });
     }
@@ -228,6 +268,12 @@ impl YesnesApp {
     }
 
     fn disassembly_table(&mut self, ui: &mut egui::Ui) {
+        if let Ok(snes) = self.snes.try_lock() {
+            let cpu = snes.cpu.borrow();
+            let registers = cpu.registers();
+            self.disassembler
+                .update_disassembly_at(registers.pc, &registers.p);
+        };
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         let mut table = TableBuilder::new(ui)
             .striped(true)
