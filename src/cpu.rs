@@ -1,6 +1,8 @@
 pub mod registers;
 
-use crate::{bus::Bus, cpu::registers::Registers, scheduler::*, u24::u24};
+pub use registers::{Registers, StatusRegister};
+
+use crate::{bus::Bus, scheduler::*, u24::u24};
 
 use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};

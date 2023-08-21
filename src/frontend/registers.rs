@@ -1,5 +1,5 @@
 //! GUI elements to display and edit processer registers.
-use crate::cpu::registers::{Registers, StatusRegister};
+use crate::cpu::{Registers, StatusRegister};
 
 /// Adds an editable view of the given CPU register, masked to its bottom `hex_digits` nybbles.
 pub fn register_drag_value<T: eframe::emath::Numeric>(

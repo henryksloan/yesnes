@@ -9,6 +9,7 @@ use crossbeam::channel;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
+use crate::cpu::registers::Registers;
 use crate::disassembler::Disassembler;
 use crate::snes::SNES;
 use crate::u24::u24;
@@ -50,6 +51,8 @@ fn run_emu_thread(
 struct YesnesApp {
     snes: Arc<Mutex<SNES>>,
     disassembler: Disassembler,
+    // A copy of the CPU's registers, frozen while unpaused.
+    registers_mirror: Registers,
     scroll_to_row: Option<(usize, egui::Align)>,
     prev_top_row: Option<usize>,
     prev_bottom_row: Option<usize>,
@@ -70,6 +73,7 @@ impl Default for YesnesApp {
         let mut app = Self {
             snes: snes.clone(),
             disassembler,
+            registers_mirror: Registers::new(),
             scroll_to_row: None,
             prev_top_row: None,
             prev_bottom_row: None,

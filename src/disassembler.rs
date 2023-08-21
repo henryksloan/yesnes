@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::bus::Bus;
-use crate::cpu::{self, registers::StatusRegister};
+use crate::cpu::{self, StatusRegister};
 use crate::u24::u24;
 
 #[derive(Clone, Copy)]

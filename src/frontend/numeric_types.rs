@@ -1,5 +1,5 @@
 //! Implements the emath `Numeric` trait for various processor types.
-use crate::cpu::registers::StatusRegister;
+use crate::cpu::StatusRegister;
 use crate::u24::u24;
 
 impl eframe::emath::Numeric for u24 {
