@@ -1,6 +1,6 @@
 use crate::u24::u24;
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Registers {
     pub a: u16, // Accumulator register
     pub x: u16, // Index registers

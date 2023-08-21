@@ -143,8 +143,13 @@ impl YesnesApp {
         });
     }
 
-    fn register_area(&mut self, ui: &mut egui::Ui) {
+    fn register_area(&mut self, ui: &mut egui::Ui, paused: bool) {
+        if paused {
+            let snes = self.snes.lock().unwrap();
+            self.registers_mirror = *snes.cpu.borrow().registers();
+        }
         ui.horizontal(|ui| {
+            ui.set_enabled(paused);
             ui.vertical(|ui| {
                 egui::Frame::group(ui.style())
                     .outer_margin(egui::Margin {
@@ -158,10 +163,7 @@ impl YesnesApp {
                         // 1) Controls like "trace" and "run to address" should first pause emulation.
                         // 2) Register controls/views should refer to a frontend copy which is frozen (with
                         //    controls disabled) while emulating, and forwards changes to the emulator when paused.
-                        let Ok(snes) = self.snes.try_lock() else {
-                            return;
-                        };
-                        registers_panel(ui, snes.cpu.borrow_mut().registers_mut());
+                        registers_panel(ui, &mut self.registers_mirror);
                         ui.set_width(75.0);
                     });
             });
@@ -172,10 +174,7 @@ impl YesnesApp {
                         ..Default::default()
                     })
                     .show(ui, |ui| {
-                        let Ok(snes) = self.snes.try_lock() else {
-                            return;
-                        };
-                        status_register_panel(ui, &mut snes.cpu.borrow_mut().registers_mut().p);
+                        status_register_panel(ui, &mut self.registers_mirror.p);
                     });
             });
         });
@@ -312,7 +311,8 @@ impl eframe::App for YesnesApp {
         self.show_windows(ctx);
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| self.menu_bar(ctx, ui));
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.register_area(ui);
+            let paused = *self.emu_paused.lock().unwrap();
+            self.register_area(ui, paused);
             self.control_area(ui);
             self.disassembly_table(ui);
         });
