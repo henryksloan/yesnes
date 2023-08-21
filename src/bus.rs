@@ -1,6 +1,6 @@
+use crate::apu::SMP;
 use crate::ppu::PPU;
 use crate::scheduler::{dummy_yield, Access, AccessType, DebugPoint, YieldReason, Yieldable};
-use crate::smp::SMP;
 use crate::u24::u24;
 
 use std::cell::RefCell;
@@ -50,6 +50,7 @@ impl Bus {
     }
 
     // TODO: I have FORGOTTEN why these don't take &self. Look into why.
+    // edit: I think it's because we're not allowed to hold references across yields.
     pub fn peak_u8(bus: Rc<RefCell<Bus>>, addr: u24) -> u8 {
         // TODO: Some generalized mapper logic
         match addr.hi8() {

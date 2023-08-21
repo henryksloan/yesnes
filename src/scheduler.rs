@@ -3,10 +3,9 @@ pub mod yield_reason;
 pub mod device;
 mod relative_clock;
 
+pub use device::Device;
+pub use relative_clock::RelativeClock;
 pub use yield_reason::{Access, AccessType, DebugPoint, YieldReason, YieldTicks};
-
-use device::Device;
-use relative_clock::RelativeClock;
 
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
@@ -55,7 +54,7 @@ pub(crate) use yield_all;
 macro_rules! dummy_yield {
     () => {
         if false {
-            use crate::scheduler::device::Device;
+            use crate::scheduler::Device;
             yield YieldReason::Sync(Device::CPU);
         }
     };

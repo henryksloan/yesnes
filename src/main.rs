@@ -4,6 +4,7 @@
 #![feature(trait_alias)]
 #![feature(never_type)]
 
+mod apu;
 mod bus;
 mod cpu;
 mod disassembler;
@@ -11,7 +12,6 @@ mod frontend;
 mod memory;
 mod ppu;
 mod scheduler;
-mod smp;
 mod snes;
 mod u24;
 

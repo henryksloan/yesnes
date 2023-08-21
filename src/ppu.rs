@@ -1,4 +1,4 @@
-use crate::scheduler::{device::Device, DeviceGenerator, YieldReason};
+use crate::scheduler::{Device, DeviceGenerator, YieldReason};
 
 pub struct PPU {}
 

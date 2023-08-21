@@ -1,4 +1,4 @@
-use crate::{bus::Bus, cpu::CPU, ppu::PPU, scheduler::Scheduler, smp::SMP};
+use crate::{apu::SMP, bus::Bus, cpu::CPU, ppu::PPU, scheduler::Scheduler};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -23,7 +23,7 @@ impl SNES {
 
         let cpu_thread = Box::from(CPU::run(cpu.clone()));
         let ppu_thread = Box::from(ppu.borrow_mut().run());
-        let smp_thread = Box::from(smp.borrow_mut().run());
+        let smp_thread = Box::from(SMP::run(smp.clone()));
         let scheduler = Scheduler::new(cpu_thread, ppu_thread, smp_thread);
 
         let mut snes = Self {
@@ -41,6 +41,7 @@ impl SNES {
     pub fn reset(&mut self) {
         self.cpu.borrow_mut().reset();
         self.bus.borrow_mut().reset();
+        SMP::reset(self.smp.clone());
     }
 
     pub fn run(&mut self) {
