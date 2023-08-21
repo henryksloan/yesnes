@@ -14,7 +14,21 @@ use crate::disassembler::Disassembler;
 use crate::snes::SNES;
 use crate::u24::u24;
 
+// TODO: This should probably be done internally. It might be best if it
+// didn't require `impl Send for Disassembler`, i.e. if Disassembler didn't have an
+// Rc<RefCell<Bus>>; maybe that could be passed straight from cpu at the end of each instruction.
+fn run_instruction_and_disassemble(snes: &mut SNES, disassembler: &Mutex<Disassembler>) {
+    snes.run_instruction();
+    let cpu = snes.cpu.borrow();
+    let registers = cpu.registers();
+    disassembler
+        .lock()
+        .unwrap()
+        .update_disassembly_at(registers.pc, &registers.p);
+}
+
 enum EmuThreadMessage {
+    Continue,
     RunToAddress(u24),
 }
 
@@ -30,6 +44,12 @@ fn run_emu_thread(
             return;
         };
         match message {
+            EmuThreadMessage::Continue => {
+                *paused.lock().unwrap() = false;
+                while !*paused.lock().unwrap() {
+                    run_instruction_and_disassemble(&mut snes.lock().unwrap(), &disassembler);
+                }
+            }
             EmuThreadMessage::RunToAddress(addr) => {
                 *paused.lock().unwrap() = false;
                 loop {
@@ -41,16 +61,7 @@ fn run_emu_thread(
                         *paused.lock().unwrap() = true;
                         break;
                     } else {
-                        snes.run_instruction();
-                        let cpu = snes.cpu.borrow();
-                        let registers = cpu.registers();
-                        // TODO: This should probably be called automatically. It might be best if it
-                        // didn't require `impl Send for Disassembler`, i.e. if Disassembler didn't have an
-                        // Rc<RefCell<Bus>>; maybe that could be passed straight from cpu at the end of each instruction.
-                        disassembler
-                            .lock()
-                            .unwrap()
-                            .update_disassembly_at(registers.pc, &registers.p);
+                        run_instruction_and_disassemble(&mut snes, &disassembler);
                     }
                 }
             }
@@ -157,7 +168,15 @@ impl YesnesApp {
             ui.menu_button("Search", |ui| {
                 ui.menu_button("Go to", |ui| {
                     self.menu_button_with_shortcut(ui, Shortcut::GoToAddress, "Address...");
+                    // TODO: Add a shortcut
                     if ui.button("Program Counter").clicked() {
+                        if *self.emu_paused.lock().unwrap() {
+                            let snes = self.snes.lock().unwrap();
+                            let cpu_pc = snes.cpu.borrow().registers().pc;
+                            let cpu_pc_line =
+                                self.disassembler.lock().unwrap().get_line_index(cpu_pc);
+                            self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                        }
                         ui.close_menu();
                     }
                 });
@@ -210,22 +229,28 @@ impl YesnesApp {
         let prev_top_row = self.prev_top_row.take();
         let prev_bottom_row = self.prev_bottom_row.take();
         ui.horizontal(|ui| {
-            if ui.button("Go to PC").clicked() {
-                if let Ok(snes) = self.snes.try_lock() {
-                    let cpu_pc = snes.cpu.borrow().registers().pc;
-                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
-                    self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+            // TODO: Add these to the menu bar, too
+            {
+                let mut emu_paused = self.emu_paused.lock().unwrap();
+                let continue_button = egui::Button::new("Continue");
+                if ui.add_enabled(*emu_paused, continue_button).clicked() {
+                    let _ = self.emu_message_sender.send(EmuThreadMessage::Continue);
+                }
+                let pause_button = egui::Button::new("Pause");
+                if ui.add_enabled(!(*emu_paused), pause_button).clicked() {
+                    *emu_paused = true;
+                    if let Ok(snes) = self.snes.try_lock() {
+                        let cpu_pc = snes.cpu.borrow().registers().pc;
+                        let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
+                        self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                    }
                 }
             }
             if ui.button("Trace").clicked() {
                 *self.emu_paused.lock().unwrap() = true;
                 if let Ok(mut snes) = self.snes.try_lock() {
-                    snes.run_instruction();
+                    run_instruction_and_disassemble(&mut snes, &self.disassembler);
                     let cpu_pc = snes.cpu.borrow().registers().pc;
-                    self.disassembler
-                        .lock()
-                        .unwrap()
-                        .update_disassembly_at(cpu_pc, &snes.cpu.borrow().registers().p);
                     let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
                     if let Some(prev_top_row) = prev_top_row {
                         if let Some(prev_bottom_row) = prev_bottom_row {
@@ -275,6 +300,7 @@ impl YesnesApp {
 
     fn disassembly_row(
         disassembler: &Disassembler,
+        paused: bool,
         registers_mirror: &Registers,
         prev_top_row: &mut Option<usize>,
         prev_bottom_row: &mut Option<usize>,
@@ -288,7 +314,7 @@ impl YesnesApp {
         let disassembly_line = disassembler.get_line(row_index);
         let row_addr = disassembly_line.addr;
         row.col(|ui| {
-            if row_addr == registers_mirror.pc {
+            if paused && row_addr == registers_mirror.pc {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }
             ui.label(format!("{:08X}", row_addr));
@@ -303,7 +329,7 @@ impl YesnesApp {
         });
     }
 
-    fn disassembly_table(&mut self, ui: &mut egui::Ui) {
+    fn disassembly_table(&mut self, ui: &mut egui::Ui, paused: bool) {
         let total_lines = self.disassembler.lock().unwrap().get_num_lines();
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         let mut table = TableBuilder::new(ui)
@@ -329,6 +355,7 @@ impl YesnesApp {
                 body.rows(text_height, total_lines, |row_index, row| {
                     Self::disassembly_row(
                         &disassembler,
+                        paused,
                         &self.registers_mirror,
                         &mut self.prev_top_row,
                         &mut self.prev_bottom_row,
@@ -348,7 +375,7 @@ impl eframe::App for YesnesApp {
             let paused = *self.emu_paused.lock().unwrap();
             self.register_area(ui, paused);
             self.control_area(ui);
-            self.disassembly_table(ui);
+            self.disassembly_table(ui, paused);
         });
     }
 }
