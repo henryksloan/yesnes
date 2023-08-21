@@ -20,6 +20,7 @@ enum EmuThreadMessage {
 
 fn run_emu_thread(
     snes: Arc<Mutex<SNES>>,
+    disassembler: Arc<Mutex<Disassembler>>,
     receiver: channel::Receiver<EmuThreadMessage>,
     paused: Arc<Mutex<bool>>,
 ) -> thread::JoinHandle<()> {
@@ -41,6 +42,15 @@ fn run_emu_thread(
                         break;
                     } else {
                         snes.run_instruction();
+                        let cpu = snes.cpu.borrow();
+                        let registers = cpu.registers();
+                        // TODO: This should probably be called automatically. It might be best if it
+                        // didn't require `impl Send for Disassembler`, i.e. if Disassembler didn't have an
+                        // Rc<RefCell<Bus>>; maybe that could be passed straight from cpu at the end of each instruction.
+                        disassembler
+                            .lock()
+                            .unwrap()
+                            .update_disassembly_at(registers.pc, &registers.p);
                     }
                 }
             }
@@ -50,7 +60,7 @@ fn run_emu_thread(
 
 struct YesnesApp {
     snes: Arc<Mutex<SNES>>,
-    disassembler: Disassembler,
+    disassembler: Arc<Mutex<Disassembler>>,
     // A copy of the CPU's registers, frozen while unpaused.
     registers_mirror: Registers,
     scroll_to_row: Option<(usize, egui::Align)>,
@@ -65,11 +75,18 @@ struct YesnesApp {
 impl Default for YesnesApp {
     fn default() -> Self {
         let snes = Arc::new(Mutex::new(SNES::new()));
-        let mut disassembler = Disassembler::new(snes.lock().unwrap().bus.clone());
-        disassembler.disassemble();
+        let disassembler = Arc::new(Mutex::new(Disassembler::new(
+            snes.lock().unwrap().bus.clone(),
+        )));
+        disassembler.lock().unwrap().disassemble();
         let (sender, receiver) = channel::bounded(1024);
         let emu_paused = Arc::new(Mutex::new(true));
-        run_emu_thread(snes.clone(), receiver, emu_paused.clone());
+        run_emu_thread(
+            snes.clone(),
+            disassembler.clone(),
+            receiver,
+            emu_paused.clone(),
+        );
         let mut app = Self {
             snes: snes.clone(),
             disassembler,
@@ -91,7 +108,12 @@ impl YesnesApp {
     fn scroll_pc_near_top(&mut self) {
         if let Ok(snes) = self.snes.try_lock() {
             let pc = snes.cpu.borrow().registers().pc;
-            let cpu_pc_line = self.disassembler.get_line_index(pc).saturating_sub(1);
+            let cpu_pc_line = self
+                .disassembler
+                .lock()
+                .unwrap()
+                .get_line_index(pc)
+                .saturating_sub(1);
             self.scroll_to_row = Some((cpu_pc_line, egui::Align::TOP));
         }
     }
@@ -187,7 +209,7 @@ impl YesnesApp {
             if ui.button("Go to PC").clicked() {
                 if let Ok(snes) = self.snes.try_lock() {
                     let cpu_pc = snes.cpu.borrow().registers().pc;
-                    let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
+                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
                     self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
                 }
             }
@@ -196,7 +218,11 @@ impl YesnesApp {
                 if let Ok(mut snes) = self.snes.try_lock() {
                     snes.run_instruction();
                     let cpu_pc = snes.cpu.borrow().registers().pc;
-                    let cpu_pc_line = self.disassembler.get_line_index(cpu_pc);
+                    self.disassembler
+                        .lock()
+                        .unwrap()
+                        .update_disassembly_at(cpu_pc, &snes.cpu.borrow().registers().p);
+                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
                     if let Some(prev_top_row) = prev_top_row {
                         if let Some(prev_bottom_row) = prev_bottom_row {
                             if (cpu_pc_line < prev_top_row) || (cpu_pc_line > prev_bottom_row) {
@@ -226,7 +252,7 @@ impl YesnesApp {
             let trimmed_input = lower_input.trim().trim_start_matches("0x");
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
-                let addr_line = self.disassembler.get_line_index(u24(addr));
+                let addr_line = self.disassembler.lock().unwrap().get_line_index(u24(addr));
                 self.scroll_to_row = Some((addr_line, egui::Align::Center));
             }
         });
@@ -248,7 +274,7 @@ impl YesnesApp {
             self.prev_top_row = Some(row_index);
         }
         self.prev_bottom_row = Some(row_index);
-        let disassembly_line = self.disassembler.get_line(row_index);
+        let disassembly_line = self.disassembler.lock().unwrap().get_line(row_index);
         let row_addr = disassembly_line.addr;
         row.col(|ui| {
             let Ok(snes) = self.snes.try_lock() else {
@@ -271,12 +297,7 @@ impl YesnesApp {
     }
 
     fn disassembly_table(&mut self, ui: &mut egui::Ui) {
-        if let Ok(snes) = self.snes.try_lock() {
-            let cpu = snes.cpu.borrow();
-            let registers = cpu.registers();
-            self.disassembler
-                .update_disassembly_at(registers.pc, &registers.p);
-        };
+        let total_lines = self.disassembler.lock().unwrap().get_num_lines();
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         let mut table = TableBuilder::new(ui)
             .striped(true)
@@ -297,11 +318,9 @@ impl YesnesApp {
                 });
             })
             .body(|body| {
-                body.rows(
-                    text_height,
-                    self.disassembler.get_num_lines(),
-                    |row_index, row| self.disassembly_row(row_index, row),
-                );
+                body.rows(text_height, total_lines, |row_index, row| {
+                    self.disassembly_row(row_index, row)
+                });
             });
     }
 }

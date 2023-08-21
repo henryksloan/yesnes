@@ -158,6 +158,8 @@ pub struct Disassembler {
     disassembly_result: Vec<DisassemblerEntry>,
 }
 
+unsafe impl Send for Disassembler {}
+
 impl Disassembler {
     pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
         Self {
