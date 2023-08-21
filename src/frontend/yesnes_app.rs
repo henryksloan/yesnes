@@ -131,13 +131,89 @@ impl YesnesApp {
 
     fn handle_shortcut(&mut self, shortcut: Shortcut) {
         match shortcut {
-            Shortcut::RunToAddress => {
-                self.run_to_address_window.open();
-            }
             Shortcut::GoToAddress => {
                 self.go_to_address_window.open();
             }
+            Shortcut::GoToProgramCounter => {
+                if *self.emu_paused.lock().unwrap() {
+                    let snes = self.snes.lock().unwrap();
+                    let cpu_pc = snes.cpu.borrow().registers().pc;
+                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
+                    self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                }
+            }
+            Shortcut::Continue => {
+                let _ = self.emu_message_sender.send(EmuThreadMessage::Continue);
+            }
+            Shortcut::Pause => {
+                *self.emu_paused.lock().unwrap() = true;
+                if let Ok(snes) = self.snes.lock() {
+                    let cpu_pc = snes.cpu.borrow().registers().pc;
+                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
+                    self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                }
+            }
+            Shortcut::Trace => {
+                *self.emu_paused.lock().unwrap() = true;
+                if let Ok(mut snes) = self.snes.lock() {
+                    run_instruction_and_disassemble(&mut snes, &self.disassembler);
+                    let cpu_pc = snes.cpu.borrow().registers().pc;
+                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
+                    if let Some(prev_top_row) = self.prev_top_row {
+                        if let Some(prev_bottom_row) = self.prev_bottom_row {
+                            if (cpu_pc_line < prev_top_row) || (cpu_pc_line > prev_bottom_row) {
+                                // Recenter PC if it jumped off-screen
+                                self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                            } else if cpu_pc_line >= (prev_bottom_row - 1) {
+                                // Keep the PC just above the bottom of the disassembly output
+                                let new_bottom_line = cpu_pc_line + 1;
+                                self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
+                            }
+                        }
+                    }
+                }
+            }
+            Shortcut::RunToAddress => {
+                self.run_to_address_window.open();
+            }
         }
+    }
+
+    fn shortcut_enabled(&mut self, shortcut: Shortcut) -> bool {
+        match shortcut {
+            Shortcut::Continue => *self.emu_paused.lock().unwrap(),
+            Shortcut::Pause => !(*self.emu_paused.lock().unwrap()),
+            _ => true,
+        }
+    }
+
+    fn button_with_shortcut_impl(
+        &mut self,
+        ui: &mut egui::Ui,
+        shortcut: Shortcut,
+        text: impl Into<egui::WidgetText>,
+        is_menu_button: bool,
+    ) {
+        let enabled = self.shortcut_enabled(shortcut);
+        let mut button = egui::Button::new(text);
+        if is_menu_button {
+            button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut.to_egui_shortcut()));
+        }
+        if ui.add_enabled(enabled, button).clicked() {
+            self.handle_shortcut(shortcut);
+            if is_menu_button {
+                ui.close_menu();
+            }
+        }
+    }
+
+    fn button_with_shortcut(
+        &mut self,
+        ui: &mut egui::Ui,
+        shortcut: Shortcut,
+        text: impl Into<egui::WidgetText>,
+    ) {
+        self.button_with_shortcut_impl(ui, shortcut, text, false);
     }
 
     fn menu_button_with_shortcut(
@@ -146,12 +222,7 @@ impl YesnesApp {
         shortcut: Shortcut,
         text: impl Into<egui::WidgetText>,
     ) {
-        let button = egui::Button::new(text)
-            .shortcut_text(ui.ctx().format_shortcut(&shortcut.to_egui_shortcut()));
-        if ui.add(button).clicked() {
-            self.handle_shortcut(shortcut);
-            ui.close_menu();
-        }
+        self.button_with_shortcut_impl(ui, shortcut, text, true);
     }
 
     fn menu_bar(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -159,26 +230,22 @@ impl YesnesApp {
             // Consume all shortcuts. This must be done in an unconditionally visible UI element so shortcuts always work.
             for shortcut in ALL_SHORTCUTS {
                 if ctx.input_mut(|i| i.consume_shortcut(&shortcut.to_egui_shortcut())) {
-                    self.handle_shortcut(shortcut);
+                    if self.shortcut_enabled(*shortcut) {
+                        self.handle_shortcut(*shortcut);
+                    }
                 }
             }
+            use Shortcut::*;
             ui.menu_button("Run", |ui| {
-                self.menu_button_with_shortcut(ui, Shortcut::RunToAddress, "To address...");
+                self.menu_button_with_shortcut(ui, Continue, "Continue");
+                self.menu_button_with_shortcut(ui, Pause, "Pause");
+                self.menu_button_with_shortcut(ui, Trace, "Trace");
+                self.menu_button_with_shortcut(ui, RunToAddress, "To address...");
             });
             ui.menu_button("Search", |ui| {
                 ui.menu_button("Go to", |ui| {
-                    self.menu_button_with_shortcut(ui, Shortcut::GoToAddress, "Address...");
-                    // TODO: Add a shortcut
-                    if ui.button("Program Counter").clicked() {
-                        if *self.emu_paused.lock().unwrap() {
-                            let snes = self.snes.lock().unwrap();
-                            let cpu_pc = snes.cpu.borrow().registers().pc;
-                            let cpu_pc_line =
-                                self.disassembler.lock().unwrap().get_line_index(cpu_pc);
-                            self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
-                        }
-                        ui.close_menu();
-                    }
+                    self.menu_button_with_shortcut(ui, GoToAddress, "Address...");
+                    self.menu_button_with_shortcut(ui, GoToProgramCounter, "Program Counter");
                 });
             });
         });
@@ -199,11 +266,6 @@ impl YesnesApp {
                         ..Default::default()
                     })
                     .show(ui, |ui| {
-                        // DO NOT SUBMIT: We don't necessarily want to be locking all throughout these functions.
-                        // And certainly don't want to return if they're unavailable. Once I have an emulation thread:
-                        // 1) Controls like "trace" and "run to address" should first pause emulation.
-                        // 2) Register controls/views should refer to a frontend copy which is frozen (with
-                        //    controls disabled) while emulating, and forwards changes to the emulator when paused.
                         registers_panel(ui, &mut self.registers_mirror);
                         ui.set_width(75.0);
                     });
@@ -226,46 +288,11 @@ impl YesnesApp {
     }
 
     fn control_area(&mut self, ui: &mut egui::Ui) {
-        let prev_top_row = self.prev_top_row.take();
-        let prev_bottom_row = self.prev_bottom_row.take();
         ui.horizontal(|ui| {
-            // TODO: Add these to the menu bar, too
-            {
-                let mut emu_paused = self.emu_paused.lock().unwrap();
-                let continue_button = egui::Button::new("Continue");
-                if ui.add_enabled(*emu_paused, continue_button).clicked() {
-                    let _ = self.emu_message_sender.send(EmuThreadMessage::Continue);
-                }
-                let pause_button = egui::Button::new("Pause");
-                if ui.add_enabled(!(*emu_paused), pause_button).clicked() {
-                    *emu_paused = true;
-                    if let Ok(snes) = self.snes.try_lock() {
-                        let cpu_pc = snes.cpu.borrow().registers().pc;
-                        let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
-                        self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
-                    }
-                }
-            }
-            if ui.button("Trace").clicked() {
-                *self.emu_paused.lock().unwrap() = true;
-                if let Ok(mut snes) = self.snes.try_lock() {
-                    run_instruction_and_disassemble(&mut snes, &self.disassembler);
-                    let cpu_pc = snes.cpu.borrow().registers().pc;
-                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
-                    if let Some(prev_top_row) = prev_top_row {
-                        if let Some(prev_bottom_row) = prev_bottom_row {
-                            if (cpu_pc_line < prev_top_row) || (cpu_pc_line > prev_bottom_row) {
-                                // Recenter PC if it jumped off-screen
-                                self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
-                            } else if cpu_pc_line >= (prev_bottom_row - 1) {
-                                // Keep the PC just above the bottom of the disassembly output
-                                let new_bottom_line = cpu_pc_line + 1;
-                                self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
-                            }
-                        }
-                    }
-                }
-            }
+            self.button_with_shortcut(ui, Shortcut::Continue, "Continue");
+            self.button_with_shortcut(ui, Shortcut::Pause, "Pause");
+            self.button_with_shortcut(ui, Shortcut::Trace, "Trace");
+            // TODO: Add this to the menu bar, too
             if ui.button("Reset").clicked() {
                 if let Ok(mut snes) = self.snes.try_lock() {
                     snes.reset();
@@ -341,6 +368,8 @@ impl YesnesApp {
         if let Some((row_nr, align)) = self.scroll_to_row.take() {
             table = table.scroll_to_row(row_nr, Some(align));
         }
+        self.prev_top_row = None;
+        self.prev_bottom_row = None;
         table
             .header(20.0, |mut header| {
                 header.col(|ui| {
