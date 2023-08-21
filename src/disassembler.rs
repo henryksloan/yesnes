@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::bus::Bus;
-use crate::cpu;
+use crate::cpu::{self, StatusRegister};
 use crate::u24::u24;
 
 #[derive(Clone, Copy)]
@@ -25,6 +25,14 @@ impl RegisterState {
             e: false,
         }
     }
+
+    pub fn from_status_register(status_register: &StatusRegister) -> Self {
+        Self {
+            m: status_register.m,
+            x: status_register.x_or_b,
+            e: status_register.e,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -37,6 +45,13 @@ impl AnalysisState {
     pub fn new() -> Self {
         Self {
             reg: RegisterState::new(),
+            p_stack: Vec::new(),
+        }
+    }
+
+    pub fn from_status_register(status_register: &StatusRegister) -> Self {
+        Self {
+            reg: RegisterState::from_status_register(status_register),
             p_stack: Vec::new(),
         }
     }
@@ -143,6 +158,8 @@ pub struct Disassembler {
     disassembly_result: Vec<DisassemblerEntry>,
 }
 
+unsafe impl Send for Disassembler {}
+
 impl Disassembler {
     pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
         Self {
@@ -156,6 +173,21 @@ impl Disassembler {
         let pc = u24(Bus::peak_u16(self.bus.clone(), cpu::RESET_VECTOR) as u32);
         // DO NOT SUBMIT: Also analyze other vectors. Can/do any vectors contain 65C816-mode code?
         self.analyze(pc, &mut AnalysisState::new());
+        self.update_disassembly();
+    }
+
+    pub fn update_disassembly_at(&mut self, addr: u24, status_register: &StatusRegister) {
+        if self.disassembly_cache[addr.raw()].is_none() {
+            self.analyze(
+                addr,
+                &mut AnalysisState::from_status_register(status_register),
+            );
+            self.update_disassembly();
+        }
+    }
+
+    pub fn update_disassembly(&mut self) {
+        self.disassembly_result.clear();
         for (addr, instruction) in self.disassembly_cache.iter().enumerate() {
             if let Some(instruction) = instruction {
                 self.disassembly_result.push(DisassemblerEntry {
@@ -249,7 +281,7 @@ impl Disassembler {
             if addr == entry.addr {
                 return line_i;
             } else if prev_addr < addr && addr < entry.addr {
-                return line_i - 1;
+                return line_i.saturating_sub(1);
             }
             prev_addr = entry.addr;
         }

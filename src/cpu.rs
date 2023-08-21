@@ -1,6 +1,8 @@
 pub mod registers;
 
-use crate::{bus::Bus, cpu::registers::Registers, scheduler::*, u24::u24};
+pub use registers::{Registers, StatusRegister};
+
+use crate::{bus::Bus, scheduler::*, u24::u24};
 
 use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
@@ -252,7 +254,11 @@ impl CPU {
         }
     }
 
-    pub fn registers(&mut self) -> &mut Registers {
+    pub fn registers(&self) -> &Registers {
+        &self.reg
+    }
+
+    pub fn registers_mut(&mut self) -> &mut Registers {
         &mut self.reg
     }
 
@@ -1344,12 +1350,10 @@ impl CPU {
         move || {
             cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
             let addr = yield_all!(CPU::stack_pull_u16(cpu.clone()));
-            println!("Popped addr: {addr:#04X}");
             cpu.borrow_mut().reg.pc |= addr;
             if long {
                 cpu.borrow_mut().reg.pc &= 0x00_FFFFu32;
                 let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;
-                println!("Popped pb: {pb:#02X}");
                 cpu.borrow_mut().reg.pc |= pb << 16;
             }
         }

@@ -12,6 +12,8 @@ pub struct SNES {
     scheduler: Scheduler,
 }
 
+unsafe impl Send for SNES {}
+
 impl SNES {
     pub fn new() -> Self {
         let ppu = Rc::new(RefCell::new(PPU::new()));

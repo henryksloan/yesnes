@@ -1,5 +1,5 @@
 use crate::ppu::PPU;
-use crate::scheduler::{dummy_yield, YieldReason, Yieldable};
+use crate::scheduler::{dummy_yield, Access, AccessType, DebugPoint, YieldReason, Yieldable};
 use crate::smp::SMP;
 use crate::u24::u24;
 
@@ -89,23 +89,29 @@ impl Bus {
         move || {
             dummy_yield!();
             // TODO: Some generalized mapper logic
+            // TODO: HiROM
             match addr.hi8() {
+                0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
+                    bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
+                }
                 0x00..=0x3F | 0x80..=0xBF => {
-                    if addr.hi8() == 0x00 && (0xFF00..=0xFFFF).contains(&addr.lo16()) {
-                        bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
-                    } else {
-                        match addr.lo16() {
-                            // TODO: System area
-                            0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
-                            0x2140 => bus.borrow().debug_apu_port0,
-                            0x2141 => bus.borrow().debug_apu_port1,
-                            0x2142 => bus.borrow().debug_apu_port2,
-                            0x2143 => bus.borrow().debug_apu_port3,
-                            0x8000.. => {
-                                bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
-                                    | (addr.lo16() as usize - 0x8000)]
-                            }
-                            _ => 0,
+                    match addr.lo16() {
+                        // TODO: System area
+                        0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
+                        0x2140 => bus.borrow().debug_apu_port0,
+                        0x2141 => bus.borrow().debug_apu_port1,
+                        0x2142 => bus.borrow().debug_apu_port2,
+                        0x2143 => bus.borrow().debug_apu_port3,
+                        0x8000.. => {
+                            bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
+                                | (addr.lo16() as usize - 0x8000)]
+                        }
+                        _ => {
+                            yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
+                                access_type: AccessType::Read,
+                                addr,
+                            }));
+                            0
                         }
                     }
                 }
@@ -145,19 +151,24 @@ impl Bus {
         move || {
             dummy_yield!();
             // TODO: Some generalized mapper logic
+            // TODO: HiROM
             match addr.hi8() {
+                0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
+                    // bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
+                }
                 0x00..=0x3F | 0x80..=0xBF => {
-                    if addr.hi8() == 0x00 && (0xFF00..=0xFFFF).contains(&addr.lo16()) {
-                        // bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
-                    } else {
-                        match addr.lo16() {
-                            // TODO: System area
-                            0x0000..=0x1FFF => bus.borrow_mut().wram[addr.lo16() as usize] = data,
-                            0x2140 => bus.borrow_mut().debug_apu_port0 = data,
-                            0x2141 => bus.borrow_mut().debug_apu_port1 = data,
-                            0x2142 => bus.borrow_mut().debug_apu_port2 = data,
-                            0x2143 => bus.borrow_mut().debug_apu_port3 = data,
-                            _ => {}
+                    match addr.lo16() {
+                        // TODO: System area
+                        0x0000..=0x1FFF => bus.borrow_mut().wram[addr.lo16() as usize] = data,
+                        0x2140 => bus.borrow_mut().debug_apu_port0 = data,
+                        0x2141 => bus.borrow_mut().debug_apu_port1 = data,
+                        0x2142 => bus.borrow_mut().debug_apu_port2 = data,
+                        0x2143 => bus.borrow_mut().debug_apu_port3 = data,
+                        _ => {
+                            yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
+                                access_type: AccessType::Write,
+                                addr,
+                            }));
                         }
                     }
                 }
