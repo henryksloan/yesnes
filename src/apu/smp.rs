@@ -222,6 +222,11 @@ impl SMP {
                  0xD7=>indirect_indexed, 0xC7=>indexed_indirect)
                 (store_x; 0xD8=>direct, 0xD9=>direct_y)
                 (store_y; 0xCB=>direct, 0xCC=>direct_x)
+                (or_acc; 0x08=>immediate, 0x06=>indirect, 0x04=>direct,
+                 0x14=>direct_x, 0x05=>absolute, 0x15=>absolute_x,
+                 0x16=>absolute_y, 0x17=>indirect_indexed, 0x07=>indexed_indirect)
+                (or_mem_to_mem; 0x09=>direct_to_direct,
+                 0x18=>immediate_to_direct, 0x19=>indirect_to_indirect)
             );
         }
     }
@@ -454,6 +459,34 @@ impl SMP {
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
             yield_all!(SMP::write_u8(smp.clone(), addrs.dest_addr, data));
+        }
+    }
+
+    fn or_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, mut dest_data: u8) -> u8 {
+        dest_data |= src_data;
+        smp.borrow_mut().reg.psw.n = (dest_data >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = dest_data == 0;
+        dest_data
+    }
+
+    // DO NOT SUBMIT: TODO: Move this mem_to_mem/acc pattern to a macro
+    fn or_mem_to_mem<'a>(
+        smp: Rc<RefCell<SMP>>,
+        addrs: MemToMemAddresses,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            let dest_data = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
+            let src_data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
+            let output = Self::or_algorithm(smp.clone(), src_data, dest_data);
+            yield_all!(SMP::write_u8(smp.clone(), addrs.dest_addr, output));
+        }
+    }
+
+    fn or_acc<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
+            let output = Self::or_algorithm(smp.clone(), src_data, smp.borrow().reg.a);
+            smp.borrow_mut().reg.a = output;
         }
     }
 
