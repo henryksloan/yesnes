@@ -21,12 +21,6 @@ pub struct CPU {
 }
 
 macro_rules! yield_ticks {
-    ($gen_expr:expr) => {{
-        // TODO: Is this unused/invalid?
-        let ticks_to_yield = cpu.borrow().ticks_run;
-        cpu.borrow_mut().ticks_run = 0;
-        yield_all!($gen_expr, ticks_to_yield);
-    }};
     ($cpu_rc:ident, $gen_expr:expr) => {{
         let ticks_to_yield = $cpu_rc.borrow().ticks_run;
         $cpu_rc.borrow_mut().ticks_run = 0;
@@ -39,6 +33,8 @@ macro_rules! yield_ticks {
         }
     }};
 }
+
+pub(crate) use yield_ticks;
 
 // TODO: Replace some of these with e.g. index_reg_16_bits
 macro_rules! n_bits {
@@ -264,6 +260,7 @@ impl CPU {
 
     pub fn reset(&mut self) {
         self.ticks_run = 0;
+        self.reg = Registers::new();
         // TODO: Simplify
         self.reg.pc = u24({
             let mut gen = Bus::read_u16(self.bus.clone(), RESET_VECTOR);
@@ -283,8 +280,8 @@ impl CPU {
         // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         move || loop {
             // print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
-            // TODO: Why not `fetch!`?
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
+            // TODO: Need to go through and use wrapping arithmetic where appropriate
             cpu.borrow_mut().reg.pc += 1u32;
             // {
             //     let reg = &cpu.borrow().reg;

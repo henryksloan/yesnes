@@ -117,7 +117,7 @@ impl Default for YesnesApp {
 
 impl YesnesApp {
     fn scroll_pc_near_top(&mut self) {
-        if let Ok(snes) = self.snes.try_lock() {
+        if let Ok(snes) = self.snes.lock() {
             let pc = snes.cpu.borrow().registers().pc;
             let cpu_pc_line = self
                 .disassembler
@@ -178,7 +178,7 @@ impl YesnesApp {
             }
             Shortcut::Reset => {
                 *self.emu_paused.lock().unwrap() = true;
-                if let Ok(mut snes) = self.snes.try_lock() {
+                if let Ok(mut snes) = self.snes.lock() {
                     snes.reset();
                 }
                 self.scroll_pc_near_top();
