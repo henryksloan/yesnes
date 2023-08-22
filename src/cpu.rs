@@ -222,7 +222,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($cpu_rc, $instr_f, $flag, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid CPU opcode {:#02X}", opcode_val),
+            _ => panic!("Invalid CPU opcode {:#04X} at {}", opcode_val, $cpu_rc.borrow().reg.pc),
         }
     };
 }
@@ -829,6 +829,8 @@ impl CPU {
             Pointer { addr, long }
         }
     }
+
+    // Instructions:
 
     fn ora<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {

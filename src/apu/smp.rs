@@ -122,7 +122,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($smp_rc, $instr_f, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid SMP opcode {:#02X}", opcode_val),
+            _ => panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc),
         }
     };
 }
@@ -133,6 +133,13 @@ macro_rules! fetch {
         $smp_rc.borrow_mut().reg.pc += 1;
         data
     }};
+}
+
+/// Holds the source and destination addresses for memory-to-memory instructions (e.g. OR (X),(Y))
+#[derive(Copy, Clone)]
+struct MemToMemAddresses {
+    pub src_addr: u16,
+    pub dest_addr: u16,
 }
 
 /// The SMP, i.e. the SPC700 audio coprocessor
@@ -203,6 +210,7 @@ impl SMP {
                 (transfer_a_y; 0xFD=>implied)
                 (transfer_sp_x; 0x9D=>implied)
                 (transfer_x_sp; 0xBD=>implied)
+                (mov_mem_to_mem; 0x8F=>immediate_to_direct, 0xFA=>direct_to_direct)
                 (load_a; 0xE8=>immediate, 0xE4=>direct, 0xF4=>direct_x,
                  0xE5=>absolute, 0xF5=>absolute_x, 0xF6=>absolute_y,
                  0xE6=>indirect, 0xBF=>indirect_increment,
@@ -212,8 +220,8 @@ impl SMP {
                 (store_a; 0xC4=>direct, 0xD4=>direct_x, 0xC5=>absolute, 0xD5=>absolute_x,
                  0xD6=>absolute_y, 0xAF=>indirect_increment, 0xC6=>indirect,
                  0xD7=>indirect_indexed, 0xC7=>indexed_indirect)
-                 (store_x; 0xD8=>direct, 0xD9=>direct_y)
-                 (store_y; 0xCB=>direct, 0xCC=>direct_x)
+                (store_x; 0xD8=>direct, 0xD9=>direct_y)
+                (store_y; 0xCB=>direct, 0xCC=>direct_x)
             );
         }
     }
@@ -396,6 +404,56 @@ impl SMP {
             let indirect_addr = direct_page_base + fetch!(smp) as u16 + smp.borrow().reg.x as u16;
             let direct_addr = yield_all!(SMP::read_u8(smp.clone(), indirect_addr)) as u16;
             direct_addr
+        }
+    }
+
+    fn immediate_to_direct<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        move || {
+            let src_addr = yield_all!(Self::immediate(smp.clone()));
+            let dest_addr = yield_all!(Self::direct(smp.clone()));
+            MemToMemAddresses {
+                src_addr,
+                dest_addr,
+            }
+        }
+    }
+
+    fn direct_to_direct<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        move || {
+            let src_addr = yield_all!(Self::direct(smp.clone()));
+            let dest_addr = yield_all!(Self::direct(smp.clone()));
+            MemToMemAddresses {
+                src_addr,
+                dest_addr,
+            }
+        }
+    }
+    fn indirect_to_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        move || {
+            let src_addr = yield_all!(Self::direct(smp.clone()));
+            let dest_addr = {
+                let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+                direct_page_base + smp.borrow().reg.y as u16
+            };
+            MemToMemAddresses {
+                src_addr,
+                dest_addr,
+            }
+        }
+    }
+
+    // Instructions:
+
+    // MOV, OR, AND, EOR, CMP, ADC, and SBC support some memory->memory operations;
+    // these implementations handle only those modes.
+
+    fn mov_mem_to_mem<'a>(
+        smp: Rc<RefCell<SMP>>,
+        addrs: MemToMemAddresses,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
+            yield_all!(SMP::write_u8(smp.clone(), addrs.dest_addr, data));
         }
     }
 
