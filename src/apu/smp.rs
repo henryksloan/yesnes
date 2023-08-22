@@ -100,7 +100,7 @@ macro_rules! store_instrs {
 }
 
 /// Implement *_mem_to_mem and *_acc variants for a given instruction using SMP::*_algorithm().
-macro_rules! arith_instr {
+macro_rules! alu_instr {
     ($op:ident) => {
         paste! {
             fn [<$op _mem_to_mem>]<'a>(
@@ -254,6 +254,16 @@ impl SMP {
                  0x16=>absolute_y, 0x17=>indirect_indexed, 0x07=>indexed_indirect)
                 (or_mem_to_mem; 0x09=>direct_to_direct,
                  0x18=>immediate_to_direct, 0x19=>indirect_to_indirect)
+                (and_acc; 0x28=>immediate, 0x26=>indirect, 0x24=>direct,
+                 0x34=>direct_x, 0x25=>absolute, 0x35=>absolute_x,
+                 0x36=>absolute_y, 0x37=>indirect_indexed, 0x27=>indexed_indirect)
+                (and_mem_to_mem; 0x29=>direct_to_direct,
+                 0x38=>immediate_to_direct, 0x39=>indirect_to_indirect)
+                (eor_acc; 0x48=>immediate, 0x46=>indirect, 0x44=>direct,
+                 0x54=>direct_x, 0x45=>absolute, 0x55=>absolute_x,
+                 0x56=>absolute_y, 0x57=>indirect_indexed, 0x47=>indexed_indirect)
+                (eor_mem_to_mem; 0x49=>direct_to_direct,
+                 0x58=>immediate_to_direct, 0x59=>indirect_to_indirect)
             );
         }
     }
@@ -496,7 +506,23 @@ impl SMP {
         dest_data
     }
 
-    arith_instr!(or);
+    fn and_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, mut dest_data: u8) -> u8 {
+        dest_data &= src_data;
+        smp.borrow_mut().reg.psw.n = (dest_data >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = dest_data == 0;
+        dest_data
+    }
+
+    fn eor_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, mut dest_data: u8) -> u8 {
+        dest_data ^= src_data;
+        smp.borrow_mut().reg.psw.n = (dest_data >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = dest_data == 0;
+        dest_data
+    }
+
+    alu_instr!(or);
+    alu_instr!(eor);
+    alu_instr!(and);
 
     transfer_instrs!();
     load_instrs!();
