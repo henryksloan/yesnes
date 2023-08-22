@@ -264,6 +264,16 @@ impl SMP {
                  0x56=>absolute_y, 0x57=>indirect_indexed, 0x47=>indexed_indirect)
                 (eor_mem_to_mem; 0x49=>direct_to_direct,
                  0x58=>immediate_to_direct, 0x59=>indirect_to_indirect)
+                (adc_acc; 0x88=>immediate, 0x86=>indirect, 0x84=>direct,
+                 0x94=>direct_x, 0x85=>absolute, 0x95=>absolute_x,
+                 0x96=>absolute_y, 0x97=>indirect_indexed, 0x87=>indexed_indirect)
+                (adc_mem_to_mem; 0x89=>direct_to_direct,
+                 0x98=>immediate_to_direct, 0x99=>indirect_to_indirect)
+                (sbc_acc; 0xA8=>immediate, 0xA6=>indirect, 0xA4=>direct,
+                 0xB4=>direct_x, 0xA5=>absolute, 0xB5=>absolute_x,
+                 0xB6=>absolute_y, 0xB7=>indirect_indexed, 0xA7=>indexed_indirect)
+                (sbc_mem_to_mem; 0xA9=>direct_to_direct,
+                 0xB8=>immediate_to_direct, 0xB9=>indirect_to_indirect)
             );
         }
     }
@@ -520,9 +530,32 @@ impl SMP {
         dest_data
     }
 
+    fn adc_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) -> u8 {
+        let sum = {
+            let carry = smp.borrow().reg.psw.c as i16;
+            let temp = dest_data as i16 + src_data as i16 + carry;
+            smp.borrow_mut().reg.psw.c = temp > 0xFF;
+            smp.borrow_mut().reg.psw.h = ((dest_data & 0xF) + (src_data & 0xF) + carry as u8) > 0xF;
+            smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
+            smp.borrow_mut().reg.psw.z = temp == 0;
+            temp as u8
+        };
+        // We overflowed iff the MSBs of src and dest were the same, and both differ from that of sum
+        smp.borrow_mut().reg.psw.v = ((src_data ^ sum) & (dest_data ^ sum) & 0x80) == 0x80;
+        sum
+    }
+
+    fn sbc_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) -> u8 {
+        // TODO: Need to double-check this logic, and that all flags are still correct
+        let src_1s_complement = ((src_data as i8).wrapping_neg().wrapping_sub(1)) as u8;
+        SMP::adc_algorithm(smp, src_1s_complement, dest_data)
+    }
+
     alu_instr!(or);
-    alu_instr!(eor);
     alu_instr!(and);
+    alu_instr!(eor);
+    alu_instr!(adc);
+    alu_instr!(sbc);
 
     transfer_instrs!();
     load_instrs!();
