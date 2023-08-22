@@ -169,7 +169,12 @@ impl SMP {
                 (transfer_a_y; 0xFD=>implied)
                 (transfer_sp_x; 0x9D=>implied)
                 (transfer_x_sp; 0xBD=>implied)
-                // (load_a; ...)
+                (load_a; 0xE8=>immediate, 0xE4=>direct, 0xF4=>direct_x,
+                 0xE5=>absolute, 0xF5=>absolute_x, 0xF6=>absolute_y,
+                 0xE6=>indirect, 0xBF=>indirect_increment,
+                 0xF7=>indirect_indexed, 0xE7=>indexed_indirect)
+                (load_x; 0xF8=>direct, 0xF9=>direct_y, 0xE9=>absolute)
+                (load_y; 0xEB=>direct, 0xFB=>direct_x, 0xEC=>absolute)
             );
         }
     }
@@ -178,6 +183,7 @@ impl SMP {
         self.ticks_run += n_clocks;
     }
 
+    // TODO
     fn read_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
         move || {
             dummy_yield!();
@@ -187,11 +193,111 @@ impl SMP {
         }
     }
 
+    // TODO
     fn write_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u8) -> impl Yieldable<()> + 'a {
         move || {
             dummy_yield!();
             // TODO: Some clock cycles before the write, depending on region
             smp.borrow_mut().step(4);
+        }
+    }
+
+    // Addressing modes:
+
+    fn immediate<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            dummy_yield!();
+            let addr = smp.borrow().reg.pc;
+            // TODO: Need to use wrapping adds for PC increments and most addressing mode adds
+            smp.borrow_mut().reg.pc += 1;
+            addr
+        }
+    }
+
+    // TODO: Reduce code duplication across these three
+    fn direct<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+            let direct_addr = direct_page_base + fetch!(smp) as u16;
+            direct_addr
+        }
+    }
+
+    fn direct_x<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+            let direct_addr = direct_page_base + fetch!(smp) as u16 + smp.borrow().reg.x as u16;
+            direct_addr
+        }
+    }
+
+    fn direct_y<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+            let direct_addr = direct_page_base + fetch!(smp) as u16 + smp.borrow().reg.y as u16;
+            direct_addr
+        }
+    }
+
+    // TODO: Reduce code duplication across these three
+    fn absolute<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            let addr_lo = fetch!(smp) as u16;
+            ((fetch!(smp) as u16) << 8) | addr_lo
+        }
+    }
+
+    fn absolute_x<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            let addr_lo = fetch!(smp) as u16;
+            (((fetch!(smp) as u16) << 8) | addr_lo).wrapping_add(smp.borrow().reg.x as u16)
+        }
+    }
+
+    fn absolute_y<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            let addr_lo = fetch!(smp) as u16;
+            (((fetch!(smp) as u16) << 8) | addr_lo).wrapping_add(smp.borrow().reg.y as u16)
+        }
+    }
+
+    fn indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            dummy_yield!();
+            let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+            let direct_addr = direct_page_base + smp.borrow().reg.x as u16;
+            direct_addr
+        }
+    }
+
+    fn indirect_increment<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            dummy_yield!();
+            let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+            let x = smp.borrow().reg.x;
+            let direct_addr = direct_page_base + x as u16;
+            smp.borrow_mut().reg.x += x.wrapping_add(1);
+            direct_addr
+        }
+    }
+
+    fn indirect_indexed<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            dummy_yield!();
+            let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+            let indirect_addr = direct_page_base + fetch!(smp) as u16;
+            let direct_addr = yield_all!(SMP::read_u8(smp.clone(), indirect_addr)) as u16;
+            direct_addr + smp.borrow().reg.y as u16
+        }
+    }
+
+    fn indexed_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        move || {
+            dummy_yield!();
+            let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+            let indirect_addr = direct_page_base + fetch!(smp) as u16 + smp.borrow().reg.x as u16;
+            let direct_addr = yield_all!(SMP::read_u8(smp.clone(), indirect_addr)) as u16;
+            direct_addr
         }
     }
 

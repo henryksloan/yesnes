@@ -512,10 +512,6 @@ impl CPU {
         u24((cpu.borrow().reg.b as u32) << 16) | addr
     }
 
-    fn read_bank_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
-        move || yield_all!(CPU::read_u8(cpu.clone(), CPU::bank_addr(cpu.clone(), addr)))
-    }
-
     fn stack_pull_u8<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u8> + 'a {
         // TODO: Does 0x100 ever get used, namely in emulation mode?
         move || {
@@ -596,6 +592,8 @@ impl CPU {
         }
     }
 
+    // Addressing modes:
+
     fn immediate<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             dummy_yield!();
@@ -608,24 +606,24 @@ impl CPU {
     // TODO: Reduce code duplication across these three
     fn direct<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
-            let indirect_addr = u24(fetch!(cpu) as u32);
-            let addr = CPU::direct_addr(cpu.clone(), indirect_addr);
+            let direct_addr = u24(fetch!(cpu) as u32);
+            let addr = CPU::direct_addr(cpu.clone(), direct_addr);
             Pointer { addr, long }
         }
     }
 
     fn direct_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
-            let indirect_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_x() as u32);
-            let addr = CPU::direct_addr(cpu.clone(), indirect_addr);
+            let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_x() as u32);
+            let addr = CPU::direct_addr(cpu.clone(), direct_addr);
             Pointer { addr, long }
         }
     }
 
     fn direct_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
-            let indirect_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_y() as u32);
-            let addr = CPU::direct_addr(cpu.clone(), indirect_addr);
+            let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_y() as u32);
+            let addr = CPU::direct_addr(cpu.clone(), direct_addr);
             Pointer { addr, long }
         }
     }

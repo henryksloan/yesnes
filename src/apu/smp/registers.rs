@@ -19,10 +19,20 @@ impl Registers {
 pub struct StatusRegister {
     pub n: bool, // Negative flag
     pub v: bool, // Overflow flag
-    pub p: bool, // Zero page location (0=00xx, 1=01xx)
+    pub p: bool, // Direct page location (0=00xx, 1=01xx)
     pub b: bool, // Break flag
     pub h: bool, // Half-carry
     pub i: bool, // IRQ enable (unused in APU)
     pub z: bool, // Zero flag
     pub c: bool, // Carry flag
+}
+
+impl StatusRegister {
+    pub fn direct_page_addr(&self) -> u16 {
+        if self.p {
+            0x0100
+        } else {
+            0x0000
+        }
+    }
 }
