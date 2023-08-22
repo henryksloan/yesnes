@@ -1,6 +1,6 @@
 pub mod registers;
 
-pub use registers::{Registers, StatusRegister};
+pub use registers::{IoRegisters, Registers, StatusRegister};
 
 use crate::cpu::yield_ticks;
 use crate::scheduler::*;
@@ -13,6 +13,18 @@ use std::rc::Rc;
 use paste::paste;
 
 pub const RESET_VECTOR: u16 = 0xFFFE;
+
+#[rustfmt::skip]
+const BOOT_ROM: [u8; 64] = [
+	0xCD, 0xEF, 0xBD, 0xE8, 0x00, 0xC6, 0x1D, 0xD0,
+	0xFC, 0x8F, 0xAA, 0xF4, 0x8F, 0xBB, 0xF5, 0x78,
+	0xCC, 0xF4, 0xD0, 0xFB, 0x2F, 0x19, 0xEB, 0xF4,
+	0xD0, 0xFC, 0x7E, 0xF4, 0xD0, 0x0B, 0xE4, 0xF5,
+	0xCB, 0xF4, 0xD7, 0x00, 0xFC, 0xD0, 0xF3, 0xAB,
+	0x01, 0x10, 0xEF, 0x7E, 0xF4, 0x10, 0xEB, 0xBA,
+	0xF6, 0xDA, 0x00, 0xBA, 0xF4, 0xC4, 0xF4, 0xDD,
+	0x5D, 0xD0, 0xDB, 0x1F, 0x00, 0x00, 0xC0, 0xFF
+];
 
 macro_rules! transfer_instrs {
     ($from:ident => sp) => {
@@ -92,7 +104,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($smp_rc, $instr_f, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid opcode {:#02X}", opcode_val),
+            _ => panic!("Invalid SMP opcode {:#02X}", opcode_val),
         }
     };
 }
@@ -108,14 +120,18 @@ macro_rules! fetch {
 /// The SMP, i.e. the SPC700 audio coprocessor
 pub struct SMP {
     reg: Registers,
+    io_reg: IoRegisters,
     ticks_run: u64,
+    ram: Vec<u8>,
 }
 
 impl SMP {
     pub fn new() -> Self {
         Self {
             reg: Registers::new(),
+            io_reg: IoRegisters::new(),
             ticks_run: 0,
+            ram: vec![0; 0x10000],
         }
     }
 
@@ -183,22 +199,81 @@ impl SMP {
         self.ticks_run += n_clocks;
     }
 
-    // TODO
-    fn read_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
+    fn read_io_reg<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
         move || {
+            // TODO: I think this should maybe yield to CPU for some (all?) of these?
             dummy_yield!();
-            // TODO: Some clock cycles before the read, depending on region
-            smp.borrow_mut().step(1);
-            0
+            match addr {
+                0x00F0..=0x00F3 => todo!(),
+                0x00F4..=0x00F7 => smp.borrow().io_reg.ports[addr as usize - 0x00F4],
+                0x00F8..=0x00FF => todo!(),
+                _ => panic!("Address {:#02X} is not an SMP IO register", addr),
+            }
         }
     }
 
-    // TODO
+    fn write_io_reg<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u8) -> impl Yieldable<()> + 'a {
+        move || {
+            // TODO: I think this should maybe yield to CPU for some (all?) of these?
+            dummy_yield!();
+            match addr {
+                0x00F0..=0x00F3 => todo!(),
+                0x00F4..=0x00F7 => smp.borrow_mut().io_reg.ports[addr as usize - 0x00F4] = data,
+                0x00F8..=0x00FF => todo!(),
+                _ => panic!("Address {:#02X} is not an SMP IO register", addr),
+            }
+        }
+    }
+
+    fn read_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
+        move || {
+            // TODO: Could this be more granular? Does every access need to sync?
+            yield YieldReason::Sync(Device::CPU);
+            let data = match addr {
+                0x0000..=0x00EF => smp.borrow().ram[addr as usize],
+                0x00F0..=0x00FF => yield_all!(SMP::read_io_reg(smp.clone(), addr)),
+                0x0100..=0xFFBF => smp.borrow_mut().ram[addr as usize],
+                // TODO: Use control register to determine RAM/ROM
+                0xFFC0..=0xFFFF => BOOT_ROM[addr as usize - 0xFFC0],
+            };
+            // TODO: Some clock cycles before the read, depending on region
+            smp.borrow_mut().step(1);
+            data
+        }
+    }
+
     fn write_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u8) -> impl Yieldable<()> + 'a {
         move || {
-            dummy_yield!();
+            // TODO: Could this be more granular? Does every access need to sync?
+            yield YieldReason::Sync(Device::CPU);
+            match addr {
+                0x0000..=0x00EF => smp.borrow_mut().ram[addr as usize] = data,
+                0x00F0..=0x00FF => yield_all!(SMP::write_io_reg(smp.clone(), addr, data)),
+                0x0100..=0xFFBF => smp.borrow_mut().ram[addr as usize] = data,
+                // TODO: Use control register to determine RAM/ROM
+                0xFFC0..=0xFFFF => smp.borrow_mut().ram[addr as usize] = data,
+            }
             // TODO: Some clock cycles before the write, depending on region
             smp.borrow_mut().step(4);
+        }
+    }
+
+    pub fn io_peak(&self, addr: u16) -> u8 {
+        // TODO
+        0
+    }
+
+    pub fn io_read(&mut self, addr: u16) -> u8 {
+        match addr {
+            0x2140..=0x2143 => self.io_reg.ports[addr as usize - 0x2140],
+            _ => panic!("Invalid IO read of SMP at {addr:#06X}"),
+        }
+    }
+
+    pub fn io_write(&mut self, addr: u16, data: u8) {
+        match addr {
+            0x2140..=0x2143 => self.io_reg.ports[addr as usize - 0x2140] = data,
+            _ => panic!("Invalid IO write of SMP at {addr:#06X}"),
         }
     }
 

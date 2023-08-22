@@ -400,6 +400,7 @@ impl YesnesApp {
 
 impl eframe::App for YesnesApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
         self.show_windows(ctx);
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| self.menu_bar(ctx, ui));
         egui::CentralPanel::default().show(ctx, |ui| {

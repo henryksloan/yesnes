@@ -36,3 +36,14 @@ impl StatusRegister {
         }
     }
 }
+
+#[derive(Default, Clone, Copy)]
+pub struct IoRegisters {
+    pub ports: [u8; 4],
+}
+
+impl IoRegisters {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}

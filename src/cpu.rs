@@ -222,7 +222,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($cpu_rc, $instr_f, $flag, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid opcode {:#02X}", opcode_val),
+            _ => panic!("Invalid CPU opcode {:#02X}", opcode_val),
         }
     };
 }
@@ -446,6 +446,7 @@ impl CPU {
     fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
             // TODO: Some clock cycles before the read, depending on region
+            // (this may require passing the CPU RC to the bus function)
             let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
             cpu.borrow_mut().step(1);
             data
@@ -455,6 +456,7 @@ impl CPU {
     fn write_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
         move || {
             // TODO: Some clock cycles before the write, depending on region
+            // (this may require passing the CPU RC to the bus function)
             yield_all!(Bus::write_u8(cpu.borrow_mut().bus.clone(), addr, data));
             cpu.borrow_mut().step(4);
         }
