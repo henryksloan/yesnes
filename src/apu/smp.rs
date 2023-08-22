@@ -81,6 +81,24 @@ macro_rules! load_instrs {
     }
 }
 
+macro_rules! store_instrs {
+    ($reg:ident) => {
+        paste! {
+            fn [<store_ $reg>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+                move || {
+                    let data = smp.borrow_mut().reg.$reg;
+                    yield_all!(SMP::write_u8(smp.clone(), addr, data));
+                }
+            }
+        }
+    };
+    () => {
+        store_instrs!(a);
+        store_instrs!(x);
+        store_instrs!(y);
+    }
+}
+
 macro_rules! instr {
     ($smp_rc: ident, $instr_f:ident) => {
         yield_ticks!($smp_rc, SMP::$instr_f($smp_rc.clone()))
@@ -189,8 +207,13 @@ impl SMP {
                  0xE5=>absolute, 0xF5=>absolute_x, 0xF6=>absolute_y,
                  0xE6=>indirect, 0xBF=>indirect_increment,
                  0xF7=>indirect_indexed, 0xE7=>indexed_indirect)
-                (load_x; 0xF8=>direct, 0xF9=>direct_y, 0xE9=>absolute)
-                (load_y; 0xEB=>direct, 0xFB=>direct_x, 0xEC=>absolute)
+                (load_x; 0xCD=>immediate, 0xF8=>direct, 0xF9=>direct_y, 0xE9=>absolute)
+                (load_y; 0x8D=>immediate, 0xEB=>direct, 0xFB=>direct_x, 0xEC=>absolute)
+                (store_a; 0xC4=>direct, 0xD4=>direct_x, 0xC5=>absolute, 0xD5=>absolute_x,
+                 0xD6=>absolute_y, 0xAF=>indirect_increment, 0xC6=>indirect,
+                 0xD7=>indirect_indexed, 0xC7=>indexed_indirect)
+                 (store_x; 0xD8=>direct, 0xD9=>direct_y)
+                 (store_y; 0xCB=>direct, 0xCC=>direct_x)
             );
         }
     }
@@ -378,4 +401,5 @@ impl SMP {
 
     transfer_instrs!();
     load_instrs!();
+    store_instrs!();
 }
