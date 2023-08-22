@@ -99,6 +99,33 @@ macro_rules! store_instrs {
     }
 }
 
+/// Implement *_mem_to_mem and *_acc variants for a given instruction using SMP::*_algorithm().
+macro_rules! arith_instr {
+    ($op:ident) => {
+        paste! {
+            fn [<$op _mem_to_mem>]<'a>(
+                smp: Rc<RefCell<SMP>>,
+                addrs: MemToMemAddresses,
+            ) -> impl InstructionGenerator + 'a {
+                move || {
+                    let dest_data = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
+                    let src_data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
+                    let output = SMP::[<$op _algorithm>](smp.clone(), src_data, dest_data);
+                    yield_all!(SMP::write_u8(smp.clone(), addrs.dest_addr, output));
+                }
+            }
+
+            fn [<$op _acc>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+                move || {
+                    let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
+                    let output = Self::[<$op _algorithm>](smp.clone(), src_data, smp.borrow().reg.a);
+                    smp.borrow_mut().reg.a = output;
+                }
+            }
+        }
+    };
+}
+
 macro_rules! instr {
     ($smp_rc: ident, $instr_f:ident) => {
         yield_ticks!($smp_rc, SMP::$instr_f($smp_rc.clone()))
@@ -469,26 +496,7 @@ impl SMP {
         dest_data
     }
 
-    // DO NOT SUBMIT: TODO: Move this mem_to_mem/acc pattern to a macro
-    fn or_mem_to_mem<'a>(
-        smp: Rc<RefCell<SMP>>,
-        addrs: MemToMemAddresses,
-    ) -> impl InstructionGenerator + 'a {
-        move || {
-            let dest_data = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
-            let src_data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
-            let output = Self::or_algorithm(smp.clone(), src_data, dest_data);
-            yield_all!(SMP::write_u8(smp.clone(), addrs.dest_addr, output));
-        }
-    }
-
-    fn or_acc<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
-        move || {
-            let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            let output = Self::or_algorithm(smp.clone(), src_data, smp.borrow().reg.a);
-            smp.borrow_mut().reg.a = output;
-        }
-    }
+    arith_instr!(or);
 
     transfer_instrs!();
     load_instrs!();
