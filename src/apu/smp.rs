@@ -264,6 +264,13 @@ impl SMP {
                  0x56=>absolute_y, 0x57=>indirect_indexed, 0x47=>indexed_indirect)
                 (eor_mem_to_mem; 0x49=>direct_to_direct,
                  0x58=>immediate_to_direct, 0x59=>indirect_to_indirect)
+                (cmp_acc; 0x68=>immediate, 0x66=>indirect, 0x64=>direct,
+                 0x74=>direct_x, 0x65=>absolute, 0x75=>absolute_x,
+                 0x76=>absolute_y, 0x77=>indirect_indexed, 0x67=>indexed_indirect)
+                (cmp_mem_to_mem; 0x69=>direct_to_direct,
+                 0x78=>immediate_to_direct, 0x79=>indirect_to_indirect)
+                (cmp_x; 0xC8=>immediate, 0x3E=>direct, 0x1E=>absolute)
+                (cmp_y; 0xAD=>immediate, 0x7E=>direct, 0x5E=>absolute)
                 (adc_acc; 0x88=>immediate, 0x86=>indirect, 0x84=>direct,
                  0x94=>direct_x, 0x85=>absolute, 0x95=>absolute_x,
                  0x96=>absolute_y, 0x97=>indirect_indexed, 0x87=>indexed_indirect)
@@ -530,6 +537,17 @@ impl SMP {
         dest_data
     }
 
+    fn cmp_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) -> u8 {
+        let difference = {
+            let temp = dest_data as i16 - src_data as i16;
+            smp.borrow_mut().reg.psw.c = temp > 0xFF;
+            smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
+            smp.borrow_mut().reg.psw.z = temp == 0;
+            temp as u8
+        };
+        difference
+    }
+
     fn adc_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) -> u8 {
         let sum = {
             let carry = smp.borrow().reg.psw.c as i16;
@@ -551,9 +569,26 @@ impl SMP {
         SMP::adc_algorithm(smp, src_1s_complement, dest_data)
     }
 
+    fn cmp_x<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
+            let output = Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.x);
+            smp.borrow_mut().reg.x = output;
+        }
+    }
+
+    fn cmp_y<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
+            let output = Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.y);
+            smp.borrow_mut().reg.y = output;
+        }
+    }
+
     alu_instr!(or);
     alu_instr!(and);
     alu_instr!(eor);
+    alu_instr!(cmp);
     alu_instr!(adc);
     alu_instr!(sbc);
 
