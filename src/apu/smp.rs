@@ -343,6 +343,9 @@ impl SMP {
                 (inc_mem; 0xAB=>direct, 0xBB=>direct_x, 0xAC=>absolute)
                 (addw; 0x7A=>direct)
                 (subw; 0x9A=>direct)
+                (cmpw; 0x5A=>direct)
+                (incw; 0x3A=>direct)
+                (decw; 0x1A=>direct)
             );
         }
     }
@@ -758,6 +761,40 @@ impl SMP {
             smp.borrow_mut()
                 .reg
                 .set_ya(SMP::addw_algorithm(smp.clone(), data_1s_complement));
+        }
+    }
+
+    fn cmpw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let difference = {
+                let temp = smp.borrow().reg.get_ya() as i32 - data as i32;
+                smp.borrow_mut().reg.psw.c = temp > 0xFFFF;
+                smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
+                smp.borrow_mut().reg.psw.z = temp == 0;
+                temp as u16
+            };
+            smp.borrow_mut().reg.set_ya(difference);
+        }
+    }
+
+    fn incw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let result = data.wrapping_add(1);
+            smp.borrow_mut().reg.psw.n = (result >> 15) == 1;
+            smp.borrow_mut().reg.psw.z = result == 0;
+            yield_all!(SMP::write_u16(smp.clone(), addr, result));
+        }
+    }
+
+    fn decw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let result = data.wrapping_sub(1);
+            smp.borrow_mut().reg.psw.n = (result >> 15) == 1;
+            smp.borrow_mut().reg.psw.z = result == 0;
+            yield_all!(SMP::write_u16(smp.clone(), addr, result));
         }
     }
 }
