@@ -86,6 +86,7 @@ macro_rules! store_instrs {
         paste! {
             fn [<store_ $reg>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
                 move || {
+                    // TODO: Some store instructions issue reads
                     let data = smp.borrow_mut().reg.$reg;
                     yield_all!(SMP::write_u8(smp.clone(), addr, data));
                 }
@@ -288,11 +289,13 @@ impl SMP {
                  0xF7=>indirect_indexed, 0xE7=>indexed_indirect)
                 (load_x; 0xCD=>immediate, 0xF8=>direct, 0xF9=>direct_y, 0xE9=>absolute)
                 (load_y; 0x8D=>immediate, 0xEB=>direct, 0xFB=>direct_x, 0xEC=>absolute)
+                (movw_mem_to_ya; 0xBA=>direct)
                 (store_a; 0xC4=>direct, 0xD4=>direct_x, 0xC5=>absolute, 0xD5=>absolute_x,
                  0xD6=>absolute_y, 0xAF=>indirect_increment, 0xC6=>indirect,
                  0xD7=>indirect_indexed, 0xC7=>indexed_indirect)
                 (store_x; 0xD8=>direct, 0xD9=>direct_y)
                 (store_y; 0xCB=>direct, 0xCC=>direct_x)
+                (movw_ya_to_mem; 0xDA=>direct)
                 (or_acc; 0x08=>immediate, 0x06=>indirect, 0x04=>direct,
                  0x14=>direct_x, 0x05=>absolute, 0x15=>absolute_x,
                  0x16=>absolute_y, 0x17=>indirect_indexed, 0x07=>indexed_indirect)
@@ -595,8 +598,30 @@ impl SMP {
         addrs: MemToMemAddresses,
     ) -> impl InstructionGenerator + 'a {
         move || {
+            // TODO: This *might* issue a read, but maybe only for immediate?
             let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
             yield_all!(SMP::write_u8(smp.clone(), addrs.dest_addr, data));
+        }
+    }
+
+    fn movw_mem_to_ya<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            smp.borrow_mut().reg.set_ya(data);
+            // TODO: Should this be bit15 or bit7
+            smp.borrow_mut().reg.psw.n = (data >> 15) == 1;
+            smp.borrow_mut().reg.psw.z = data == 0;
+        }
+    }
+
+    fn movw_ya_to_mem<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            yield_all!(SMP::read_u8(smp.clone(), addr)); // Dummy read
+            yield_all!(SMP::write_u16(
+                smp.clone(),
+                addr,
+                smp.borrow_mut().reg.get_ya()
+            ));
         }
     }
 
