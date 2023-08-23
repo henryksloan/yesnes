@@ -347,6 +347,7 @@ impl SMP {
                 (incw; 0x3A=>direct)
                 (decw; 0x1A=>direct)
                 (div; 0x9E=>implied)
+                (mul; 0xCF=>implied)
             );
         }
     }
@@ -825,6 +826,17 @@ impl SMP {
             smp.borrow_mut().reg.psw.n = (new_a >> 7) == 1;
             smp.borrow_mut().reg.psw.z = new_a == 0;
             smp.borrow_mut().reg.psw.h = (smp.borrow().reg.x & 0xF) <= (new_y & 0xF);
+        }
+    }
+
+    fn mul<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let product = (smp.borrow().reg.y as u16).wrapping_mul(smp.borrow().reg.a as u16);
+            smp.borrow_mut().reg.set_ya(product);
+            let new_y = smp.borrow().reg.y;
+            smp.borrow_mut().reg.psw.n = (new_y >> 7) == 1;
+            smp.borrow_mut().reg.psw.z = new_y == 0;
         }
     }
 }
