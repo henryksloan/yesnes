@@ -13,6 +13,15 @@ impl Registers {
     pub fn new() -> Self {
         Default::default()
     }
+
+    pub fn get_ya(&self) -> u16 {
+        ((self.y as u16) << 8) | (self.a as u16)
+    }
+
+    pub fn set_ya(&mut self, val: u16) {
+        self.y = (val >> 8) as u8;
+        self.a = val as u8;
+    }
 }
 
 #[derive(Default, Clone, Copy)]

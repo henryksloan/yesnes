@@ -47,6 +47,20 @@ macro_rules! yield_all {
 
 pub(crate) use yield_all;
 
+macro_rules! ignore_yields {
+    ($gen_expr:expr) => {{
+        let mut gen = $gen_expr;
+        loop {
+            match Pin::new(&mut gen).resume(()) {
+                GeneratorState::Complete(out) => break out,
+                _ => {}
+            }
+        }
+    }};
+}
+
+pub(crate) use ignore_yields;
+
 // A silly hack:
 // An expression only satisfies the Generator trait if it
 // uses the `yield` keyword. But not all instructions yield,

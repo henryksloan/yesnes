@@ -261,16 +261,7 @@ impl CPU {
     pub fn reset(&mut self) {
         self.ticks_run = 0;
         self.reg = Registers::new();
-        // TODO: Simplify
-        self.reg.pc = u24({
-            let mut gen = Bus::read_u16(self.bus.clone(), RESET_VECTOR);
-            loop {
-                match Pin::new(&mut gen).resume(()) {
-                    GeneratorState::Complete(out) => break out as u32,
-                    _ => {}
-                }
-            }
-        });
+        self.reg.pc = u24(ignore_yields!(Bus::read_u16(self.bus.clone(), RESET_VECTOR)) as u32);
         self.reg.set_p(0x34);
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);

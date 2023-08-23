@@ -1,8 +1,6 @@
 use crate::apu::SMP;
 use crate::ppu::PPU;
-use crate::scheduler::{
-    dummy_yield, Access, AccessType, DebugPoint, Device, YieldReason, Yieldable,
-};
+use crate::scheduler::*;
 use crate::u24::u24;
 
 use std::cell::RefCell;
@@ -116,24 +114,8 @@ impl Bus {
 
     pub fn read_u16<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u16> + 'a {
         move || {
-            let lo = {
-                let mut gen = Bus::read_u8(bus.clone(), addr);
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u16,
-                        GeneratorState::Yielded(yielded) => yield yielded,
-                    }
-                }
-            };
-            let hi = {
-                let mut gen = Bus::read_u8(bus.clone(), addr + 1u32);
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u16,
-                        GeneratorState::Yielded(yielded) => yield yielded,
-                    }
-                }
-            };
+            let lo = yield_all!(Bus::read_u8(bus.clone(), addr)) as u16;
+            let hi = yield_all!(Bus::read_u8(bus.clone(), addr + 1u32)) as u16;
             (hi << 8) | lo
         }
     }
