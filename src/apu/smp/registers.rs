@@ -83,7 +83,10 @@ impl StatusRegister {
 
 #[derive(Default, Clone, Copy)]
 pub struct IoRegisters {
-    pub ports: [u8; 4],
+    // Ports written by SMP, read by CPU
+    pub internal_ports: [u8; 4],
+    // Ports written by CPU, read by SMP
+    pub external_ports: [u8; 4],
 }
 
 impl IoRegisters {

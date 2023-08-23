@@ -304,13 +304,14 @@ impl SMP {
             {
                 let reg = &smp.borrow().reg;
                 println!(
-                    ": {opcode:#04X}    A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} PSW:{:02X} ports:{:02X?}",
+                    ": {opcode:#04X}    A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} PSW:{:02X} in_ports:{:02X?} ext_ports:{:02X?}",
                     reg.a,
                     reg.x,
                     reg.y,
                     reg.sp,
                     reg.psw.get(),
-                    smp.borrow().io_reg.ports,
+                    smp.borrow().io_reg.internal_ports,
+                    smp.borrow().io_reg.external_ports,
                 );
             }
 
@@ -414,7 +415,7 @@ impl SMP {
             dummy_yield!();
             match addr {
                 0x00F0..=0x00F3 => todo!("IO reg read {addr:#06X}"),
-                0x00F4..=0x00F7 => smp.borrow().io_reg.ports[addr as usize - 0x00F4],
+                0x00F4..=0x00F7 => smp.borrow().io_reg.external_ports[addr as usize - 0x00F4],
                 0x00F8..=0x00FF => todo!("IO reg read {addr:#06X}"),
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
             }
@@ -427,7 +428,9 @@ impl SMP {
             dummy_yield!();
             match addr {
                 0x00F0..=0x00F3 => todo!("IO reg write {addr:#06X}"),
-                0x00F4..=0x00F7 => smp.borrow_mut().io_reg.ports[addr as usize - 0x00F4] = data,
+                0x00F4..=0x00F7 => {
+                    smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
+                }
                 0x00F8..=0x00FF => todo!("IO reg write {addr:#06X}"),
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
             }
@@ -489,14 +492,14 @@ impl SMP {
 
     pub fn io_read(&mut self, addr: u16) -> u8 {
         match addr {
-            0x2140..=0x2143 => self.io_reg.ports[addr as usize - 0x2140],
+            0x2140..=0x2143 => self.io_reg.internal_ports[addr as usize - 0x2140],
             _ => panic!("Invalid IO read of SMP at {addr:#06X}"),
         }
     }
 
     pub fn io_write(&mut self, addr: u16, data: u8) {
         match addr {
-            0x2140..=0x2143 => self.io_reg.ports[addr as usize - 0x2140] = data,
+            0x2140..=0x2143 => self.io_reg.external_ports[addr as usize - 0x2140] = data,
             _ => panic!("Invalid IO write of SMP at {addr:#06X}"),
         }
     }
@@ -704,8 +707,9 @@ impl SMP {
     }
 
     fn cmp_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) {
-        let src_1s_complement = ((src_data as i8).wrapping_neg().wrapping_sub(1)) as u8;
-        let temp = dest_data as i16 + src_1s_complement as i16;
+        println!("CMP src:{src_data:02X} dest:{dest_data:02X}");
+        let temp = (dest_data as i16 - src_data as i16) as u16;
+        println!("CMP src:{src_data:02X} dest:{dest_data:02X} temp:{temp:04X}");
         smp.borrow_mut().reg.psw.c = temp > 0xFF;
         smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
         smp.borrow_mut().reg.psw.z = temp == 0;
@@ -747,21 +751,24 @@ impl SMP {
     fn cmp_acc<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.a);
+            let a = smp.borrow().reg.a;
+            Self::cmp_algorithm(smp.clone(), src_data, a);
         }
     }
 
     fn cmp_x<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.x);
+            let x = smp.borrow().reg.x;
+            Self::cmp_algorithm(smp.clone(), src_data, x);
         }
     }
 
     fn cmp_y<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.y);
+            let y = smp.borrow().reg.y;
+            Self::cmp_algorithm(smp.clone(), src_data, y);
         }
     }
 
@@ -857,8 +864,7 @@ impl SMP {
     fn cmpw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(SMP::read_u16(smp.clone(), addr));
-            let data_1s_complement = ((data as i16).wrapping_neg().wrapping_sub(1)) as u16;
-            let temp = smp.borrow().reg.get_ya() as i32 + data_1s_complement as i32;
+            let temp = (smp.borrow().reg.get_ya() as i32 - data as i32) as u32;
             smp.borrow_mut().reg.psw.c = temp > 0xFFFF;
             smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
             smp.borrow_mut().reg.psw.z = temp == 0;
