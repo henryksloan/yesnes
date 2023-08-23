@@ -126,6 +126,50 @@ macro_rules! alu_instr {
     };
 }
 
+/// Implement *_mem, *_acc, *_x, and *_y variants for a given instruction using SMP::*_algorithm().
+macro_rules! step_shift_instrs {
+    ($op:ident, mem) => {
+        paste! {
+            fn [<$op _mem>]<'a>( smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+                move || {
+                    let data = yield_all!(SMP::read_u8(smp.clone(), addr));
+                    let output = SMP::[<$op _algorithm>](smp.clone(), data);
+                    yield_all!(SMP::write_u8(smp.clone(), addr, output));
+                }
+            }
+        }
+    };
+    ($op:ident, $reg:ident, $reg_fn_name:ident) => {
+        paste! {
+            fn [<$op _ $reg_fn_name>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+                move || {
+                    dummy_yield!();
+                    let data = smp.borrow().reg.$reg;
+                    let output = Self::[<$op _algorithm>](smp.clone(), data);
+                    smp.borrow_mut().reg.$reg = output;
+                }
+            }
+        }
+    };
+    ($op:ident, common) => {
+        step_shift_instrs!($op, mem);
+        step_shift_instrs!($op, a, acc);
+    };
+    ($op:ident, inc_dec) => {
+        step_shift_instrs!($op, common);
+        step_shift_instrs!($op, x, x);
+        step_shift_instrs!($op, y, y);
+    };
+    () => {
+        step_shift_instrs!(asl, common);
+        step_shift_instrs!(rol, common);
+        step_shift_instrs!(lsr, common);
+        step_shift_instrs!(ror, common);
+        step_shift_instrs!(dec, inc_dec);
+        step_shift_instrs!(inc, inc_dec);
+    };
+}
+
 macro_rules! instr {
     ($smp_rc: ident, $instr_f:ident) => {
         yield_ticks!($smp_rc, SMP::$instr_f($smp_rc.clone()))
@@ -281,6 +325,22 @@ impl SMP {
                  0xB6=>absolute_y, 0xB7=>indirect_indexed, 0xA7=>indexed_indirect)
                 (sbc_mem_to_mem; 0xA9=>direct_to_direct,
                  0xB8=>immediate_to_direct, 0xB9=>indirect_to_indirect)
+                (asl_acc; 0x1C=>implied)
+                (asl_mem; 0x0B=>direct, 0x1B=>direct_x, 0x0C=>absolute)
+                (rol_acc; 0x3C=>implied)
+                (rol_mem; 0x2B=>direct, 0x3B=>direct_x, 0x2C=>absolute)
+                (lsr_acc; 0x5C=>implied)
+                (lsr_mem; 0x4B=>direct, 0x5B=>direct_x, 0x4C=>absolute)
+                (ror_acc; 0x7C=>implied)
+                (ror_mem; 0x6B=>direct, 0x7B=>direct_x, 0x6C=>absolute)
+                (dec_acc; 0x9C=>implied)
+                (dec_x; 0x1D=>implied)
+                (dec_y; 0xDC=>implied)
+                (dec_mem; 0x8B=>direct, 0x9B=>direct_x, 0x8C=>absolute)
+                (inc_acc; 0xBC=>implied)
+                (inc_x; 0x3D=>implied)
+                (inc_y; 0xFC=>implied)
+                (inc_mem; 0xAB=>direct, 0xBB=>direct_x, 0xAC=>absolute)
             );
         }
     }
@@ -503,8 +563,10 @@ impl SMP {
 
     // Instructions:
 
-    // MOV, OR, AND, EOR, CMP, ADC, and SBC support some memory->memory operations;
-    // these implementations handle only those modes.
+    // Generate MOV operations
+    transfer_instrs!();
+    load_instrs!();
+    store_instrs!();
 
     fn mov_mem_to_mem<'a>(
         smp: Rc<RefCell<SMP>>,
@@ -515,6 +577,15 @@ impl SMP {
             yield_all!(SMP::write_u8(smp.clone(), addrs.dest_addr, data));
         }
     }
+
+    // OR, AND, EOR, CMP, ADC, and SBC support some memory->memory operations;
+    // these macros generate both the mem->mem and the accumulator implemetations.
+    alu_instr!(or);
+    alu_instr!(and);
+    alu_instr!(eor);
+    alu_instr!(cmp);
+    alu_instr!(adc);
+    alu_instr!(sbc);
 
     fn or_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, mut dest_data: u8) -> u8 {
         dest_data |= src_data;
@@ -585,14 +656,54 @@ impl SMP {
         }
     }
 
-    alu_instr!(or);
-    alu_instr!(and);
-    alu_instr!(eor);
-    alu_instr!(cmp);
-    alu_instr!(adc);
-    alu_instr!(sbc);
+    // Generate increment/decrement and rotate/shift instructions for A, X, Y and mem.
+    step_shift_instrs!();
 
-    transfer_instrs!();
-    load_instrs!();
-    store_instrs!();
+    fn asl_algorithm(smp: Rc<RefCell<SMP>>, data: u8) -> u8 {
+        smp.borrow_mut().reg.psw.c = (data >> 7) == 1;
+        let result = data << 1;
+        smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = result == 0;
+        result
+    }
+
+    fn rol_algorithm(smp: Rc<RefCell<SMP>>, data: u8) -> u8 {
+        let old_carry = smp.borrow().reg.psw.c;
+        smp.borrow_mut().reg.psw.c = (data >> 7) == 1;
+        let result = (data << 1) | (old_carry as u8);
+        smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = result == 0;
+        result
+    }
+
+    fn lsr_algorithm(smp: Rc<RefCell<SMP>>, data: u8) -> u8 {
+        smp.borrow_mut().reg.psw.c = (data & 0x1) == 1;
+        let result = data >> 1;
+        smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = result == 0;
+        result
+    }
+
+    fn ror_algorithm(smp: Rc<RefCell<SMP>>, data: u8) -> u8 {
+        let old_carry = smp.borrow().reg.psw.c;
+        smp.borrow_mut().reg.psw.c = (data & 0x1) == 1;
+        let result = (data >> 1) | ((old_carry as u8) << 7);
+        smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = result == 0;
+        result
+    }
+
+    fn dec_algorithm(smp: Rc<RefCell<SMP>>, data: u8) -> u8 {
+        let result = data.wrapping_sub(1);
+        smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = result == 0;
+        result
+    }
+
+    fn inc_algorithm(smp: Rc<RefCell<SMP>>, data: u8) -> u8 {
+        let result = data.wrapping_add(1);
+        smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = result == 0;
+        result
+    }
 }
