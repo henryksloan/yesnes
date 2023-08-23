@@ -171,6 +171,34 @@ macro_rules! step_shift_instrs {
     };
 }
 
+macro_rules! branch_instrs {
+    ($flag:ident => $val:expr, $set_clear:ident) => {
+        paste! {
+            fn [<branch_ $flag _ $set_clear>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+                move || {
+                    let src_pc = smp.borrow().reg.pc;
+                    let offset = yield_all!(SMP::read_u8(smp.clone(), addr));
+                    let dest_pc = (src_pc as i32 + (offset as i8 as i32)) as u16;
+                    if smp.borrow_mut().reg.psw.$flag == $val {
+                        smp.borrow_mut().reg.pc = dest_pc;
+                        // TODO: Need to look into how many cycles branch can take
+                        // smp.borrow_mut().step(1);
+                    }
+                }
+            }
+        }
+    };
+    ($($flag:ident),+) => {
+        $(
+        branch_instrs!($flag => true, set);
+        branch_instrs!($flag => false, clear);
+        )+
+    };
+    () => {
+        branch_instrs!(n, v, c, z);
+    };
+}
+
 macro_rules! instr {
     ($smp_rc: ident, $instr_f:ident) => {
         yield_ticks!($smp_rc, SMP::$instr_f($smp_rc.clone()))
@@ -194,7 +222,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($smp_rc, $instr_f, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc),
+            _ => panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc - 1),
         }
     };
 }
@@ -270,9 +298,20 @@ impl SMP {
 
     pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceGenerator + 'a {
         move || loop {
-            println!("SMP");
+            print!("SMP {:#06X}", smp.borrow().reg.pc);
             let opcode = yield_ticks!(smp, SMP::read_u8(smp.clone(), smp.borrow().reg.pc));
             smp.borrow_mut().reg.pc += 1;
+            {
+                let reg = &smp.borrow().reg;
+                println!(
+                    ": {opcode:#04X}    A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} PSW:{:02X}",
+                    reg.a,
+                    reg.x,
+                    reg.y,
+                    reg.sp,
+                    reg.psw.get(),
+                );
+            }
 
             instrs!(
                 smp, opcode,
@@ -351,6 +390,14 @@ impl SMP {
                 (decw; 0x1A=>direct)
                 (div; 0x9E=>implied)
                 (mul; 0xCF=>implied)
+                (branch_n_clear; 0x10=>immediate)
+                (branch_n_set; 0x30=>immediate)
+                (branch_v_clear; 0x50=>immediate)
+                (branch_v_set; 0x70=>immediate)
+                (branch_c_clear; 0x90=>immediate)
+                (branch_c_set; 0xB0=>immediate)
+                (branch_z_clear; 0xD0=>immediate)
+                (branch_z_set; 0xF0=>immediate)
             );
         }
     }
@@ -364,9 +411,9 @@ impl SMP {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             dummy_yield!();
             match addr {
-                0x00F0..=0x00F3 => todo!(),
+                0x00F0..=0x00F3 => todo!("IO reg read {addr:#06X}"),
                 0x00F4..=0x00F7 => smp.borrow().io_reg.ports[addr as usize - 0x00F4],
-                0x00F8..=0x00FF => todo!(),
+                0x00F8..=0x00FF => todo!("IO reg read {addr:#06X}"),
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
             }
         }
@@ -377,9 +424,9 @@ impl SMP {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             dummy_yield!();
             match addr {
-                0x00F0..=0x00F3 => todo!(),
+                0x00F0..=0x00F3 => todo!("IO reg write {addr:#06X}"),
                 0x00F4..=0x00F7 => smp.borrow_mut().io_reg.ports[addr as usize - 0x00F4] = data,
-                0x00F8..=0x00FF => todo!(),
+                0x00F8..=0x00FF => todo!("IO reg write {addr:#06X}"),
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
             }
         }
@@ -864,4 +911,7 @@ impl SMP {
             smp.borrow_mut().reg.psw.z = new_y == 0;
         }
     }
+
+    // Generate branch instructions
+    branch_instrs!();
 }

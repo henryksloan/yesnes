@@ -222,7 +222,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($cpu_rc, $instr_f, $flag, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid CPU opcode {:#04X} at {}", opcode_val, $cpu_rc.borrow().reg.pc),
+            _ => panic!("Invalid CPU opcode {:#04X} at {}", opcode_val, $cpu_rc.borrow().reg.pc - 1),
         }
     };
 }
@@ -270,7 +270,7 @@ impl CPU {
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
         // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         move || loop {
-            // print!("CPU {:#06X}", cpu.borrow().reg.pc.raw());
+            // print!("CPU {:#010X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             // TODO: Need to go through and use wrapping arithmetic where appropriate
             cpu.borrow_mut().reg.pc += 1u32;
