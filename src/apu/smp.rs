@@ -341,6 +341,8 @@ impl SMP {
                 (inc_x; 0x3D=>implied)
                 (inc_y; 0xFC=>implied)
                 (inc_mem; 0xAB=>direct, 0xBB=>direct_x, 0xAC=>absolute)
+                (addw; 0x7A=>direct)
+                (subw; 0x9A=>direct)
             );
         }
     }
@@ -392,6 +394,14 @@ impl SMP {
         }
     }
 
+    pub fn read_u16<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u16> + 'a {
+        move || {
+            let lo = yield_all!(SMP::read_u8(smp.clone(), addr)) as u16;
+            let hi = yield_all!(SMP::read_u8(smp.clone(), addr + 1)) as u16;
+            (hi << 8) | lo
+        }
+    }
+
     fn write_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u8) -> impl Yieldable<()> + 'a {
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
@@ -405,6 +415,13 @@ impl SMP {
             }
             // TODO: Some clock cycles before the write, depending on region
             smp.borrow_mut().step(4);
+        }
+    }
+
+    pub fn write_u16<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u16) -> impl Yieldable<()> + 'a {
+        move || {
+            yield_all!(SMP::write_u8(smp.clone(), addr, data as u8));
+            yield_all!(SMP::write_u8(smp.clone(), addr + 1, (data >> 8) as u8));
         }
     }
 
@@ -705,5 +722,42 @@ impl SMP {
         smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
         smp.borrow_mut().reg.psw.z = result == 0;
         result
+    }
+
+    // 16-bit ALU operations
+
+    fn addw_algorithm(smp: Rc<RefCell<SMP>>, data: u16) -> u16 {
+        let old_ya = smp.borrow().reg.get_ya();
+        let sum = {
+            let temp = old_ya as i32 + data as i32;
+            smp.borrow_mut().reg.psw.c = temp > 0xFFFF;
+            // For wide arithmetic, half-carry is carry from bit11 to bit12
+            smp.borrow_mut().reg.psw.h = ((old_ya & 0xFFF) + (data & 0xFFF)) > 0xFFF;
+            smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
+            smp.borrow_mut().reg.psw.z = temp == 0;
+            temp as u16
+        };
+        // We overflowed iff the MSBs of src and dest were the same, and both differ from that of sum
+        smp.borrow_mut().reg.psw.v = ((old_ya ^ sum) & (data ^ sum) & 0x8000) == 0x8000;
+        sum
+    }
+
+    fn addw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            smp.borrow_mut()
+                .reg
+                .set_ya(SMP::addw_algorithm(smp.clone(), data));
+        }
+    }
+
+    fn subw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data_1s_complement = ((data as i16).wrapping_neg().wrapping_sub(1)) as u16;
+            smp.borrow_mut()
+                .reg
+                .set_ya(SMP::addw_algorithm(smp.clone(), data_1s_complement));
+        }
     }
 }
