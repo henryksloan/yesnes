@@ -1,3 +1,5 @@
+use bitfield::bitfield;
+
 #[derive(Default, Clone, Copy)]
 pub struct Registers {
     pub a: u8, // Accumulator register
@@ -87,10 +89,25 @@ pub struct IoRegisters {
     pub internal_ports: [u8; 4],
     // Ports written by CPU, read by SMP
     pub external_ports: [u8; 4],
+    pub control: ControlRegister,
 }
 
 impl IoRegisters {
     pub fn new() -> Self {
         Default::default()
     }
+}
+
+bitfield! {
+  /// 00F1h - CONTROL - Timer, I/O and ROM Control (W)
+  /// Configures timers, IO, and high address access
+  #[derive(Clone, Copy, Default)]
+  pub struct ControlRegister(u8);
+  impl Debug;
+  pub timer_0_enable, _: 0;
+  pub timer_1_enable, _: 1;
+  pub timer_2_enable, _: 2;
+  pub reset_port_0_1_latches, _ : 4;
+  pub reset_port_2_3_latches, _ : 5;
+  pub rom_at_high_addresses, _: 7;
 }

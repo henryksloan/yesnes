@@ -270,6 +270,8 @@ impl SMP {
 
     pub fn reset(smp: Rc<RefCell<SMP>>) {
         smp.borrow_mut().ticks_run = 0;
+        smp.borrow_mut().io_reg = IoRegisters::new();
+        smp.borrow_mut().io_reg.control.0 = 0xB0;
         smp.borrow_mut().reg = Registers::new();
         // TODO: Simplify
         smp.borrow_mut().reg.pc = {
@@ -446,7 +448,13 @@ impl SMP {
                 0x00F0..=0x00FF => yield_all!(SMP::read_io_reg(smp.clone(), addr)),
                 0x0100..=0xFFBF => smp.borrow_mut().ram[addr as usize],
                 // TODO: Use control register to determine RAM/ROM
-                0xFFC0..=0xFFFF => BOOT_ROM[addr as usize - 0xFFC0],
+                0xFFC0..=0xFFFF => {
+                    if smp.borrow().io_reg.control.rom_at_high_addresses() {
+                        BOOT_ROM[addr as usize - 0xFFC0]
+                    } else {
+                        smp.borrow_mut().ram[addr as usize]
+                    }
+                }
             };
             // TODO: Some clock cycles before the read, depending on region
             smp.borrow_mut().step(1);
@@ -466,12 +474,11 @@ impl SMP {
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
+            // All writes always go to ram, even if they also go to e.g. IO
+            smp.borrow_mut().ram[addr as usize] = data;
             match addr {
-                0x0000..=0x00EF => smp.borrow_mut().ram[addr as usize] = data,
                 0x00F0..=0x00FF => yield_all!(SMP::write_io_reg(smp.clone(), addr, data)),
-                0x0100..=0xFFBF => smp.borrow_mut().ram[addr as usize] = data,
-                // TODO: Use control register to determine RAM/ROM
-                0xFFC0..=0xFFFF => smp.borrow_mut().ram[addr as usize] = data,
+                _ => {}
             }
             // TODO: Some clock cycles before the write, depending on region
             smp.borrow_mut().step(4);
