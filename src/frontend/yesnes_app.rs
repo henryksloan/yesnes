@@ -320,6 +320,8 @@ impl YesnesApp {
             let trimmed_input = lower_input.trim().trim_start_matches("0x");
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
+                // TODO: I think we should somehow recenter once we get to the right place.
+                // Probably worth making that a message from emu thread to this thread.
                 let _ = self
                     .emu_message_sender
                     .send(EmuThreadMessage::RunToAddress(u24(addr)));

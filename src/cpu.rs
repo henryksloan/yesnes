@@ -222,7 +222,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($cpu_rc, $instr_f, $flag, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid CPU opcode {:#04X} at {}", opcode_val, $cpu_rc.borrow().reg.pc - 1),
+            _ => panic!("Invalid CPU opcode {:#04X} at {:#08X}", opcode_val, $cpu_rc.borrow().reg.pc.raw().wrapping_sub(1)),
         }
     };
 }

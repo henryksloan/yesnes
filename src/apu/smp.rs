@@ -304,12 +304,13 @@ impl SMP {
             {
                 let reg = &smp.borrow().reg;
                 println!(
-                    ": {opcode:#04X}    A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} PSW:{:02X}",
+                    ": {opcode:#04X}    A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} PSW:{:02X} ports:{:02X?}",
                     reg.a,
                     reg.x,
                     reg.y,
                     reg.sp,
                     reg.psw.get(),
+                    smp.borrow().io_reg.ports,
                 );
             }
 
@@ -398,6 +399,7 @@ impl SMP {
                 (branch_c_set; 0xB0=>immediate)
                 (branch_z_clear; 0xD0=>immediate)
                 (branch_z_set; 0xF0=>immediate)
+                (bra; 0x2F=>immediate)
             );
         }
     }
@@ -677,7 +679,6 @@ impl SMP {
     alu_instr!(or);
     alu_instr!(and);
     alu_instr!(eor);
-    alu_instr!(cmp);
     alu_instr!(adc);
     alu_instr!(sbc);
 
@@ -702,15 +703,12 @@ impl SMP {
         dest_data
     }
 
-    fn cmp_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) -> u8 {
-        let difference = {
-            let temp = dest_data as i16 - src_data as i16;
-            smp.borrow_mut().reg.psw.c = temp > 0xFF;
-            smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
-            smp.borrow_mut().reg.psw.z = temp == 0;
-            temp as u8
-        };
-        difference
+    fn cmp_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) {
+        let src_1s_complement = ((src_data as i8).wrapping_neg().wrapping_sub(1)) as u8;
+        let temp = dest_data as i16 + src_1s_complement as i16;
+        smp.borrow_mut().reg.psw.c = temp > 0xFF;
+        smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
+        smp.borrow_mut().reg.psw.z = temp == 0;
     }
 
     fn adc_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) -> u8 {
@@ -734,19 +732,36 @@ impl SMP {
         SMP::adc_algorithm(smp, src_1s_complement, dest_data)
     }
 
+    // CMP doesn't memory/registers, so we don't use the macro for it
+    fn cmp_mem_to_mem<'a>(
+        smp: Rc<RefCell<SMP>>,
+        addrs: MemToMemAddresses,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            let dest_data = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
+            let src_data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
+            SMP::cmp_algorithm(smp.clone(), src_data, dest_data);
+        }
+    }
+
+    fn cmp_acc<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
+            Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.a);
+        }
+    }
+
     fn cmp_x<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            let output = Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.x);
-            smp.borrow_mut().reg.x = output;
+            Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.x);
         }
     }
 
     fn cmp_y<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            let output = Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.y);
-            smp.borrow_mut().reg.y = output;
+            Self::cmp_algorithm(smp.clone(), src_data, smp.borrow().reg.y);
         }
     }
 
@@ -842,14 +857,11 @@ impl SMP {
     fn cmpw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(SMP::read_u16(smp.clone(), addr));
-            let difference = {
-                let temp = smp.borrow().reg.get_ya() as i32 - data as i32;
-                smp.borrow_mut().reg.psw.c = temp > 0xFFFF;
-                smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
-                smp.borrow_mut().reg.psw.z = temp == 0;
-                temp as u16
-            };
-            smp.borrow_mut().reg.set_ya(difference);
+            let data_1s_complement = ((data as i16).wrapping_neg().wrapping_sub(1)) as u16;
+            let temp = smp.borrow().reg.get_ya() as i32 + data_1s_complement as i32;
+            smp.borrow_mut().reg.psw.c = temp > 0xFFFF;
+            smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
+            smp.borrow_mut().reg.psw.z = temp == 0;
         }
     }
 
@@ -914,4 +926,15 @@ impl SMP {
 
     // Generate branch instructions
     branch_instrs!();
+
+    fn bra<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let src_pc = smp.borrow().reg.pc;
+            let offset = yield_all!(SMP::read_u8(smp.clone(), addr));
+            let dest_pc = (src_pc as i32 + (offset as i8 as i32)) as u16;
+            smp.borrow_mut().reg.pc = dest_pc;
+            // TODO: Need to look into how many cycles branch can take
+            // smp.borrow_mut().step(1);
+        }
+    }
 }
