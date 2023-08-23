@@ -346,6 +346,7 @@ impl SMP {
                 (cmpw; 0x5A=>direct)
                 (incw; 0x3A=>direct)
                 (decw; 0x1A=>direct)
+                (div; 0x9E=>implied)
             );
         }
     }
@@ -736,6 +737,7 @@ impl SMP {
             smp.borrow_mut().reg.psw.c = temp > 0xFFFF;
             // For wide arithmetic, half-carry is carry from bit11 to bit12
             smp.borrow_mut().reg.psw.h = ((old_ya & 0xFFF) + (data & 0xFFF)) > 0xFFF;
+            // TODO: Is N based on bit15 or bit7 for these 16-bit instructions?
             smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
             smp.borrow_mut().reg.psw.z = temp == 0;
             temp as u16
@@ -795,6 +797,34 @@ impl SMP {
             smp.borrow_mut().reg.psw.n = (result >> 15) == 1;
             smp.borrow_mut().reg.psw.z = result == 0;
             yield_all!(SMP::write_u16(smp.clone(), addr, result));
+        }
+    }
+
+    fn div<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            // Algorithm from https://snesdev.mesen.ca/wiki/index.php?title=SPC700:
+            let mut yva = smp.borrow().reg.get_ya() as u32;
+            let x = (smp.borrow().reg.x as u32) << 9;
+            for _ in 0..9 {
+                yva = ((yva << 1) | (yva >> 16)) & 0x1FFFF;
+                if yva >= x {
+                    yva ^= 1;
+                }
+                if yva & 1 == 1 {
+                    yva = yva.wrapping_sub(x) & 0x1FFFF;
+                }
+            }
+            let new_y = ((yva >> 9) & 0xFF) as u8;
+            let new_a = yva as u8;
+            smp.borrow_mut().reg.y = new_y;
+            smp.borrow_mut().reg.a = new_a;
+            // "ZN are set based on A. V is set if YA/X>$FF (so the result won't fit in A).
+            //  H is odd, it seems to get set based on X&$F<=Y&$F"
+            smp.borrow_mut().reg.psw.v = (yva >> 8) & 1 == 1;
+            smp.borrow_mut().reg.psw.n = (new_a >> 7) == 1;
+            smp.borrow_mut().reg.psw.z = new_a == 0;
+            smp.borrow_mut().reg.psw.h = (smp.borrow().reg.x & 0xF) <= (new_y & 0xF);
         }
     }
 }
