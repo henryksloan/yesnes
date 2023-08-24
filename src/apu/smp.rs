@@ -269,6 +269,7 @@ impl SMP {
     }
 
     pub fn reset(smp: Rc<RefCell<SMP>>) {
+        smp.borrow_mut().ram.fill(0);
         smp.borrow_mut().ticks_run = 0;
         smp.borrow_mut().io_reg = IoRegisters::new();
         smp.borrow_mut().io_reg.control.0 = 0xB0;
@@ -526,6 +527,8 @@ impl SMP {
     // TODO: Reduce code duplication across these three
     fn direct<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
         move || {
+            // DO NOT SUBMIT: These are wrong, as all these direct page modes should wrap
+            // within the selected direct page.
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr = direct_page_base + fetch!(smp) as u16;
             direct_addr
@@ -572,6 +575,7 @@ impl SMP {
 
     fn indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
         move || {
+            // DO NOT SUBMIT: These also need to wrap within the direct page
             dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr = direct_page_base + smp.borrow().reg.x as u16;
@@ -594,9 +598,11 @@ impl SMP {
         move || {
             dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-            let indirect_addr = direct_page_base + fetch!(smp) as u16;
-            let direct_addr = yield_all!(SMP::read_u8(smp.clone(), indirect_addr)) as u16;
-            direct_addr + smp.borrow().reg.y as u16
+            let direct_addr = fetch!(smp) as u16;
+            // DO NOT SUBMIT: This read_u16 should wrap within direct, but adding y should obviously not wrap
+            let indirect_addr =
+                yield_all!(SMP::read_u16(smp.clone(), direct_page_base + direct_addr));
+            indirect_addr + smp.borrow().reg.y as u16
         }
     }
 
@@ -604,9 +610,10 @@ impl SMP {
         move || {
             dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-            let indirect_addr = direct_page_base + fetch!(smp) as u16 + smp.borrow().reg.x as u16;
-            let direct_addr = yield_all!(SMP::read_u8(smp.clone(), indirect_addr)) as u16;
-            direct_addr
+            // DO NOT SUBMIT: This both add and the read_u16 should wrap within direct
+            let direct_addr = direct_page_base + fetch!(smp) as u16 + smp.borrow().reg.x as u16;
+            let indirect_addr = yield_all!(SMP::read_u16(smp.clone(), direct_addr));
+            indirect_addr
         }
     }
 
