@@ -405,6 +405,10 @@ impl SMP {
                 (branch_z_set; 0xF0=>immediate)
                 (bra; 0x2F=>immediate)
                 (jmp; 0x5F=>absolute, 0x1F=>absolute_indexed_indirect)
+                (clrp; 0x20=>implied)
+                (setp; 0x40=>implied)
+                (ei; 0xA0=>implied)
+                (di; 0xC0=>implied)
             );
         }
     }
@@ -987,6 +991,34 @@ impl SMP {
             smp.borrow_mut().reg.pc = dest_pc;
             // TODO: Need to look into how many cycles branch can take
             // smp.borrow_mut().step(1);
+        }
+    }
+
+    fn clrp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            smp.borrow_mut().reg.psw.p = false;
+        }
+    }
+
+    fn setp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            smp.borrow_mut().reg.psw.p = true;
+        }
+    }
+
+    fn ei<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            smp.borrow_mut().reg.psw.i = true;
+        }
+    }
+
+    fn di<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            smp.borrow_mut().reg.psw.i = false;
         }
     }
 }
