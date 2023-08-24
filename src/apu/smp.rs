@@ -738,10 +738,9 @@ impl SMP {
     }
 
     fn cmp_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) {
-        let temp = (dest_data as i16 - src_data as i16) as u16;
-        smp.borrow_mut().reg.psw.c = temp > 0xFF;
-        smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
-        smp.borrow_mut().reg.psw.z = temp == 0;
+        smp.borrow_mut().reg.psw.c = dest_data >= src_data;
+        smp.borrow_mut().reg.psw.n = src_data > dest_data;
+        smp.borrow_mut().reg.psw.z = src_data == dest_data;
     }
 
     fn adc_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) -> u8 {
@@ -893,10 +892,10 @@ impl SMP {
     fn cmpw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(SMP::read_u16(smp.clone(), addr));
-            let temp = (smp.borrow().reg.get_ya() as i32 - data as i32) as u32;
-            smp.borrow_mut().reg.psw.c = temp > 0xFFFF;
-            smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
-            smp.borrow_mut().reg.psw.z = temp == 0;
+            let ya = smp.borrow().reg.get_ya();
+            smp.borrow_mut().reg.psw.c = ya >= data;
+            smp.borrow_mut().reg.psw.n = data > ya;
+            smp.borrow_mut().reg.psw.z = ya == data;
         }
     }
 
