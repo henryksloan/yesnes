@@ -774,12 +774,13 @@ impl CPU {
     fn indirect_long<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let indirect_addr = u24(fetch!(cpu) as u32);
-            let bank_addr = {
+            let addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
-                u24((hi << 8) | lo)
+                let bank =
+                    yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 2u32)) as u32;
+                u24((bank << 16) | (hi << 8) | lo)
             };
-            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
             Pointer { addr, long }
         }
     }
@@ -787,13 +788,14 @@ impl CPU {
     fn indirect_long_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         move || {
             let indirect_addr = u24(fetch!(cpu) as u32);
-            let bank_addr = {
+            // TODO: Check this logic; namely, the overflow of adding y
+            let addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
-                u24((hi << 8) | lo)
+                let bank =
+                    yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 2u32)) as u32;
+                u24((bank << 16) | (hi << 8) | lo)
             } + cpu.borrow().reg.get_y() as u32;
-            // TODO: Check the above logic; namely, the overflow of adding y
-            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
             Pointer { addr, long }
         }
     }
