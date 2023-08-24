@@ -21,10 +21,7 @@ impl SNES {
         let bus = Rc::new(RefCell::new(Bus::new(ppu.clone(), smp.clone())));
         let cpu = Rc::new(RefCell::new(CPU::new(bus.clone())));
 
-        let cpu_thread = Box::from(CPU::run(cpu.clone()));
-        let ppu_thread = Box::from(ppu.borrow_mut().run());
-        let smp_thread = Box::from(SMP::run(smp.clone()));
-        let scheduler = Scheduler::new(cpu_thread, ppu_thread, smp_thread);
+        let scheduler = Self::create_scheduler(cpu.clone(), ppu.clone(), smp.clone());
 
         let mut snes = Self {
             cpu,
@@ -38,10 +35,23 @@ impl SNES {
         snes
     }
 
+    fn create_scheduler(
+        cpu: Rc<RefCell<CPU>>,
+        ppu: Rc<RefCell<PPU>>,
+        smp: Rc<RefCell<SMP>>,
+    ) -> Scheduler {
+        let cpu_thread = Box::from(CPU::run(cpu.clone()));
+        let ppu_thread = Box::from(ppu.borrow_mut().run());
+        let smp_thread = Box::from(SMP::run(smp.clone()));
+        Scheduler::new(cpu_thread, ppu_thread, smp_thread)
+    }
+
     pub fn reset(&mut self) {
         self.cpu.borrow_mut().reset();
         self.bus.borrow_mut().reset();
         SMP::reset(self.smp.clone());
+        self.scheduler =
+            Self::create_scheduler(self.cpu.clone(), self.ppu.clone(), self.smp.clone());
     }
 
     pub fn run(&mut self) {

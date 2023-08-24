@@ -13,13 +13,6 @@ use paste::paste;
 
 pub const RESET_VECTOR: u24 = u24(0xFFFC);
 
-/// The 65816 microprocessor, the main CPU of the SNES
-pub struct CPU {
-    reg: Registers,
-    bus: Rc<RefCell<Bus>>,
-    ticks_run: u64,
-}
-
 macro_rules! yield_ticks {
     ($cpu_rc:ident, $gen_expr:expr) => {{
         let ticks_to_yield = $cpu_rc.borrow().ticks_run;
@@ -239,6 +232,13 @@ macro_rules! fetch {
 struct Pointer {
     pub addr: u24,
     pub long: bool,
+}
+
+/// The 65816 microprocessor, the main CPU of the SNES
+pub struct CPU {
+    reg: Registers,
+    bus: Rc<RefCell<Bus>>,
+    ticks_run: u64,
 }
 
 impl CPU {
