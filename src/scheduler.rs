@@ -148,6 +148,37 @@ impl Scheduler {
         }
     }
 
+    pub fn run_instruction_debug(&mut self) -> bool {
+        let mut hit_debug = false;
+        loop {
+            let yielded = self.resume();
+            match yielded {
+                GeneratorState::Yielded((yield_reason, n_ticks)) => {
+                    self.tick_curr_clocks(n_ticks);
+                    match yield_reason {
+                        YieldReason::Sync(other_device) => {
+                            self.curr_thread().waiting_for = Some(other_device);
+                        }
+                        YieldReason::FinishedInstruction => {
+                            return hit_debug;
+                        }
+                        YieldReason::Debug(debug_point) => {
+                            hit_debug = true;
+                            if let DebugPoint::UnimplementedAccess(access) = debug_point {
+                                log::debug!(
+                                    "Unimplemented {:?} of {:#08}",
+                                    access.access_type,
+                                    access.addr
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => panic!("unexpected value from resume"),
+            }
+        }
+    }
+
     fn curr_thread(&mut self) -> &mut DeviceThread {
         match self.curr {
             Device::CPU => &mut self.cpu,

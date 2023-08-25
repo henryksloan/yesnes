@@ -139,10 +139,22 @@ impl Bus {
                     match addr.lo16() {
                         // TODO: System area
                         0x0000..=0x1FFF => bus.borrow_mut().wram[addr.lo16() as usize] = data,
+                        0x2100..=0x213F => {
+                            log::debug!("TODO: PPU IO write {addr}");
+                        }
+                        0x2180..=0x2183 => {
+                            log::debug!("TODO: WRAM access write {addr}");
+                        }
                         0x2140..=0x217F => {
                             yield YieldReason::Sync(Device::SMP);
                             let port = (addr.lo16() - 0x2140) % 4;
                             bus.borrow().smp.borrow_mut().io_write(0x2140 + port, data);
+                        }
+                        0x4200..=0x42FF => {
+                            log::debug!("TODO: CPU IO write {addr}");
+                        }
+                        0x4300..=0x437F => {
+                            log::debug!("TODO: DMA write {addr}");
                         }
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {

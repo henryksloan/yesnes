@@ -17,14 +17,15 @@ use crate::u24::u24;
 // TODO: This should probably be done internally. It might be best if it
 // didn't require `impl Send for Disassembler`, i.e. if Disassembler didn't have an
 // Rc<RefCell<Bus>>; maybe that could be passed straight from cpu at the end of each instruction.
-fn run_instruction_and_disassemble(snes: &mut SNES, disassembler: &Mutex<Disassembler>) {
-    snes.run_instruction();
+fn run_instruction_and_disassemble(snes: &mut SNES, disassembler: &Mutex<Disassembler>) -> bool {
+    let breakpoint = snes.run_instruction_debug();
     let cpu = snes.cpu.borrow();
     let registers = cpu.registers();
     disassembler
         .lock()
         .unwrap()
         .update_disassembly_at(registers.pc, &registers.p);
+    breakpoint
 }
 
 enum EmuThreadMessage {
@@ -47,7 +48,11 @@ fn run_emu_thread(
             EmuThreadMessage::Continue => {
                 *paused.lock().unwrap() = false;
                 while !*paused.lock().unwrap() {
-                    run_instruction_and_disassemble(&mut snes.lock().unwrap(), &disassembler);
+                    let should_break =
+                        run_instruction_and_disassemble(&mut snes.lock().unwrap(), &disassembler);
+                    if should_break {
+                        *paused.lock().unwrap() = true;
+                    }
                 }
             }
             EmuThreadMessage::RunToAddress(addr) => {
