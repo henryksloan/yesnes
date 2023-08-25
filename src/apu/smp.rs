@@ -204,6 +204,7 @@ macro_rules! branch_instrs {
             fn [<branch_ $flag _ $set_clear>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
                 move || {
                     let src_pc = smp.borrow().reg.pc;
+                    // TODO: Do we even read the offset if we don't branch? Almost certainly, as it's part of decoding
                     let offset = yield_all!(SMP::read_u8(smp.clone(), addr));
                     let dest_pc = (src_pc as i32 + (offset as i8 as i32)) as u16;
                     if smp.borrow_mut().reg.psw.$flag == $val {
@@ -223,6 +224,35 @@ macro_rules! branch_instrs {
     };
     () => {
         branch_instrs!(n, v, c, z);
+    };
+}
+
+macro_rules! bit_branch_instrs {
+    ($bit:expr => $val:expr, $set_clear:ident) => {
+        paste! {
+            fn [<branch_bit_ $bit _ $set_clear>]<'a>(smp: Rc<RefCell<SMP>>, addrs: MemToMemAddresses) -> impl InstructionGenerator + 'a {
+                move || {
+                    let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
+                    let offset = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
+                    let src_pc = smp.borrow().reg.pc;
+                    let dest_pc = (src_pc as i32 + (offset as i8 as i32)) as u16;
+                    if (data >> $bit) & 1 == $val {
+                        smp.borrow_mut().reg.pc = dest_pc;
+                        // TODO: Need to look into how many cycles branch can take
+                        // smp.borrow_mut().step(1);
+                    }
+                }
+            }
+        }
+    };
+    ($($bit:expr),+) => {
+        $(
+        bit_branch_instrs!($bit => 1, set);
+        bit_branch_instrs!($bit => 0, clear);
+        )+
+    };
+    () => {
+        bit_branch_instrs!(0, 1, 2, 3, 4, 5, 6, 7);
     };
 }
 
@@ -275,6 +305,7 @@ pub struct SMP {
     io_reg: IoRegisters,
     ticks_run: u64,
     ram: Vec<u8>,
+    debug_log: bool, // DO NOT SUBMIT
 }
 
 impl SMP {
@@ -284,6 +315,7 @@ impl SMP {
             io_reg: IoRegisters::new(),
             ticks_run: 0,
             ram: vec![0; 0x10000],
+            debug_log: false,
         }
     }
 
@@ -328,10 +360,15 @@ impl SMP {
 
     pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceGenerator + 'a {
         move || loop {
-            print!("SMP {:#06X}", smp.borrow().reg.pc);
+            if smp.borrow().debug_log {
+                print!("SMP {:#06X}", smp.borrow().reg.pc);
+            }
             let opcode = yield_ticks!(smp, SMP::read_u8(smp.clone(), smp.borrow().reg.pc));
+            if smp.borrow().reg.pc == 0x08C5 {
+                smp.borrow_mut().debug_log = true;
+            }
             smp.borrow_mut().reg.pc += 1;
-            {
+            if smp.borrow().debug_log {
                 let reg = &smp.borrow().reg;
                 println!(
                     ": {opcode:#04X}    A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} PSW:{:02X} in_ports:{:02X?} ext_ports:{:02X?}",
@@ -438,6 +475,22 @@ impl SMP {
                 (branch_c_set; 0xB0=>immediate)
                 (branch_z_clear; 0xD0=>immediate)
                 (branch_z_set; 0xF0=>immediate)
+                (branch_bit_0_set; 0x03=>direct_and_relative)
+                (branch_bit_1_set; 0x23=>direct_and_relative)
+                (branch_bit_2_set; 0x43=>direct_and_relative)
+                (branch_bit_3_set; 0x63=>direct_and_relative)
+                (branch_bit_4_set; 0x83=>direct_and_relative)
+                (branch_bit_5_set; 0xA3=>direct_and_relative)
+                (branch_bit_6_set; 0xC3=>direct_and_relative)
+                (branch_bit_7_set; 0xE3=>direct_and_relative)
+                (branch_bit_0_clear; 0x13=>direct_and_relative)
+                (branch_bit_1_clear; 0x33=>direct_and_relative)
+                (branch_bit_2_clear; 0x53=>direct_and_relative)
+                (branch_bit_3_clear; 0x73=>direct_and_relative)
+                (branch_bit_4_clear; 0x93=>direct_and_relative)
+                (branch_bit_5_clear; 0xB3=>direct_and_relative)
+                (branch_bit_6_clear; 0xD3=>direct_and_relative)
+                (branch_bit_7_clear; 0xF3=>direct_and_relative)
                 (bra; 0x2F=>immediate)
                 (jmp; 0x5F=>absolute, 0x1F=>absolute_indexed_indirect)
                 (call; 0x3F=>absolute)
@@ -730,6 +783,7 @@ impl SMP {
             }
         }
     }
+
     fn indirect_to_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
         move || {
             let src_addr = yield_all!(Self::direct(smp.clone()));
@@ -737,6 +791,17 @@ impl SMP {
                 let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
                 direct_page_base + smp.borrow().reg.y as u16
             };
+            MemToMemAddresses {
+                src_addr,
+                dest_addr,
+            }
+        }
+    }
+
+    fn direct_and_relative<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        move || {
+            let src_addr = yield_all!(Self::direct(smp.clone()));
+            let dest_addr = yield_all!(Self::immediate(smp.clone()));
             MemToMemAddresses {
                 src_addr,
                 dest_addr,
@@ -1035,6 +1100,7 @@ impl SMP {
 
     // Generate branch instructions
     branch_instrs!();
+    bit_branch_instrs!();
 
     fn bra<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
