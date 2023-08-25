@@ -363,8 +363,8 @@ impl SMP {
                 (store_a; 0xC4=>direct, 0xD4=>direct_x, 0xC5=>absolute, 0xD5=>absolute_x,
                  0xD6=>absolute_y, 0xAF=>indirect_increment, 0xC6=>indirect,
                  0xD7=>indirect_indexed, 0xC7=>indexed_indirect)
-                (store_x; 0xD8=>direct, 0xD9=>direct_y)
-                (store_y; 0xCB=>direct, 0xCC=>direct_x)
+                (store_x; 0xD8=>direct, 0xD9=>direct_y, 0xC9=>absolute)
+                (store_y; 0xCB=>direct, 0xDB=>direct_x, 0xCC=>absolute)
                 (movw_ya_to_mem; 0xDA=>direct)
                 (push_a; 0x2D=>implied)
                 (push_x; 0x4D=>implied)
@@ -660,7 +660,7 @@ impl SMP {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let x = smp.borrow().reg.x;
             let direct_addr = direct_page_base + x as u16;
-            smp.borrow_mut().reg.x += x.wrapping_add(1);
+            smp.borrow_mut().reg.x = x.wrapping_add(1);
             direct_addr
         }
     }
