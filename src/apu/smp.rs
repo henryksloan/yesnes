@@ -127,6 +127,7 @@ macro_rules! alu_instr {
     };
 }
 
+// DO NOT SUBMIT: No need for _acc, let's just go with _a and simplify the macros
 /// Implement *_mem, *_acc, *_x, and *_y variants for a given instruction using SMP::*_algorithm().
 macro_rules! step_shift_instrs {
     ($op:ident, mem) => {
@@ -168,6 +169,31 @@ macro_rules! step_shift_instrs {
         step_shift_instrs!(ror, common);
         step_shift_instrs!(dec, inc_dec);
         step_shift_instrs!(inc, inc_dec);
+    };
+}
+
+macro_rules! push_pop_instrs {
+    ($reg:ident) => {
+        paste! {
+            fn [<push_ $reg>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+                move || {
+                    let data = smp.borrow().reg.$reg;
+                    yield_all!(SMP::stack_push_u8(smp.clone(), data));
+                }
+            }
+
+            fn [<pop_ $reg>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+                move || {
+                    let data = yield_all!(SMP::stack_pop_u8(smp.clone()));
+                    smp.borrow_mut().reg.$reg = data;
+                }
+            }
+        }
+    };
+    () => {
+        push_pop_instrs!(a);
+        push_pop_instrs!(x);
+        push_pop_instrs!(y);
     };
 }
 
@@ -340,6 +366,14 @@ impl SMP {
                 (store_x; 0xD8=>direct, 0xD9=>direct_y)
                 (store_y; 0xCB=>direct, 0xCC=>direct_x)
                 (movw_ya_to_mem; 0xDA=>direct)
+                (push_a; 0x2D=>implied)
+                (push_x; 0x4D=>implied)
+                (push_y; 0x6D=>implied)
+                (push_psw; 0x0D=>implied)
+                (pop_a; 0xAE=>implied)
+                (pop_x; 0xCE=>implied)
+                (pop_y; 0xEE=>implied)
+                (pop_psw; 0x8E=>implied)
                 (or_acc; 0x08=>immediate, 0x06=>indirect, 0x04=>direct,
                  0x14=>direct_x, 0x05=>absolute, 0x15=>absolute_x,
                  0x16=>absolute_y, 0x17=>indirect_indexed, 0x07=>indexed_indirect)
@@ -422,7 +456,9 @@ impl SMP {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             dummy_yield!();
             match addr {
-                0x00F0..=0x00F3 => todo!("IO reg read {addr:#06X}"),
+                0x00F0 => todo!("IO reg read {addr:#06X}"),
+                0x00F1 => smp.borrow().io_reg.control.0,
+                0x00F2..=0x00F3 => todo!("IO reg read {addr:#06X}"),
                 0x00F4..=0x00F7 => smp.borrow().io_reg.external_ports[addr as usize - 0x00F4],
                 0x00F8..=0x00FF => todo!("IO reg read {addr:#06X}"),
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
@@ -435,7 +471,9 @@ impl SMP {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             dummy_yield!();
             match addr {
-                0x00F0..=0x00F3 => todo!("IO reg write {addr:#06X}"),
+                0x00F0 => todo!("IO reg write {addr:#06X}"),
+                0x00F1 => smp.borrow_mut().io_reg.control.0 = data,
+                0x00F2..=0x00F3 => todo!("IO reg write {addr:#06X}"),
                 0x00F4..=0x00F7 => {
                     smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
                 }
@@ -468,7 +506,7 @@ impl SMP {
         }
     }
 
-    pub fn read_u16<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u16> + 'a {
+    fn read_u16<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u16> + 'a {
         move || {
             let lo = yield_all!(SMP::read_u8(smp.clone(), addr)) as u16;
             let hi = yield_all!(SMP::read_u8(smp.clone(), addr + 1)) as u16;
@@ -491,10 +529,26 @@ impl SMP {
         }
     }
 
-    pub fn write_u16<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u16) -> impl Yieldable<()> + 'a {
+    fn write_u16<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u16) -> impl Yieldable<()> + 'a {
         move || {
             yield_all!(SMP::write_u8(smp.clone(), addr, data as u8));
             yield_all!(SMP::write_u8(smp.clone(), addr + 1, (data >> 8) as u8));
+        }
+    }
+
+    fn stack_push_u8<'a>(smp: Rc<RefCell<SMP>>, data: u8) -> impl Yieldable<()> + 'a {
+        move || {
+            let stack_addr = 0x100 + smp.borrow().reg.sp as u16;
+            yield_all!(SMP::write_u8(smp.clone(), stack_addr, data));
+            smp.borrow_mut().reg.sp = smp.borrow().reg.sp.wrapping_sub(1);
+        }
+    }
+
+    fn stack_pop_u8<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u8> + 'a {
+        move || {
+            smp.borrow_mut().reg.sp = smp.borrow().reg.sp.wrapping_add(1);
+            let stack_addr = 0x100 + smp.borrow().reg.sp as u16;
+            yield_all!(SMP::read_u8(smp.clone(), stack_addr))
         }
     }
 
@@ -994,6 +1048,8 @@ impl SMP {
         }
     }
 
+    // Flag instructions
+
     fn clrp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
         move || {
             dummy_yield!();
@@ -1019,6 +1075,23 @@ impl SMP {
         move || {
             dummy_yield!();
             smp.borrow_mut().reg.psw.i = false;
+        }
+    }
+
+    // Push/pop instructions
+    push_pop_instrs!();
+
+    fn push_psw<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = smp.borrow().reg.psw.get();
+            yield_all!(SMP::stack_push_u8(smp.clone(), data));
+        }
+    }
+
+    fn pop_psw<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::stack_pop_u8(smp.clone()));
+            smp.borrow_mut().reg.psw.set(data);
         }
     }
 }
