@@ -389,6 +389,12 @@ impl CPU {
                  0xDD=>absolute_x, 0xDF=>absolute_long_x)
                 (cpx, XFlag; 0xE0=>immediate, 0xE4=>direct, 0xEC=>absolute)
                 (cpy, XFlag; 0xC0=>immediate, 0xC4=>direct, 0xCC=>absolute)
+                (asl_a, NoFlag; 0x0A=>implied)
+                (asl, MFlag; 0x06=>direct,  0x0E=>absolute, 0x16=>direct_x,
+                 0x1E=>absolute_x)
+                (lsr_a, NoFlag; 0x4A=>implied)
+                (lsr, MFlag; 0x46=>direct,  0x4E=>absolute, 0x56=>direct_x,
+                 0x5E=>absolute_x)
                 (rol_a, NoFlag; 0x2A=>implied)
                 (rol, MFlag; 0x26=>direct, 0x2E=>absolute, 0x36=>direct_x,
                  0x3E=>absolute_x)
@@ -1323,6 +1329,50 @@ impl CPU {
 
     fn ror_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         CPU::rotate_acc_op(cpu, false)
+    }
+
+    fn shift_with_carry(cpu: Rc<RefCell<CPU>>, data: u16, left: bool) -> u16 {
+        let n_bits = n_bits!(cpu, m);
+        let check_mask = if left { 1 << (n_bits - 1) } else { 0x01 };
+        cpu.borrow_mut().reg.p.c = (data & check_mask) == check_mask;
+        let result = if left { data << 1 } else { data >> 1 };
+        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+        cpu.borrow_mut().reg.p.z = result == 0;
+        result
+    }
+
+    fn asl<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let result = CPU::shift_with_carry(cpu.clone(), data, true);
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
+        }
+    }
+
+    fn asl_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let data = cpu.borrow().reg.get_a();
+            let result = CPU::shift_with_carry(cpu.clone(), data, true);
+            cpu.borrow_mut().reg.set_a(result);
+        }
+    }
+
+    fn lsr<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let result = CPU::shift_with_carry(cpu.clone(), data, false);
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
+        }
+    }
+
+    fn lsr_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let data = cpu.borrow().reg.get_a();
+            let result = CPU::shift_with_carry(cpu.clone(), data, false);
+            cpu.borrow_mut().reg.set_a(result);
+        }
     }
 
     fn bra<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {

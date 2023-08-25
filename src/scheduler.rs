@@ -203,8 +203,6 @@ impl Scheduler {
             .is_ahead(curr_device);
         let curr_thread = self.curr_thread();
         if curr_is_ahead {
-            // DO NOT SUBMIT
-            // println!("{:?} => {:?}", curr_device, other_device);
             curr_thread.waiting_for = Some(other_device);
             self.curr = other_device;
         } else {

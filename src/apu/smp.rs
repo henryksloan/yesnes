@@ -128,7 +128,6 @@ macro_rules! alu_instr {
     };
 }
 
-// DO NOT SUBMIT: No need for _acc, let's just go with _a and simplify the macros
 /// Implement *_mem, *_acc, *_x, and *_y variants for a given instruction using SMP::*_algorithm().
 macro_rules! step_shift_instrs {
     ($op:ident, mem) => {
@@ -360,7 +359,7 @@ pub struct SMP {
     io_reg: IoRegisters,
     ticks_run: u64,
     ram: Vec<u8>,
-    debug_log: bool, // DO NOT SUBMIT
+    debug_log: bool, // DO NOT SUBMIT: For debugging
 }
 
 impl SMP {
@@ -584,6 +583,10 @@ impl SMP {
 
     fn step(&mut self, n_clocks: u64) {
         self.ticks_run += n_clocks;
+        // TODO: This is a super simple dummy implementation, not remotely correct
+        for timer in self.io_reg.timers.iter_mut() {
+            *timer = timer.wrapping_add(1);
+        }
     }
 
     fn read_io_reg<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
@@ -598,7 +601,7 @@ impl SMP {
                 0x00F4..=0x00F7 => smp.borrow().io_reg.external_ports[addr as usize - 0x00F4],
                 0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
                 0x00FA..=0x00FC => smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA],
-                0x00FD..=0x00FF => 0, // TODO: Timer output
+                0x00FD..=0x00FF => smp.borrow_mut().io_reg.timers[addr as usize - 0x00FD],
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
             }
         }
@@ -1098,9 +1101,8 @@ impl SMP {
     fn addw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(SMP::read_u16(smp.clone(), addr));
-            smp.borrow_mut()
-                .reg
-                .set_ya(SMP::addw_algorithm(smp.clone(), data));
+            let result = SMP::addw_algorithm(smp.clone(), data);
+            smp.borrow_mut().reg.set_ya(result);
         }
     }
 
@@ -1108,9 +1110,8 @@ impl SMP {
         move || {
             let data = yield_all!(SMP::read_u16(smp.clone(), addr));
             let data_1s_complement = ((data as i16).wrapping_neg().wrapping_sub(1)) as u16;
-            smp.borrow_mut()
-                .reg
-                .set_ya(SMP::addw_algorithm(smp.clone(), data_1s_complement));
+            let result = SMP::addw_algorithm(smp.clone(), data_1s_complement);
+            smp.borrow_mut().reg.set_ya(result);
         }
     }
 

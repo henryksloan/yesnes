@@ -107,7 +107,13 @@ impl Bus {
                 0x7E..=0x7F => {
                     bus.borrow().wram[0x10000 * (addr.hi8() as usize - 0x7E) + addr.lo16() as usize]
                 }
-                _ => 0,
+                _ => {
+                    yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
+                        access_type: AccessType::Read,
+                        addr,
+                    }));
+                    0
+                }
             }
         }
     }
@@ -150,7 +156,12 @@ impl Bus {
                     bus.borrow_mut().wram
                         [0x10000 * (addr.hi8() as usize - 0x7E) + addr.lo16() as usize] = data
                 }
-                _ => {}
+                _ => {
+                    yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
+                        access_type: AccessType::Read,
+                        addr,
+                    }));
+                }
             }
         }
     }

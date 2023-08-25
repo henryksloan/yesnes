@@ -93,6 +93,7 @@ pub struct IoRegisters {
     pub dsp_addr: u8,
     pub dsp_data: u8,
     pub timer_dividers: [u8; 3],
+    pub timers: [u8; 3],
 }
 
 impl IoRegisters {
