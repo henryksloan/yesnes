@@ -172,6 +172,38 @@ macro_rules! step_shift_instrs {
         step_shift_instrs!(inc, inc_dec);
     };
 }
+macro_rules! flag_instrs {
+    ($flag:ident, set) => {
+        paste! {
+            fn [<set_flag_ $flag>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+                move || {
+                    dummy_yield!();
+                    smp.borrow_mut().reg.psw.$flag = true;
+                }
+            }
+        }
+    };
+    ($flag:ident, clear) => {
+        paste! {
+            fn [<clear_flag_ $flag>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+                move || {
+                    dummy_yield!();
+                    smp.borrow_mut().reg.psw.$flag = false;
+                }
+            }
+        }
+    };
+    ($flag:ident) => {
+        flag_instrs!($flag, set);
+        flag_instrs!($flag, clear);
+    };
+    () => {
+        flag_instrs!(p);
+        flag_instrs!(c);
+        flag_instrs!(i);
+        flag_instrs!(v, clear);
+    };
+}
 
 macro_rules! push_pop_instrs {
     ($reg:ident) => {
@@ -467,6 +499,10 @@ impl SMP {
                 (decw; 0x1A=>direct)
                 (div; 0x9E=>implied)
                 (mul; 0xCF=>implied)
+                (clear_flag_c; 0x60=>implied)
+                (set_flag_c; 0x80=>implied)
+                (flip_flag_c; 0xED=>implied)
+                (clear_flag_v; 0xE0=>implied)
                 (branch_n_clear; 0x10=>immediate)
                 (branch_n_set; 0x30=>immediate)
                 (branch_v_clear; 0x50=>immediate)
@@ -497,10 +533,10 @@ impl SMP {
                 (jmp; 0x5F=>absolute, 0x1F=>absolute_indexed_indirect)
                 (call; 0x3F=>absolute)
                 (pcall; 0x4F=>direct)
-                (clrp; 0x20=>implied)
-                (setp; 0x40=>implied)
-                (ei; 0xA0=>implied)
-                (di; 0xC0=>implied)
+                (clear_flag_p; 0x20=>implied)
+                (set_flag_p; 0x40=>implied)
+                (set_flag_i; 0xA0=>implied)
+                (clear_flag_i; 0xC0=>implied)
             );
         }
     }
@@ -1180,32 +1216,13 @@ impl SMP {
     }
 
     // Flag instructions
+    flag_instrs!();
 
-    fn clrp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+    fn flip_flag_c<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
         move || {
             dummy_yield!();
-            smp.borrow_mut().reg.psw.p = false;
-        }
-    }
-
-    fn setp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-        move || {
-            dummy_yield!();
-            smp.borrow_mut().reg.psw.p = true;
-        }
-    }
-
-    fn ei<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-        move || {
-            dummy_yield!();
-            smp.borrow_mut().reg.psw.i = true;
-        }
-    }
-
-    fn di<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-        move || {
-            dummy_yield!();
-            smp.borrow_mut().reg.psw.i = false;
+            let c = smp.borrow_mut().reg.psw.c;
+            smp.borrow_mut().reg.psw.c = !c;
         }
     }
 
