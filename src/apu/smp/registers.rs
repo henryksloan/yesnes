@@ -90,6 +90,8 @@ pub struct IoRegisters {
     // Ports written by CPU, read by SMP
     pub external_ports: [u8; 4],
     pub control: ControlRegister,
+    pub dsp_addr: u8,
+    pub dsp_data: u8,
 }
 
 impl IoRegisters {

@@ -119,7 +119,8 @@ macro_rules! alu_instr {
             fn [<$op _acc>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
                 move || {
                     let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
-                    let output = Self::[<$op _algorithm>](smp.clone(), src_data, smp.borrow().reg.a);
+                    let a = smp.borrow().reg.a;
+                    let output = Self::[<$op _algorithm>](smp.clone(), src_data, a);
                     smp.borrow_mut().reg.a = output;
                 }
             }
@@ -460,7 +461,8 @@ impl SMP {
             match addr {
                 0x00F0 => todo!("IO reg read {addr:#06X}"),
                 0x00F1 => smp.borrow().io_reg.control.0,
-                0x00F2..=0x00F3 => todo!("IO reg read {addr:#06X}"),
+                0x00F2 => smp.borrow().io_reg.dsp_addr,
+                0x00F3 => smp.borrow().io_reg.dsp_data,
                 0x00F4..=0x00F7 => smp.borrow().io_reg.external_ports[addr as usize - 0x00F4],
                 0x00F8..=0x00FF => todo!("IO reg read {addr:#06X}"),
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
@@ -475,7 +477,8 @@ impl SMP {
             match addr {
                 0x00F0 => todo!("IO reg write {addr:#06X}"),
                 0x00F1 => smp.borrow_mut().io_reg.control.0 = data,
-                0x00F2..=0x00F3 => todo!("IO reg write {addr:#06X}"),
+                0x00F2 => smp.borrow_mut().io_reg.dsp_addr = data,
+                0x00F3 => smp.borrow_mut().io_reg.dsp_data = data,
                 0x00F4..=0x00F7 => {
                     smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
                 }
