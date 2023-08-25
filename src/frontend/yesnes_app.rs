@@ -411,6 +411,7 @@ impl eframe::App for YesnesApp {
         self.show_windows(ctx);
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| self.menu_bar(ctx, ui));
         egui::CentralPanel::default().show(ctx, |ui| {
+            // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
             let paused = *self.emu_paused.lock().unwrap();
             self.register_area(ui, paused);
             self.control_area(ui);

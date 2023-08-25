@@ -14,6 +14,15 @@ pub struct Bus {
     smp: Rc<RefCell<SMP>>,
     cart_test: Vec<u8>,
     wram: Vec<u8>,
+    // TODO: Refactor these CPU IOs to a new struct or something
+    // 4202h - WRMPYA for IO multiplication
+    multiplicand_a: u8,
+    // 4204h - WRDIVL and 4205h - WRDIVH; unsigned dividend
+    dividend: u16,
+    // 4214h - RDDIVL and 4215h - RDDIVH; unsigned division result
+    quotient: u16,
+    // 4216h - RDMPYL and 4217h - RDMPYH; result of IO multiplication or division
+    product_or_remainder: u16,
 }
 
 impl Bus {
@@ -29,11 +38,17 @@ impl Bus {
             )
             .unwrap(),
             wram: vec![0; 0x20000],
+            multiplicand_a: 0,
+            dividend: 0,
+            quotient: 0,
+            product_or_remainder: 0,
         }
     }
 
     pub fn reset(&mut self) {
         self.wram.fill(0);
+        self.multiplicand_a = 0;
+        self.product_or_remainder = 0;
     }
 
     // TODO: I have FORGOTTEN why these don't take &self. Look into why.
@@ -91,6 +106,10 @@ impl Bus {
                             let port = (addr.lo16() - 0x2140) % 4;
                             bus.borrow().smp.borrow_mut().io_read(0x2140 + port)
                         }
+                        0x4214 => bus.borrow_mut().quotient as u8,
+                        0x4215 => (bus.borrow_mut().quotient >> 8) as u8,
+                        0x4216 => bus.borrow_mut().product_or_remainder as u8,
+                        0x4217 => (bus.borrow_mut().product_or_remainder >> 8) as u8,
                         0x8000.. => {
                             bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
                                 | (addr.lo16() as usize - 0x8000)]
@@ -149,6 +168,32 @@ impl Bus {
                             yield YieldReason::Sync(Device::SMP);
                             let port = (addr.lo16() - 0x2140) % 4;
                             bus.borrow().smp.borrow_mut().io_write(0x2140 + port, data);
+                        }
+                        0x4202 => {
+                            bus.borrow_mut().multiplicand_a = data;
+                        }
+                        0x4203 => {
+                            let multiplicand_a = bus.borrow_mut().multiplicand_a as u16;
+                            bus.borrow_mut().product_or_remainder = multiplicand_a * data as u16;
+                        }
+                        0x4204 => {
+                            bus.borrow_mut().dividend &= 0xFF00;
+                            bus.borrow_mut().dividend |= data as u16;
+                        }
+                        0x4205 => {
+                            bus.borrow_mut().dividend &= 0x00FF;
+                            bus.borrow_mut().dividend |= (data as u16) << 8;
+                        }
+                        0x4206 => {
+                            let dividend = bus.borrow().dividend;
+                            let divisor = data as u16;
+                            if divisor == 0 {
+                                bus.borrow_mut().quotient = 0xFFFF;
+                                bus.borrow_mut().product_or_remainder = dividend;
+                            } else {
+                                bus.borrow_mut().quotient = dividend / divisor;
+                                bus.borrow_mut().product_or_remainder = dividend % divisor;
+                            }
                         }
                         0x4200..=0x42FF => {
                             log::debug!("TODO: CPU IO write {addr}");

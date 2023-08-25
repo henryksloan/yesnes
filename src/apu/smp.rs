@@ -418,9 +418,9 @@ impl SMP {
                 print!("SMP {:#06X}", smp.borrow().reg.pc);
             }
             let opcode = yield_ticks!(smp, SMP::read_u8(smp.clone(), smp.borrow().reg.pc));
-            if smp.borrow().reg.pc == 0x08C5 {
-                smp.borrow_mut().debug_log = true;
-            }
+            // if smp.borrow().reg.pc == 0x08C5 {
+            //     smp.borrow_mut().debug_log = true;
+            // }
             smp.borrow_mut().reg.pc += 1;
             if smp.borrow().debug_log {
                 let reg = &smp.borrow().reg;
