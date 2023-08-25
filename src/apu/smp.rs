@@ -439,6 +439,8 @@ impl SMP {
                 (branch_z_set; 0xF0=>immediate)
                 (bra; 0x2F=>immediate)
                 (jmp; 0x5F=>absolute, 0x1F=>absolute_indexed_indirect)
+                (call; 0x3F=>absolute)
+                (pcall; 0x4F=>direct)
                 (clrp; 0x20=>implied)
                 (setp; 0x40=>implied)
                 (ei; 0xA0=>implied)
@@ -540,13 +542,15 @@ impl SMP {
         move || {
             let stack_addr = 0x100 + smp.borrow().reg.sp as u16;
             yield_all!(SMP::write_u8(smp.clone(), stack_addr, data));
-            smp.borrow_mut().reg.sp = smp.borrow().reg.sp.wrapping_sub(1);
+            let new_sp = smp.borrow().reg.sp.wrapping_sub(1);
+            smp.borrow_mut().reg.sp = new_sp;
         }
     }
 
     fn stack_pop_u8<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u8> + 'a {
         move || {
-            smp.borrow_mut().reg.sp = smp.borrow().reg.sp.wrapping_add(1);
+            let new_sp = smp.borrow().reg.sp.wrapping_add(1);
+            smp.borrow_mut().reg.sp = new_sp;
             let stack_addr = 0x100 + smp.borrow().reg.sp as u16;
             yield_all!(SMP::read_u8(smp.clone(), stack_addr))
         }
@@ -636,7 +640,8 @@ impl SMP {
         move || {
             let addr_lo = fetch!(smp) as u16;
             let absolute_addr = ((fetch!(smp) as u16) << 8) | addr_lo;
-            absolute_addr.wrapping_add(smp.borrow().reg.x as u16)
+            let indirect_addr = absolute_addr.wrapping_add(smp.borrow().reg.x as u16);
+            yield_all!(SMP::read_u16(smp.clone(), indirect_addr)) // Jump destination
         }
     }
 
@@ -1041,8 +1046,34 @@ impl SMP {
 
     fn jmp<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
-            let dest_pc = yield_all!(SMP::read_u16(smp.clone(), addr));
-            smp.borrow_mut().reg.pc = dest_pc;
+            dummy_yield!();
+            smp.borrow_mut().reg.pc = addr;
+            // TODO: Need to look into how many cycles branch can take
+            // smp.borrow_mut().step(1);
+        }
+    }
+
+    fn push_pc<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<()> + 'a {
+        move || {
+            let src_pc = smp.borrow().reg.pc;
+            yield_all!(SMP::stack_push_u8(smp.clone(), (src_pc >> 8) as u8));
+            yield_all!(SMP::stack_push_u8(smp.clone(), src_pc as u8));
+        }
+    }
+
+    fn call<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            yield_all!(SMP::push_pc(smp.clone()));
+            smp.borrow_mut().reg.pc = addr;
+            // TODO: Need to look into how many cycles branch can take
+            // smp.borrow_mut().step(1);
+        }
+    }
+
+    fn pcall<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            yield_all!(SMP::push_pc(smp.clone()));
+            smp.borrow_mut().reg.pc = 0xFF00 | (addr & 0xFF);
             // TODO: Need to look into how many cycles branch can take
             // smp.borrow_mut().step(1);
         }
