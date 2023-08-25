@@ -3,10 +3,9 @@ pub mod yield_reason;
 pub mod device;
 mod relative_clock;
 
+pub use device::Device;
+pub use relative_clock::RelativeClock;
 pub use yield_reason::{Access, AccessType, DebugPoint, YieldReason, YieldTicks};
-
-use device::Device;
-use relative_clock::RelativeClock;
 
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
@@ -48,6 +47,20 @@ macro_rules! yield_all {
 
 pub(crate) use yield_all;
 
+macro_rules! ignore_yields {
+    ($gen_expr:expr) => {{
+        let mut gen = $gen_expr;
+        loop {
+            match Pin::new(&mut gen).resume(()) {
+                GeneratorState::Complete(out) => break out,
+                _ => {}
+            }
+        }
+    }};
+}
+
+pub(crate) use ignore_yields;
+
 // A silly hack:
 // An expression only satisfies the Generator trait if it
 // uses the `yield` keyword. But not all instructions yield,
@@ -55,7 +68,7 @@ pub(crate) use yield_all;
 macro_rules! dummy_yield {
     () => {
         if false {
-            use crate::scheduler::device::Device;
+            use crate::scheduler::Device;
             yield YieldReason::Sync(Device::CPU);
         }
     };
@@ -190,6 +203,8 @@ impl Scheduler {
             .is_ahead(curr_device);
         let curr_thread = self.curr_thread();
         if curr_is_ahead {
+            // DO NOT SUBMIT
+            // println!("{:?} => {:?}", curr_device, other_device);
             curr_thread.waiting_for = Some(other_device);
             self.curr = other_device;
         } else {

@@ -45,6 +45,19 @@ impl RelativeClock {
         }
     }
 
+    pub fn get_delta(&self, processor: Device) -> i64 {
+        if processor == self.processor_a {
+            self.counter
+        } else if processor == self.processor_b {
+            -self.counter
+        } else {
+            panic!(
+                "processor {:?} is not tracked by this relative clock",
+                processor
+            );
+        }
+    }
+
     pub fn is_ahead(&self, processor: Device) -> bool {
         if processor == self.processor_a {
             self.a_ahead()

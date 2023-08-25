@@ -159,7 +159,6 @@ pub struct StatusRegister {
     pub z: bool, // Zero flag
     pub c: bool, // Carry flag
 
-    // TODO: The emulation flag is largely unimplemented
     pub e: bool, // 6502 emulation mode flag
 }
 

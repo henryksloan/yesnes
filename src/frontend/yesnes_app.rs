@@ -117,7 +117,7 @@ impl Default for YesnesApp {
 
 impl YesnesApp {
     fn scroll_pc_near_top(&mut self) {
-        if let Ok(snes) = self.snes.try_lock() {
+        if let Ok(snes) = self.snes.lock() {
             let pc = snes.cpu.borrow().registers().pc;
             let cpu_pc_line = self
                 .disassembler
@@ -178,7 +178,7 @@ impl YesnesApp {
             }
             Shortcut::Reset => {
                 *self.emu_paused.lock().unwrap() = true;
-                if let Ok(mut snes) = self.snes.try_lock() {
+                if let Ok(mut snes) = self.snes.lock() {
                     snes.reset();
                 }
                 self.scroll_pc_near_top();
@@ -320,6 +320,8 @@ impl YesnesApp {
             let trimmed_input = lower_input.trim().trim_start_matches("0x");
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
+                // TODO: I think we should somehow recenter once we get to the right place.
+                // Probably worth making that a message from emu thread to this thread.
                 let _ = self
                     .emu_message_sender
                     .send(EmuThreadMessage::RunToAddress(u24(addr)));
@@ -400,6 +402,7 @@ impl YesnesApp {
 
 impl eframe::App for YesnesApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
         self.show_windows(ctx);
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| self.menu_bar(ctx, ui));
         egui::CentralPanel::default().show(ctx, |ui| {

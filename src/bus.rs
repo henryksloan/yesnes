@@ -1,6 +1,6 @@
+use crate::apu::SMP;
 use crate::ppu::PPU;
-use crate::scheduler::{dummy_yield, Access, AccessType, DebugPoint, YieldReason, Yieldable};
-use crate::smp::SMP;
+use crate::scheduler::*;
 use crate::u24::u24;
 
 use std::cell::RefCell;
@@ -13,11 +13,6 @@ pub struct Bus {
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
     cart_test: Vec<u8>,
-    // TODO: Remove debug variable
-    debug_apu_port0: u8,
-    debug_apu_port1: u8,
-    debug_apu_port2: u8,
-    debug_apu_port3: u8,
     wram: Vec<u8>,
 }
 
@@ -33,23 +28,16 @@ impl Bus {
                     .expect("Expected a rom file"),
             )
             .unwrap(),
-            debug_apu_port0: 0,
-            debug_apu_port1: 0,
-            debug_apu_port2: 0,
-            debug_apu_port3: 0,
             wram: vec![0; 0x20000],
         }
     }
 
     pub fn reset(&mut self) {
-        self.debug_apu_port0 = 0xAA;
-        self.debug_apu_port1 = 0xBB;
-        self.debug_apu_port2 = 0;
-        self.debug_apu_port3 = 0;
         self.wram.fill(0);
     }
 
     // TODO: I have FORGOTTEN why these don't take &self. Look into why.
+    // edit: I think it's because we're not allowed to hold references across yields.
     pub fn peak_u8(bus: Rc<RefCell<Bus>>, addr: u24) -> u8 {
         // TODO: Some generalized mapper logic
         match addr.hi8() {
@@ -60,10 +48,10 @@ impl Bus {
                     match addr.lo16() {
                         // TODO: System area
                         0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
-                        0x2140 => bus.borrow().debug_apu_port0,
-                        0x2141 => bus.borrow().debug_apu_port1,
-                        0x2142 => bus.borrow().debug_apu_port2,
-                        0x2143 => bus.borrow().debug_apu_port3,
+                        0x2140..=0x217F => {
+                            let port = (addr.lo16() - 0x2140) % 4;
+                            bus.borrow().smp.borrow_mut().io_peak(0x2140 + port)
+                        }
                         0x8000.. => {
                             bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
                                 | (addr.lo16() as usize - 0x8000)]
@@ -98,10 +86,11 @@ impl Bus {
                     match addr.lo16() {
                         // TODO: System area
                         0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
-                        0x2140 => bus.borrow().debug_apu_port0,
-                        0x2141 => bus.borrow().debug_apu_port1,
-                        0x2142 => bus.borrow().debug_apu_port2,
-                        0x2143 => bus.borrow().debug_apu_port3,
+                        0x2140..=0x217F => {
+                            yield YieldReason::Sync(Device::SMP);
+                            let port = (addr.lo16() - 0x2140) % 4;
+                            bus.borrow().smp.borrow_mut().io_read(0x2140 + port)
+                        }
                         0x8000.. => {
                             bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
                                 | (addr.lo16() as usize - 0x8000)]
@@ -125,24 +114,8 @@ impl Bus {
 
     pub fn read_u16<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u16> + 'a {
         move || {
-            let lo = {
-                let mut gen = Bus::read_u8(bus.clone(), addr);
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u16,
-                        GeneratorState::Yielded(yielded) => yield yielded,
-                    }
-                }
-            };
-            let hi = {
-                let mut gen = Bus::read_u8(bus.clone(), addr + 1u32);
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u16,
-                        GeneratorState::Yielded(yielded) => yield yielded,
-                    }
-                }
-            };
+            let lo = yield_all!(Bus::read_u8(bus.clone(), addr)) as u16;
+            let hi = yield_all!(Bus::read_u8(bus.clone(), addr + 1u32)) as u16;
             (hi << 8) | lo
         }
     }
@@ -160,10 +133,11 @@ impl Bus {
                     match addr.lo16() {
                         // TODO: System area
                         0x0000..=0x1FFF => bus.borrow_mut().wram[addr.lo16() as usize] = data,
-                        0x2140 => bus.borrow_mut().debug_apu_port0 = data,
-                        0x2141 => bus.borrow_mut().debug_apu_port1 = data,
-                        0x2142 => bus.borrow_mut().debug_apu_port2 = data,
-                        0x2143 => bus.borrow_mut().debug_apu_port3 = data,
+                        0x2140..=0x217F => {
+                            yield YieldReason::Sync(Device::SMP);
+                            let port = (addr.lo16() - 0x2140) % 4;
+                            bus.borrow().smp.borrow_mut().io_write(0x2140 + port, data);
+                        }
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
                                 access_type: AccessType::Write,
