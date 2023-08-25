@@ -288,6 +288,29 @@ macro_rules! bit_branch_instrs {
     };
 }
 
+macro_rules! set_clear_bit_instrs {
+    ($bit:expr => $val:expr, $set_clear:ident) => {
+        paste! {
+            fn [<$set_clear _bit_ $bit>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+                move || {
+                    let data = yield_all!(SMP::read_u8(smp.clone(), addr));
+                    let result = (data & !(1 << $bit)) | (($val as u8) << $bit);
+                    yield_all!(SMP::write_u8(smp.clone(), addr, result));
+                }
+            }
+        }
+    };
+    ($($bit:expr),+) => {
+        $(
+        set_clear_bit_instrs!($bit => true, set);
+        set_clear_bit_instrs!($bit => false, clear);
+        )+
+    };
+    () => {
+        set_clear_bit_instrs!(0, 1, 2, 3, 4, 5, 6, 7);
+    };
+}
+
 macro_rules! instr {
     ($smp_rc: ident, $instr_f:ident) => {
         yield_ticks!($smp_rc, SMP::$instr_f($smp_rc.clone()))
@@ -499,6 +522,22 @@ impl SMP {
                 (decw; 0x1A=>direct)
                 (div; 0x9E=>implied)
                 (mul; 0xCF=>implied)
+                (clear_bit_0; 0x12=>direct)
+                (clear_bit_1; 0x32=>direct)
+                (clear_bit_2; 0x52=>direct)
+                (clear_bit_3; 0x72=>direct)
+                (clear_bit_4; 0x92=>direct)
+                (clear_bit_5; 0xB2=>direct)
+                (clear_bit_6; 0xD2=>direct)
+                (clear_bit_7; 0xF2=>direct)
+                (set_bit_0; 0x02=>direct)
+                (set_bit_1; 0x22=>direct)
+                (set_bit_2; 0x42=>direct)
+                (set_bit_3; 0x62=>direct)
+                (set_bit_4; 0x82=>direct)
+                (set_bit_5; 0xA2=>direct)
+                (set_bit_6; 0xC2=>direct)
+                (set_bit_7; 0xE2=>direct)
                 (clear_flag_c; 0x60=>implied)
                 (set_flag_c; 0x80=>implied)
                 (flip_flag_c; 0xED=>implied)
@@ -533,6 +572,8 @@ impl SMP {
                 (jmp; 0x5F=>absolute, 0x1F=>absolute_indexed_indirect)
                 (call; 0x3F=>absolute)
                 (pcall; 0x4F=>direct)
+                (ret; 0x6F=>implied)
+                (ret_from_interrupt; 0x7F=>implied)
                 (clear_flag_p; 0x20=>implied)
                 (set_flag_p; 0x40=>implied)
                 (set_flag_i; 0xA0=>implied)
@@ -1136,6 +1177,9 @@ impl SMP {
         }
     }
 
+    // 1-bit instructions
+    set_clear_bit_instrs!();
+
     // Generate branch instructions
     branch_instrs!();
     bit_branch_instrs!();
@@ -1168,6 +1212,14 @@ impl SMP {
         }
     }
 
+    fn pop_pc<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<()> + 'a {
+        move || {
+            let lo = yield_all!(SMP::stack_pop_u8(smp.clone())) as u16;
+            let hi = yield_all!(SMP::stack_pop_u8(smp.clone())) as u16;
+            smp.borrow_mut().reg.pc = (hi << 8) | lo;
+        }
+    }
+
     fn call<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
             yield_all!(SMP::push_pc(smp.clone()));
@@ -1181,6 +1233,23 @@ impl SMP {
         move || {
             yield_all!(SMP::push_pc(smp.clone()));
             smp.borrow_mut().reg.pc = 0xFF00 | (addr & 0xFF);
+            // TODO: Need to look into how many cycles branch can take
+            // smp.borrow_mut().step(1);
+        }
+    }
+
+    fn ret<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            yield_all!(SMP::pop_pc(smp.clone()));
+            // TODO: Need to look into how many cycles branch can take
+            // smp.borrow_mut().step(1);
+        }
+    }
+
+    fn ret_from_interrupt<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            yield_all!(SMP::pop_psw(smp.clone()));
+            yield_all!(SMP::pop_pc(smp.clone()));
             // TODO: Need to look into how many cycles branch can take
             // smp.borrow_mut().step(1);
         }
