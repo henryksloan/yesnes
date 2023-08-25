@@ -596,7 +596,9 @@ impl SMP {
                 0x00F2 => smp.borrow().io_reg.dsp_addr,
                 0x00F3 => smp.borrow().io_reg.dsp_data,
                 0x00F4..=0x00F7 => smp.borrow().io_reg.external_ports[addr as usize - 0x00F4],
-                0x00F8..=0x00FF => todo!("IO reg read {addr:#06X}"),
+                0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
+                0x00FA..=0x00FC => smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA],
+                0x00FD..=0x00FF => 0, // TODO: Timer output
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
             }
         }
@@ -614,7 +616,11 @@ impl SMP {
                 0x00F4..=0x00F7 => {
                     smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
                 }
-                0x00F8..=0x00FF => todo!("IO reg write {addr:#06X}"),
+                0x00F8..=0x00F9 => todo!("IO reg write {addr:#06X}"),
+                0x00FA..=0x00FC => {
+                    smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA] = data
+                }
+                0x00FD..=0x00FF => {}
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
             }
         }
