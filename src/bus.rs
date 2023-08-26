@@ -12,8 +12,11 @@ use std::rc::Rc;
 pub struct Bus {
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
-    cart_test: Vec<u8>,
+    // TODO: Probably want Box<[u8; 0x20000]>
     wram: Vec<u8>,
+    // TODO: These should eventually be encapsulated
+    cart_test: Vec<u8>,
+    sram: Vec<u8>,
     // TODO: Refactor these CPU IOs to a new struct or something
     // 4202h - WRMPYA for IO multiplication
     multiplicand_a: u8,
@@ -30,6 +33,7 @@ impl Bus {
         Self {
             ppu,
             smp,
+            wram: vec![0; 0x20000],
             cart_test: fs::read(
                 &std::env::args()
                     .collect::<Vec<String>>()
@@ -37,7 +41,7 @@ impl Bus {
                     .expect("Expected a rom file"),
             )
             .unwrap(),
-            wram: vec![0; 0x20000],
+            sram: vec![0; 0x60000],
             multiplicand_a: 0,
             dividend: 0,
             quotient: 0,
@@ -52,28 +56,39 @@ impl Bus {
     }
 
     // TODO: I have FORGOTTEN why these don't take &self. Look into why.
-    // edit: I think it's because we're not allowed to hold references across yields.
+    // edit: Because we can't have multiple mutable references. Alternative is wrapping all internal data in RefCells.
+    // TODO: It would probably be very beneficial to start embracing &Rc<RefCell<T>> to cut down on clones
     pub fn peak_u8(bus: Rc<RefCell<Bus>>, addr: u24) -> u8 {
         // TODO: Some generalized mapper logic
+        // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
         match addr.hi8() {
+            0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
+                bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
+            }
+            0x00..=0x7D | 0x80..=0xFF if (0x8000..=0xFFFF).contains(&addr.lo16()) => {
+                let len = bus.borrow().cart_test.len();
+                bus.borrow().cart_test[(((addr.hi8() as usize & !0x80) * 0x8000)
+                    | (addr.lo16() as usize - 0x8000))
+                    % len]
+            }
             0x00..=0x3F | 0x80..=0xBF => {
-                if addr.hi8() == 0x00 && (0xFF00..=0xFFFF).contains(&addr.lo16()) {
-                    bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
-                } else {
-                    match addr.lo16() {
-                        // TODO: System area
-                        0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
-                        0x2140..=0x217F => {
-                            let port = (addr.lo16() - 0x2140) % 4;
-                            bus.borrow().smp.borrow_mut().io_peak(0x2140 + port)
-                        }
-                        0x8000.. => {
-                            bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
-                                | (addr.lo16() as usize - 0x8000)]
-                        }
-                        _ => 0,
+                match addr.lo16() {
+                    // TODO: System area
+                    0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
+                    0x2140..=0x217F => {
+                        let port = (addr.lo16() - 0x2140) % 4;
+                        bus.borrow().smp.borrow_mut().io_peak(0x2140 + port)
                     }
+                    0x4214 => bus.borrow_mut().quotient as u8,
+                    0x4215 => (bus.borrow_mut().quotient >> 8) as u8,
+                    0x4216 => bus.borrow_mut().product_or_remainder as u8,
+                    0x4217 => (bus.borrow_mut().product_or_remainder >> 8) as u8,
+                    _ => 0,
                 }
+            }
+            0x70..=0x7D | 0xF0..=0xFF => {
+                bus.borrow().sram
+                    [(((addr.hi8() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
             }
             0x7E..=0x7F => {
                 bus.borrow().wram[0x10000 * (addr.hi8() as usize - 0x7E) + addr.lo16() as usize]
@@ -90,12 +105,17 @@ impl Bus {
 
     pub fn read_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
-            dummy_yield!();
             // TODO: Some generalized mapper logic
-            // TODO: HiROM
+            // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
             match addr.hi8() {
                 0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
                     bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
+                }
+                0x00..=0x7D | 0x80..=0xFF if (0x8000..=0xFFFF).contains(&addr.lo16()) => {
+                    let len = bus.borrow().cart_test.len();
+                    bus.borrow().cart_test[(((addr.hi8() as usize & !0x80) * 0x8000)
+                        | (addr.lo16() as usize - 0x8000))
+                        % len]
                 }
                 0x00..=0x3F | 0x80..=0xBF => {
                     match addr.lo16() {
@@ -110,10 +130,6 @@ impl Bus {
                         0x4215 => (bus.borrow_mut().quotient >> 8) as u8,
                         0x4216 => bus.borrow_mut().product_or_remainder as u8,
                         0x4217 => (bus.borrow_mut().product_or_remainder >> 8) as u8,
-                        0x8000.. => {
-                            bus.borrow().cart_test[((addr.hi8() as usize & !0x80) * 0x8000)
-                                | (addr.lo16() as usize - 0x8000)]
-                        }
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
                                 access_type: AccessType::Read,
@@ -122,6 +138,10 @@ impl Bus {
                             0
                         }
                     }
+                }
+                0x70..=0x7D | 0xF0..=0xFF => {
+                    bus.borrow().sram
+                        [(((addr.hi8() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
                 }
                 0x7E..=0x7F => {
                     bus.borrow().wram[0x10000 * (addr.hi8() as usize - 0x7E) + addr.lo16() as usize]
@@ -147,9 +167,8 @@ impl Bus {
 
     pub fn write_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
         move || {
-            dummy_yield!();
             // TODO: Some generalized mapper logic
-            // TODO: HiROM
+            // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
             match addr.hi8() {
                 0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
                     // bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
@@ -208,6 +227,11 @@ impl Bus {
                             }));
                         }
                     }
+                }
+                0x70..=0x7D | 0xF0..=0xFF => {
+                    bus.borrow_mut().sram
+                        [(((addr.hi8() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize] =
+                        data
                 }
                 0x7E..=0x7F => {
                     bus.borrow_mut().wram
