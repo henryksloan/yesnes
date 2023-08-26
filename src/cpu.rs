@@ -459,10 +459,10 @@ impl CPU {
                 // 80-bf:8000-ffff; c0-ff:0000-ffff
                 8
             }
-        } else if (addr + 0x6000) & 0x4000 != 0 {
+        } else if addr.wrapping_add(0x6000) & 0x4000 != 0 {
             // 00-3f,80-bf:0000-1fff,6000-7fff
             8
-        } else if (addr - 0x4000) & 0x7e00 != 0 {
+        } else if addr.wrapping_sub(0x4000) & 0x7e00 != 0 {
             // 00-3f,80-bf:2000-3fff,4200-5fff
             6
         } else {

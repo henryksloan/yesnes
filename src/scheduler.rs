@@ -10,9 +10,13 @@ pub use yield_reason::{Access, AccessType, DebugPoint, YieldReason, YieldTicks};
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 
+// Based on Higan's empirical numbers
+// See also https://problemkaputt.de/fullsnes.htm#snestimings
 pub const CPU_FREQ: u64 = 21_477_272;
 pub const PPU_FREQ: u64 = CPU_FREQ;
-pub const SMP_FREQ: u64 = 24_576_000;
+// TODO: There may be a reason to clock the APU at double this, e.g.
+// maybe to accurately clock timers. If so, waitstates should be halved.
+pub const SMP_FREQ: u64 = 24_606_720 / 24;
 
 pub trait Yieldable<T> = Generator<Yield = YieldReason, Return = T>;
 pub trait DeviceGenerator = Generator<Yield = YieldTicks, Return = !>;

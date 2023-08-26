@@ -647,7 +647,7 @@ impl SMP {
                 }
             };
             // TODO: Some clock cycles before the read, depending on region
-            smp.borrow_mut().step(1);
+            smp.borrow_mut().step(2);
             data
         }
     }
@@ -671,7 +671,7 @@ impl SMP {
                 _ => {}
             }
             // TODO: Some clock cycles before the write, depending on region
-            smp.borrow_mut().step(4);
+            smp.borrow_mut().step(2);
         }
     }
 

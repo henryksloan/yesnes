@@ -228,7 +228,7 @@ impl Bus {
                         }
                     }
                 }
-                0x70..=0x7D | 0xF0..=0xFF => {
+                0x70..=0x7D | 0xF0..=0xFF if (0x0000..=0x7FFF).contains(&addr.lo16()) => {
                     bus.borrow_mut().sram
                         [(((addr.hi8() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize] =
                         data
@@ -239,7 +239,7 @@ impl Bus {
                 }
                 _ => {
                     yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
-                        access_type: AccessType::Read,
+                        access_type: AccessType::Write,
                         addr,
                     }));
                 }
