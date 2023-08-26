@@ -239,6 +239,7 @@ pub struct CPU {
     reg: Registers,
     bus: Rc<RefCell<Bus>>,
     ticks_run: u64,
+    upper_rom_cycles: u64,
 }
 
 impl CPU {
@@ -247,6 +248,7 @@ impl CPU {
             reg: Registers::new(),
             bus,
             ticks_run: 0,
+            upper_rom_cycles: 6,
         }
     }
 
@@ -265,6 +267,7 @@ impl CPU {
         self.reg.set_p(0x34);
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
+        self.upper_rom_cycles = 6;
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
@@ -440,22 +443,49 @@ impl CPU {
         self.ticks_run += n_clocks;
     }
 
+    fn idle(&mut self) {
+        self.step(6);
+    }
+
+    fn region_cycles(&self, addr: u24) -> u64 {
+        // https://problemkaputt.de/fullsnes.htm#snesmemorymap
+        // Succinct conditionals from Higan
+        let addr = addr.raw();
+        if addr & 0x408000 != 0 {
+            if addr & 0x800000 != 0 {
+                // 00-3f:8000-ffff; 40-7f:0000-ffff
+                self.upper_rom_cycles
+            } else {
+                // 80-bf:8000-ffff; c0-ff:0000-ffff
+                8
+            }
+        } else if (addr + 0x6000) & 0x4000 != 0 {
+            // 00-3f,80-bf:0000-1fff,6000-7fff
+            8
+        } else if (addr - 0x4000) & 0x7e00 != 0 {
+            // 00-3f,80-bf:2000-3fff,4200-5fff
+            6
+        } else {
+            // 00-3f,80-bf:4000-41ff
+            12
+        }
+    }
+
     fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
-            // TODO: Some clock cycles before the read, depending on region
-            // (this may require passing the CPU RC to the bus function)
+            let region_cycles = cpu.borrow().region_cycles(addr);
+            cpu.borrow_mut().step(region_cycles - 4);
             let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
-            cpu.borrow_mut().step(1);
+            cpu.borrow_mut().step(4);
             data
         }
     }
 
     fn write_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
         move || {
-            // TODO: Some clock cycles before the write, depending on region
-            // (this may require passing the CPU RC to the bus function)
+            let region_cycles = cpu.borrow().region_cycles(addr);
             yield_all!(Bus::write_u8(cpu.borrow_mut().bus.clone(), addr, data));
-            cpu.borrow_mut().step(4);
+            cpu.borrow_mut().step(region_cycles);
         }
     }
 
