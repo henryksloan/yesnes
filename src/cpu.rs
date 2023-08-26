@@ -239,6 +239,7 @@ pub struct CPU {
     reg: Registers,
     bus: Rc<RefCell<Bus>>,
     ticks_run: u64,
+    upper_rom_cycles: u64,
 }
 
 impl CPU {
@@ -247,6 +248,7 @@ impl CPU {
             reg: Registers::new(),
             bus,
             ticks_run: 0,
+            upper_rom_cycles: 6,
         }
     }
 
@@ -265,6 +267,7 @@ impl CPU {
         self.reg.set_p(0x34);
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
+        self.upper_rom_cycles = 6;
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
@@ -389,6 +392,12 @@ impl CPU {
                  0xDD=>absolute_x, 0xDF=>absolute_long_x)
                 (cpx, XFlag; 0xE0=>immediate, 0xE4=>direct, 0xEC=>absolute)
                 (cpy, XFlag; 0xC0=>immediate, 0xC4=>direct, 0xCC=>absolute)
+                (asl_a, NoFlag; 0x0A=>implied)
+                (asl, MFlag; 0x06=>direct,  0x0E=>absolute, 0x16=>direct_x,
+                 0x1E=>absolute_x)
+                (lsr_a, NoFlag; 0x4A=>implied)
+                (lsr, MFlag; 0x46=>direct,  0x4E=>absolute, 0x56=>direct_x,
+                 0x5E=>absolute_x)
                 (rol_a, NoFlag; 0x2A=>implied)
                 (rol, MFlag; 0x26=>direct, 0x2E=>absolute, 0x36=>direct_x,
                  0x3E=>absolute_x)
@@ -434,22 +443,49 @@ impl CPU {
         self.ticks_run += n_clocks;
     }
 
+    fn idle(&mut self) {
+        self.step(6);
+    }
+
+    fn region_cycles(&self, addr: u24) -> u64 {
+        // https://problemkaputt.de/fullsnes.htm#snesmemorymap
+        // Succinct conditionals from Higan
+        let addr = addr.raw();
+        if addr & 0x408000 != 0 {
+            if addr & 0x800000 != 0 {
+                // 00-3f:8000-ffff; 40-7f:0000-ffff
+                self.upper_rom_cycles
+            } else {
+                // 80-bf:8000-ffff; c0-ff:0000-ffff
+                8
+            }
+        } else if addr.wrapping_add(0x6000) & 0x4000 != 0 {
+            // 00-3f,80-bf:0000-1fff,6000-7fff
+            8
+        } else if addr.wrapping_sub(0x4000) & 0x7e00 != 0 {
+            // 00-3f,80-bf:2000-3fff,4200-5fff
+            6
+        } else {
+            // 00-3f,80-bf:4000-41ff
+            12
+        }
+    }
+
     fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
-            // TODO: Some clock cycles before the read, depending on region
-            // (this may require passing the CPU RC to the bus function)
+            let region_cycles = cpu.borrow().region_cycles(addr);
+            cpu.borrow_mut().step(region_cycles - 4);
             let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
-            cpu.borrow_mut().step(1);
+            cpu.borrow_mut().step(4);
             data
         }
     }
 
     fn write_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
         move || {
-            // TODO: Some clock cycles before the write, depending on region
-            // (this may require passing the CPU RC to the bus function)
+            let region_cycles = cpu.borrow().region_cycles(addr);
             yield_all!(Bus::write_u8(cpu.borrow_mut().bus.clone(), addr, data));
-            cpu.borrow_mut().step(4);
+            cpu.borrow_mut().step(region_cycles);
         }
     }
 
@@ -1323,6 +1359,50 @@ impl CPU {
 
     fn ror_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         CPU::rotate_acc_op(cpu, false)
+    }
+
+    fn shift_with_carry(cpu: Rc<RefCell<CPU>>, data: u16, left: bool) -> u16 {
+        let n_bits = n_bits!(cpu, m);
+        let check_mask = if left { 1 << (n_bits - 1) } else { 0x01 };
+        cpu.borrow_mut().reg.p.c = (data & check_mask) == check_mask;
+        let result = if left { data << 1 } else { data >> 1 };
+        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+        cpu.borrow_mut().reg.p.z = result == 0;
+        result
+    }
+
+    fn asl<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let result = CPU::shift_with_carry(cpu.clone(), data, true);
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
+        }
+    }
+
+    fn asl_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let data = cpu.borrow().reg.get_a();
+            let result = CPU::shift_with_carry(cpu.clone(), data, true);
+            cpu.borrow_mut().reg.set_a(result);
+        }
+    }
+
+    fn lsr<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let result = CPU::shift_with_carry(cpu.clone(), data, false);
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
+        }
+    }
+
+    fn lsr_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let data = cpu.borrow().reg.get_a();
+            let result = CPU::shift_with_carry(cpu.clone(), data, false);
+            cpu.borrow_mut().reg.set_a(result);
+        }
     }
 
     fn bra<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {

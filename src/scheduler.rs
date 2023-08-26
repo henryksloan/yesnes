@@ -10,9 +10,13 @@ pub use yield_reason::{Access, AccessType, DebugPoint, YieldReason, YieldTicks};
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 
+// Based on Higan's empirical numbers
+// See also https://problemkaputt.de/fullsnes.htm#snestimings
 pub const CPU_FREQ: u64 = 21_477_272;
 pub const PPU_FREQ: u64 = CPU_FREQ;
-pub const SMP_FREQ: u64 = 24_576_000;
+// TODO: There may be a reason to clock the APU at double this, e.g.
+// maybe to accurately clock timers. If so, waitstates should be halved.
+pub const SMP_FREQ: u64 = 24_606_720 / 24;
 
 pub trait Yieldable<T> = Generator<Yield = YieldReason, Return = T>;
 pub trait DeviceGenerator = Generator<Yield = YieldTicks, Return = !>;
@@ -148,6 +152,37 @@ impl Scheduler {
         }
     }
 
+    pub fn run_instruction_debug(&mut self) -> bool {
+        let mut hit_debug = false;
+        loop {
+            let yielded = self.resume();
+            match yielded {
+                GeneratorState::Yielded((yield_reason, n_ticks)) => {
+                    self.tick_curr_clocks(n_ticks);
+                    match yield_reason {
+                        YieldReason::Sync(other_device) => {
+                            self.curr_thread().waiting_for = Some(other_device);
+                        }
+                        YieldReason::FinishedInstruction => {
+                            return hit_debug;
+                        }
+                        YieldReason::Debug(debug_point) => {
+                            hit_debug = true;
+                            if let DebugPoint::UnimplementedAccess(access) = debug_point {
+                                log::debug!(
+                                    "Unimplemented {:?} of {:#08}",
+                                    access.access_type,
+                                    access.addr
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => panic!("unexpected value from resume"),
+            }
+        }
+    }
+
     fn curr_thread(&mut self) -> &mut DeviceThread {
         match self.curr {
             Device::CPU => &mut self.cpu,
@@ -203,8 +238,6 @@ impl Scheduler {
             .is_ahead(curr_device);
         let curr_thread = self.curr_thread();
         if curr_is_ahead {
-            // DO NOT SUBMIT
-            // println!("{:?} => {:?}", curr_device, other_device);
             curr_thread.waiting_for = Some(other_device);
             self.curr = other_device;
         } else {

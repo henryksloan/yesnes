@@ -171,7 +171,7 @@ impl Disassembler {
 
     pub fn disassemble(&mut self) {
         let pc = u24(Bus::peak_u16(self.bus.clone(), cpu::RESET_VECTOR) as u32);
-        // DO NOT SUBMIT: Also analyze other vectors. Can/do any vectors contain 65C816-mode code?
+        // TODO: Also analyze other vectors. Can/do any vectors contain 65C816-mode code?
         self.analyze(pc, &mut AnalysisState::new());
         self.update_disassembly();
     }

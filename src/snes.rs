@@ -61,4 +61,8 @@ impl SNES {
     pub fn run_instruction(&mut self) {
         self.scheduler.run_instruction();
     }
+
+    pub fn run_instruction_debug(&mut self) -> bool {
+        self.scheduler.run_instruction_debug()
+    }
 }
