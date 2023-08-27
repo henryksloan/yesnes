@@ -1,3 +1,5 @@
+use bitfield::bitfield;
+
 use crate::u24::u24;
 
 #[derive(Default, Clone, Copy)]
@@ -209,5 +211,47 @@ impl Ord for StatusRegister {
 impl PartialOrd for StatusRegister {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct IoRegisters {
+    pub interrupt_control: InterruptControl,
+    pub waitstate_control: WaitstateControl,
+}
+
+impl IoRegisters {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
+bitfield! {
+  /// 4200h - NMITIMEN - Interrupt Enable and Joypad Request (W)
+  /// Configures NMI enablement, PPU H/V IRQs, and joypad reading
+  #[derive(Clone, Copy, Default)]
+  pub struct InterruptControl(u8);
+  impl Debug;
+  pub joypad_enable, _: 0;
+  pub h_v_irq, _: 5, 4;
+  pub vblank_nmi_enable, _: 7;
+}
+
+bitfield! {
+  /// 420Dh - MEMSEL - Memory-2 Waitstate Control (W)
+  /// Configures timers, IO, and high address access
+  #[derive(Clone, Copy, Default)]
+  pub struct WaitstateControl(u8);
+  impl Debug;
+  pub access_speed, _: 0;
+}
+
+impl WaitstateControl {
+    pub fn high_rom_cycles(&self) -> u64 {
+        if self.access_speed() {
+            6
+        } else {
+            8
+        }
     }
 }

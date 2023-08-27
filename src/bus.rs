@@ -1,4 +1,5 @@
 use crate::apu::SMP;
+use crate::cpu::CPU;
 use crate::ppu::PPU;
 use crate::scheduler::*;
 use crate::u24::u24;
@@ -7,9 +8,10 @@ use std::cell::RefCell;
 use std::fs;
 use std::ops::GeneratorState;
 use std::pin::Pin;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 pub struct Bus {
+    cpu: Weak<RefCell<CPU>>,
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
     // TODO: Probably want Box<[u8; 0x20000]>
@@ -32,6 +34,7 @@ pub struct Bus {
 impl Bus {
     pub fn new(ppu: Rc<RefCell<PPU>>, smp: Rc<RefCell<SMP>>) -> Self {
         Self {
+            cpu: Weak::new(),
             ppu,
             smp,
             wram: vec![0; 0x20000],
@@ -48,6 +51,10 @@ impl Bus {
             quotient: 0,
             product_or_remainder: 0,
         }
+    }
+
+    pub fn connect_cpu(&mut self, cpu: Weak<RefCell<CPU>>) {
+        self.cpu = cpu;
     }
 
     pub fn reset(&mut self) {
@@ -215,8 +222,13 @@ impl Bus {
                                 bus.borrow_mut().product_or_remainder = dividend % divisor;
                             }
                         }
-                        0x4200..=0x42FF => {
-                            log::debug!("TODO: CPU IO write {addr}");
+                        0x4200..=0x421F => {
+                            bus.borrow_mut()
+                                .cpu
+                                .upgrade()
+                                .unwrap()
+                                .borrow_mut()
+                                .io_write(addr, data);
                         }
                         0x4300..=0x437F => {
                             log::debug!("TODO: DMA write {addr}");

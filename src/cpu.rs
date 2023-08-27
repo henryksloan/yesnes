@@ -1,6 +1,6 @@
 pub mod registers;
 
-pub use registers::{Registers, StatusRegister};
+pub use registers::{IoRegisters, Registers, StatusRegister};
 
 use crate::{bus::Bus, ppu::PpuCounter, scheduler::*, u24::u24};
 
@@ -237,20 +237,20 @@ struct Pointer {
 /// The 65816 microprocessor, the main CPU of the SNES
 pub struct CPU {
     reg: Registers,
+    io_reg: IoRegisters,
     bus: Rc<RefCell<Bus>>,
     ppu_counter: Rc<RefCell<PpuCounter>>,
     ticks_run: u64,
-    upper_rom_cycles: u64,
 }
 
 impl CPU {
     pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
         Self {
             reg: Registers::new(),
+            io_reg: IoRegisters::new(),
             bus,
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
             ticks_run: 0,
-            upper_rom_cycles: 6,
         }
     }
 
@@ -269,7 +269,9 @@ impl CPU {
         self.reg.set_p(0x34);
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
-        self.upper_rom_cycles = 6;
+
+        self.io_reg.waitstate_control.0 = 0;
+        self.io_reg.interrupt_control.0 = 0;
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
@@ -476,7 +478,7 @@ impl CPU {
         if addr & 0x408000 != 0 {
             if addr & 0x800000 != 0 {
                 // 00-3f:8000-ffff; 40-7f:0000-ffff
-                self.upper_rom_cycles
+                self.io_reg.waitstate_control.high_rom_cycles()
             } else {
                 // 80-bf:8000-ffff; c0-ff:0000-ffff
                 8
@@ -490,6 +492,30 @@ impl CPU {
         } else {
             // 00-3f,80-bf:4000-41ff
             12
+        }
+    }
+
+    pub fn io_peak(&self, addr: u24) -> u8 {
+        // TODO
+        0
+    }
+
+    pub fn io_read(&mut self, addr: u24) -> u8 {
+        match addr.lo16() {
+            _ => {
+                log::debug!("TODO: CPU IO read {addr}");
+                0
+            } // TODO: Remove this fallback
+            _ => panic!("Invalid IO read of CPU at {addr:#06X}"),
+        }
+    }
+
+    pub fn io_write(&mut self, addr: u24, data: u8) {
+        match addr.lo16() {
+            0x4200 => self.io_reg.interrupt_control.0 = data,
+            0x420D => self.io_reg.waitstate_control.0 = data,
+            _ => log::debug!("TODO: CPU IO write {addr}: {data:02X}"), // TODO: Remove this fallback
+            _ => panic!("Invalid IO write of CPU at {addr:#06X}"),
         }
     }
 
