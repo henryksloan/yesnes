@@ -134,10 +134,18 @@ impl Bus {
                             let port = (addr.lo16() - 0x2140) % 4;
                             bus.borrow().smp.borrow_mut().io_read(0x2140 + port)
                         }
+                        // TODO: Move these math registers to the CPU
                         0x4214 => bus.borrow_mut().quotient as u8,
                         0x4215 => (bus.borrow_mut().quotient >> 8) as u8,
                         0x4216 => bus.borrow_mut().product_or_remainder as u8,
                         0x4217 => (bus.borrow_mut().product_or_remainder >> 8) as u8,
+                        0x4200..=0x421F | 0x4300..=0x437F => bus
+                            .borrow_mut()
+                            .cpu
+                            .upgrade()
+                            .unwrap()
+                            .borrow_mut()
+                            .io_read(addr),
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
                                 access_type: AccessType::Read,
@@ -196,6 +204,7 @@ impl Bus {
                             let port = (addr.lo16() - 0x2140) % 4;
                             bus.borrow().smp.borrow_mut().io_write(0x2140 + port, data);
                         }
+                        // TODO: Move these math registers to the CPU
                         0x4202 => {
                             bus.borrow_mut().multiplicand_a = data;
                         }
@@ -222,16 +231,13 @@ impl Bus {
                                 bus.borrow_mut().product_or_remainder = dividend % divisor;
                             }
                         }
-                        0x4200..=0x421F => {
+                        0x4200..=0x421F | 0x4300..=0x437F => {
                             bus.borrow_mut()
                                 .cpu
                                 .upgrade()
                                 .unwrap()
                                 .borrow_mut()
                                 .io_write(addr, data);
-                        }
-                        0x4300..=0x437F => {
-                            log::debug!("TODO: DMA write {addr}");
                         }
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {

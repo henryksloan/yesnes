@@ -359,7 +359,7 @@ pub struct SMP {
     io_reg: IoRegisters,
     ticks_run: u64,
     ram: Vec<u8>,
-    debug_log: bool, // DO NOT SUBMIT: For debugging
+    debug_log: bool, // TODO: Remove this debugging tool
 }
 
 impl SMP {

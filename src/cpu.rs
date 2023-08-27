@@ -272,6 +272,15 @@ impl CPU {
 
         self.io_reg.waitstate_control.0 = 0;
         self.io_reg.interrupt_control.0 = 0;
+        for channel_regs in self.io_reg.dma_channels.iter_mut() {
+            channel_regs.setup.0 = 0xFF;
+            channel_regs.ppu_reg = 0xFF;
+            channel_regs.addr.0 = u24(0xFFFFFF);
+            channel_regs.indirect_addr_or_byte_count.0 = u24(0xFFFFFF);
+            channel_regs.hdma_table_curr_addr.0 = 0xFF;
+            channel_regs.hda_line_counter.0 = 0xFF;
+            channel_regs.unused_byte = 0xFF;
+        }
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
@@ -502,6 +511,25 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
+            0x4300..=0x437A => {
+                let channel_index = (addr.0 as usize >> 4) & 0xF;
+                let channel_regs = &self.io_reg.dma_channels[channel_index];
+                match (addr.0 as usize) & 0xF {
+                    0x0 => channel_regs.setup.0,
+                    0x1 => channel_regs.ppu_reg,
+                    0x2 => channel_regs.addr.lo_byte(),
+                    0x3 => channel_regs.addr.hi_byte(),
+                    0x4 => channel_regs.addr.bank_byte(),
+                    0x5 => channel_regs.indirect_addr_or_byte_count.lo_byte(),
+                    0x6 => channel_regs.indirect_addr_or_byte_count.hi_byte(),
+                    0x7 => channel_regs.indirect_addr_or_byte_count.bank_byte(),
+                    0x8 => channel_regs.hdma_table_curr_addr.lo_byte(),
+                    0x9 => channel_regs.hdma_table_curr_addr.hi_byte(),
+                    0xA => channel_regs.hda_line_counter.0,
+                    0xB | 0xF => channel_regs.unused_byte,
+                    _ => 0, // TODO: Open bus (maybe handle this in Bus)
+                }
+            }
             _ => {
                 log::debug!("TODO: CPU IO read {addr}");
                 0
@@ -513,6 +541,31 @@ impl CPU {
     pub fn io_write(&mut self, addr: u24, data: u8) {
         match addr.lo16() {
             0x4200 => self.io_reg.interrupt_control.0 = data,
+            0x420B => {
+                log::debug!("TODO: Start GP-DMA transfer: {addr} {data:02X}");
+            }
+            0x420C => {
+                log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
+            }
+            0x4300..=0x437A => {
+                let channel_index = (addr.0 as usize >> 4) & 0xF;
+                let channel_regs = &mut self.io_reg.dma_channels[channel_index];
+                match (addr.0 as usize) & 0xF {
+                    0x0 => channel_regs.setup.0 = data,
+                    0x1 => channel_regs.ppu_reg = data,
+                    0x2 => channel_regs.addr.set_lo_byte(data),
+                    0x3 => channel_regs.addr.set_hi_byte(data),
+                    0x4 => channel_regs.addr.set_bank_byte(data),
+                    0x5 => channel_regs.indirect_addr_or_byte_count.set_lo_byte(data),
+                    0x6 => channel_regs.indirect_addr_or_byte_count.set_hi_byte(data),
+                    0x7 => channel_regs.indirect_addr_or_byte_count.set_bank_byte(data),
+                    0x8 => channel_regs.hdma_table_curr_addr.set_lo_byte(data),
+                    0x9 => channel_regs.hdma_table_curr_addr.set_hi_byte(data),
+                    0xA => channel_regs.hda_line_counter.0 = data,
+                    0xB | 0xF => channel_regs.unused_byte = data,
+                    _ => {}
+                }
+            }
             0x420D => self.io_reg.waitstate_control.0 = data,
             _ => log::debug!("TODO: CPU IO write {addr}: {data:02X}"), // TODO: Remove this fallback
             _ => panic!("Invalid IO write of CPU at {addr:#06X}"),
