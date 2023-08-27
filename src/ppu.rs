@@ -1,3 +1,7 @@
+pub mod counter;
+
+pub use counter::PpuCounter;
+
 use crate::scheduler::{Device, DeviceGenerator, YieldReason};
 
 pub struct PPU {}

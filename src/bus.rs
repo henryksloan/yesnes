@@ -17,6 +17,7 @@ pub struct Bus {
     // TODO: These should eventually be encapsulated
     cart_test: Vec<u8>,
     sram: Vec<u8>,
+    // TODO: These arithmetic ops take place in the CPU (ALU) and take cycle (mult=8, div=16)
     // TODO: Refactor these CPU IOs to a new struct or something
     // 4202h - WRMPYA for IO multiplication
     multiplicand_a: u8,

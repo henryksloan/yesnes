@@ -2,7 +2,7 @@ pub mod registers;
 
 pub use registers::{Registers, StatusRegister};
 
-use crate::{bus::Bus, scheduler::*, u24::u24};
+use crate::{bus::Bus, ppu::PpuCounter, scheduler::*, u24::u24};
 
 use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
@@ -156,10 +156,10 @@ macro_rules! branch_instrs {
                     let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
                     if cpu.borrow_mut().reg.p.$flag == $val {
                         cpu.borrow_mut().reg.pc = dest_pc;
-                        cpu.borrow_mut().step(1);
+                        yield_all!(CPU::step(cpu.clone(), 1));
                         // TODO: Is this right? Maybe only for emulation mode...
                         if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
-                            cpu.borrow_mut().step(1);
+                            yield_all!(CPU::step(cpu.clone(), 1));
                         }
                     }
                 }
@@ -238,6 +238,7 @@ struct Pointer {
 pub struct CPU {
     reg: Registers,
     bus: Rc<RefCell<Bus>>,
+    ppu_counter: Rc<RefCell<PpuCounter>>,
     ticks_run: u64,
     upper_rom_cycles: u64,
 }
@@ -247,6 +248,7 @@ impl CPU {
         Self {
             reg: Registers::new(),
             bus,
+            ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
             ticks_run: 0,
             upper_rom_cycles: 6,
         }
@@ -439,12 +441,32 @@ impl CPU {
         }
     }
 
-    fn step(&mut self, n_clocks: u64) {
-        self.ticks_run += n_clocks;
+    fn on_scanline_start<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<()> + 'a {
+        // TODO: Possibly resync all threads at this time
+        // TODO: How expensive are nested generators for function calls? Are macros much cheaper
+        // by avoiding the nesting? If so, it would be worth finding a middle-ground.
+        move || {
+            dummy_yield!();
+        }
     }
 
-    fn idle(&mut self) {
-        self.step(6);
+    fn step<'a>(cpu: Rc<RefCell<CPU>>, n_clocks: u64) -> impl Yieldable<()> + 'a {
+        move || {
+            cpu.borrow_mut().ticks_run += n_clocks;
+            let scanline = yield_all!(PpuCounter::tick(
+                cpu.borrow().ppu_counter.clone(),
+                n_clocks as u16
+            ));
+            if scanline {
+                yield_all!(CPU::on_scanline_start(cpu.clone()));
+            }
+        }
+    }
+
+    // TODO: Add idle cycles in various places where IO cycles are involved
+    // See https://archive.org/details/vl65c816datasheetvlsi1988ocrbm/page/n9/mode/1up
+    fn idle<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<()> + 'a {
+        CPU::step(cpu, 6)
     }
 
     fn region_cycles(&self, addr: u24) -> u64 {
@@ -474,9 +496,9 @@ impl CPU {
     fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
             let region_cycles = cpu.borrow().region_cycles(addr);
-            cpu.borrow_mut().step(region_cycles - 4);
+            yield_all!(CPU::step(cpu.clone(), region_cycles - 4));
             let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
-            cpu.borrow_mut().step(4);
+            yield_all!(CPU::step(cpu.clone(), 4));
             data
         }
     }
@@ -485,7 +507,7 @@ impl CPU {
         move || {
             let region_cycles = cpu.borrow().region_cycles(addr);
             yield_all!(Bus::write_u8(cpu.borrow_mut().bus.clone(), addr, data));
-            cpu.borrow_mut().step(region_cycles);
+            yield_all!(CPU::step(cpu.clone(), region_cycles));
         }
     }
 
@@ -1410,10 +1432,10 @@ impl CPU {
             let source_pc = cpu.borrow().reg.pc + 1u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
             cpu.borrow_mut().reg.pc = dest_pc;
-            cpu.borrow_mut().step(1);
+            yield_all!(CPU::step(cpu.clone(), 1));
             // TODO: Is this right? Maybe only for emulation mode...
             if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
-                cpu.borrow_mut().step(1);
+                yield_all!(CPU::step(cpu.clone(), 1));
             }
         }
     }
