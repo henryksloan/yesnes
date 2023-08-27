@@ -1,3 +1,5 @@
+use bitfield::bitfield;
+
 use crate::u24::u24;
 
 #[derive(Default, Clone, Copy)]
@@ -210,4 +212,123 @@ impl PartialOrd for StatusRegister {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct IoRegisters {
+    pub interrupt_control: InterruptControl,
+    pub waitstate_control: WaitstateControl,
+    pub dma_channels: [DmaChannelRegisters; 8],
+}
+
+impl IoRegisters {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
+bitfield! {
+  /// 4200h - NMITIMEN - Interrupt Enable and Joypad Request (W)
+  /// Configures NMI enablement, PPU H/V IRQs, and joypad reading
+  #[derive(Clone, Copy, Default)]
+  pub struct InterruptControl(u8);
+  impl Debug;
+  pub joypad_enable, _: 0;
+  pub h_v_irq, _: 5, 4;
+  pub vblank_nmi_enable, _: 7;
+}
+
+bitfield! {
+  /// 420Dh - MEMSEL - Memory-2 Waitstate Control (W)
+  /// Configures timers, IO, and high address access
+  #[derive(Clone, Copy, Default)]
+  pub struct WaitstateControl(u8);
+  impl Debug;
+  pub access_speed, _: 0;
+}
+
+impl WaitstateControl {
+    pub fn high_rom_cycles(&self) -> u64 {
+        if self.access_speed() {
+            6
+        } else {
+            8
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct DmaChannelRegisters {
+    pub setup: DmaSetup,
+    // 43x1h - BBADx - DMA/HDMA I/O-Bus Address (PPU-Bus aka B-Bus) (R/W)
+    pub ppu_reg: u8,
+    // Either holds HDMA Table address or current GP-DMA address
+    pub addr: DmaAddr,
+    // Either holds HDMA indirect address or remaining GP-DMA byte count
+    pub indirect_addr_or_byte_count: IndirectAddrOrByteCount,
+    pub hdma_table_curr_addr: HdmaTableCurrAddr,
+    pub hda_line_counter: HdmaLineCounter,
+    // 43xBh - UNUSEDx - Unused Byte (R/W)
+    pub unused_byte: u8,
+}
+
+bitfield! {
+  /// 43x0h - DMAPx - DMA/HDMA Parameters (R/W)
+  /// Specifies the direction and address selection for a DMA channel
+  #[derive(Clone, Copy, Default)]
+  pub struct DmaSetup(u8);
+  impl Debug;
+  pub transfer_word_size, _: 2, 0;
+  pub gpdma_src_addr_step, _: 4, 3;
+  pub hdma_addr_mode, _: 6;
+  pub transfer_direction, _: 7;
+}
+
+bitfield! {
+  /// 43x2h - A1TxL - HDMA Table Start Address (low) / DMA Current Addr (low) (R/W)
+  /// 43x3h - A1TxH - HDMA Table Start Address (hi) / DMA Current Addr (hi) (R/W)
+  /// 43x4h - A1Bx - HDMA Table Start Address (bank) / DMA Current Addr (bank) (R/W)
+  /// Holds the three registers representing the HDMA Table address or current GP-DMA address
+  #[derive(Clone, Copy, Default)]
+  pub struct DmaAddr(u24);
+  impl Debug;
+  pub u8, lo_byte, set_lo_byte: 7, 0;
+  pub u8, hi_byte, set_hi_byte: 15, 8;
+  pub u8, bank_byte, set_bank_byte: 23, 16;
+}
+
+bitfield! {
+  /// 43x5h - DASxL - Indirect HDMA Address (low) / DMA Byte-Counter (low) (R/W)
+  /// 43x6h - DASxH - Indirect HDMA Address (hi) / DMA Byte-Counter (hi) (R/W)
+  /// 43x7h - DASBx - Indirect HDMA Address (bank) (R/W)
+  /// Holds the three registers representing the HDMA Table address or current GP-DMA address
+  #[derive(Clone, Copy, Default)]
+  pub struct IndirectAddrOrByteCount(u24);
+  impl Debug;
+  pub u16, dma_byte_count, _: 15, 0;
+
+  pub u8, lo_byte, set_lo_byte: 7, 0;
+  pub u8, hi_byte, set_hi_byte: 15, 8;
+  pub u8, bank_byte, set_bank_byte: 23, 16;
+}
+
+bitfield! {
+  /// 43x8h - A2AxL - HDMA Table Current Address (low) (R/W)
+  /// 43x9h - A2AxH - HDMA Table Current Address (high) (R/W)
+  /// For HDMA only, holds the current pointer into the HDMA Table
+  #[derive(Clone, Copy, Default)]
+  pub struct HdmaTableCurrAddr(u16);
+  impl Debug;
+  pub u8, lo_byte, set_lo_byte: 7, 0;
+  pub u8, hi_byte, set_hi_byte: 15, 8;
+}
+
+bitfield! {
+  /// 43xAh - NTRLx - HDMA Line-Counter (from current Table entry) (R/W)
+  /// Holds the active HDMA table entry, with a decrementing line counter
+  #[derive(Clone, Copy, Default)]
+  pub struct HdmaLineCounter(u8);
+  impl Debug;
+  pub line_count, _: 6, 0;
+  pub repeat, _: 7;
 }

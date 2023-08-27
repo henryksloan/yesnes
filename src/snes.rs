@@ -20,6 +20,7 @@ impl SNES {
         let smp = Rc::new(RefCell::new(SMP::new()));
         let bus = Rc::new(RefCell::new(Bus::new(ppu.clone(), smp.clone())));
         let cpu = Rc::new(RefCell::new(CPU::new(bus.clone())));
+        bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
 
         let scheduler = Self::create_scheduler(cpu.clone(), ppu.clone(), smp.clone());
 

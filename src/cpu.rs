@@ -1,8 +1,8 @@
 pub mod registers;
 
-pub use registers::{Registers, StatusRegister};
+pub use registers::{IoRegisters, Registers, StatusRegister};
 
-use crate::{bus::Bus, scheduler::*, u24::u24};
+use crate::{bus::Bus, ppu::PpuCounter, scheduler::*, u24::u24};
 
 use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
@@ -156,10 +156,10 @@ macro_rules! branch_instrs {
                     let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
                     if cpu.borrow_mut().reg.p.$flag == $val {
                         cpu.borrow_mut().reg.pc = dest_pc;
-                        cpu.borrow_mut().step(1);
+                        yield_all!(CPU::step(cpu.clone(), 1));
                         // TODO: Is this right? Maybe only for emulation mode...
                         if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
-                            cpu.borrow_mut().step(1);
+                            yield_all!(CPU::step(cpu.clone(), 1));
                         }
                     }
                 }
@@ -237,18 +237,20 @@ struct Pointer {
 /// The 65816 microprocessor, the main CPU of the SNES
 pub struct CPU {
     reg: Registers,
+    io_reg: IoRegisters,
     bus: Rc<RefCell<Bus>>,
+    ppu_counter: Rc<RefCell<PpuCounter>>,
     ticks_run: u64,
-    upper_rom_cycles: u64,
 }
 
 impl CPU {
     pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
         Self {
             reg: Registers::new(),
+            io_reg: IoRegisters::new(),
             bus,
+            ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
             ticks_run: 0,
-            upper_rom_cycles: 6,
         }
     }
 
@@ -267,7 +269,18 @@ impl CPU {
         self.reg.set_p(0x34);
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
-        self.upper_rom_cycles = 6;
+
+        self.io_reg.waitstate_control.0 = 0;
+        self.io_reg.interrupt_control.0 = 0;
+        for channel_regs in self.io_reg.dma_channels.iter_mut() {
+            channel_regs.setup.0 = 0xFF;
+            channel_regs.ppu_reg = 0xFF;
+            channel_regs.addr.0 = u24(0xFFFFFF);
+            channel_regs.indirect_addr_or_byte_count.0 = u24(0xFFFFFF);
+            channel_regs.hdma_table_curr_addr.0 = 0xFF;
+            channel_regs.hda_line_counter.0 = 0xFF;
+            channel_regs.unused_byte = 0xFF;
+        }
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceGenerator + 'a {
@@ -439,12 +452,32 @@ impl CPU {
         }
     }
 
-    fn step(&mut self, n_clocks: u64) {
-        self.ticks_run += n_clocks;
+    fn on_scanline_start<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<()> + 'a {
+        // TODO: Possibly resync all threads at this time
+        // TODO: How expensive are nested generators for function calls? Are macros much cheaper
+        // by avoiding the nesting? If so, it would be worth finding a middle-ground.
+        move || {
+            dummy_yield!();
+        }
     }
 
-    fn idle(&mut self) {
-        self.step(6);
+    fn step<'a>(cpu: Rc<RefCell<CPU>>, n_clocks: u64) -> impl Yieldable<()> + 'a {
+        move || {
+            cpu.borrow_mut().ticks_run += n_clocks;
+            let scanline = yield_all!(PpuCounter::tick(
+                cpu.borrow().ppu_counter.clone(),
+                n_clocks as u16
+            ));
+            if scanline {
+                yield_all!(CPU::on_scanline_start(cpu.clone()));
+            }
+        }
+    }
+
+    // TODO: Add idle cycles in various places where IO cycles are involved
+    // See https://archive.org/details/vl65c816datasheetvlsi1988ocrbm/page/n9/mode/1up
+    fn idle<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<()> + 'a {
+        CPU::step(cpu, 6)
     }
 
     fn region_cycles(&self, addr: u24) -> u64 {
@@ -454,7 +487,7 @@ impl CPU {
         if addr & 0x408000 != 0 {
             if addr & 0x800000 != 0 {
                 // 00-3f:8000-ffff; 40-7f:0000-ffff
-                self.upper_rom_cycles
+                self.io_reg.waitstate_control.high_rom_cycles()
             } else {
                 // 80-bf:8000-ffff; c0-ff:0000-ffff
                 8
@@ -471,12 +504,80 @@ impl CPU {
         }
     }
 
+    pub fn io_peak(&self, addr: u24) -> u8 {
+        // TODO
+        0
+    }
+
+    pub fn io_read(&mut self, addr: u24) -> u8 {
+        match addr.lo16() {
+            0x4300..=0x437A => {
+                let channel_index = (addr.0 as usize >> 4) & 0xF;
+                let channel_regs = &self.io_reg.dma_channels[channel_index];
+                match (addr.0 as usize) & 0xF {
+                    0x0 => channel_regs.setup.0,
+                    0x1 => channel_regs.ppu_reg,
+                    0x2 => channel_regs.addr.lo_byte(),
+                    0x3 => channel_regs.addr.hi_byte(),
+                    0x4 => channel_regs.addr.bank_byte(),
+                    0x5 => channel_regs.indirect_addr_or_byte_count.lo_byte(),
+                    0x6 => channel_regs.indirect_addr_or_byte_count.hi_byte(),
+                    0x7 => channel_regs.indirect_addr_or_byte_count.bank_byte(),
+                    0x8 => channel_regs.hdma_table_curr_addr.lo_byte(),
+                    0x9 => channel_regs.hdma_table_curr_addr.hi_byte(),
+                    0xA => channel_regs.hda_line_counter.0,
+                    0xB | 0xF => channel_regs.unused_byte,
+                    _ => 0, // TODO: Open bus (maybe handle this in Bus)
+                }
+            }
+            _ => {
+                log::debug!("TODO: CPU IO read {addr}");
+                0
+            } // TODO: Remove this fallback
+            _ => panic!("Invalid IO read of CPU at {addr:#06X}"),
+        }
+    }
+
+    pub fn io_write(&mut self, addr: u24, data: u8) {
+        match addr.lo16() {
+            0x4200 => self.io_reg.interrupt_control.0 = data,
+            0x420B => {
+                log::debug!("TODO: Start GP-DMA transfer: {addr} {data:02X}");
+            }
+            0x420C => {
+                log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
+            }
+            0x4300..=0x437A => {
+                let channel_index = (addr.0 as usize >> 4) & 0xF;
+                let channel_regs = &mut self.io_reg.dma_channels[channel_index];
+                match (addr.0 as usize) & 0xF {
+                    0x0 => channel_regs.setup.0 = data,
+                    0x1 => channel_regs.ppu_reg = data,
+                    0x2 => channel_regs.addr.set_lo_byte(data),
+                    0x3 => channel_regs.addr.set_hi_byte(data),
+                    0x4 => channel_regs.addr.set_bank_byte(data),
+                    0x5 => channel_regs.indirect_addr_or_byte_count.set_lo_byte(data),
+                    0x6 => channel_regs.indirect_addr_or_byte_count.set_hi_byte(data),
+                    0x7 => channel_regs.indirect_addr_or_byte_count.set_bank_byte(data),
+                    0x8 => channel_regs.hdma_table_curr_addr.set_lo_byte(data),
+                    0x9 => channel_regs.hdma_table_curr_addr.set_hi_byte(data),
+                    0xA => channel_regs.hda_line_counter.0 = data,
+                    0xB | 0xF => channel_regs.unused_byte = data,
+                    _ => {}
+                }
+            }
+            0x420D => self.io_reg.waitstate_control.0 = data,
+            _ => log::debug!("TODO: CPU IO write {addr}: {data:02X}"), // TODO: Remove this fallback
+            _ => panic!("Invalid IO write of CPU at {addr:#06X}"),
+        }
+    }
+
     fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         move || {
             let region_cycles = cpu.borrow().region_cycles(addr);
-            cpu.borrow_mut().step(region_cycles - 4);
+            yield_all!(CPU::step(cpu.clone(), region_cycles - 4));
             let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
-            cpu.borrow_mut().step(4);
+            yield_all!(CPU::step(cpu.clone(), 4));
             data
         }
     }
@@ -485,7 +586,7 @@ impl CPU {
         move || {
             let region_cycles = cpu.borrow().region_cycles(addr);
             yield_all!(Bus::write_u8(cpu.borrow_mut().bus.clone(), addr, data));
-            cpu.borrow_mut().step(region_cycles);
+            yield_all!(CPU::step(cpu.clone(), region_cycles));
         }
     }
 
@@ -1410,10 +1511,10 @@ impl CPU {
             let source_pc = cpu.borrow().reg.pc + 1u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
             cpu.borrow_mut().reg.pc = dest_pc;
-            cpu.borrow_mut().step(1);
+            yield_all!(CPU::step(cpu.clone(), 1));
             // TODO: Is this right? Maybe only for emulation mode...
             if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
-                cpu.borrow_mut().step(1);
+                yield_all!(CPU::step(cpu.clone(), 1));
             }
         }
     }

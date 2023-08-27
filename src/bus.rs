@@ -1,4 +1,5 @@
 use crate::apu::SMP;
+use crate::cpu::CPU;
 use crate::ppu::PPU;
 use crate::scheduler::*;
 use crate::u24::u24;
@@ -7,9 +8,10 @@ use std::cell::RefCell;
 use std::fs;
 use std::ops::GeneratorState;
 use std::pin::Pin;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 pub struct Bus {
+    cpu: Weak<RefCell<CPU>>,
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
     // TODO: Probably want Box<[u8; 0x20000]>
@@ -17,6 +19,7 @@ pub struct Bus {
     // TODO: These should eventually be encapsulated
     cart_test: Vec<u8>,
     sram: Vec<u8>,
+    // TODO: These arithmetic ops take place in the CPU (ALU) and take cycle (mult=8, div=16)
     // TODO: Refactor these CPU IOs to a new struct or something
     // 4202h - WRMPYA for IO multiplication
     multiplicand_a: u8,
@@ -31,6 +34,7 @@ pub struct Bus {
 impl Bus {
     pub fn new(ppu: Rc<RefCell<PPU>>, smp: Rc<RefCell<SMP>>) -> Self {
         Self {
+            cpu: Weak::new(),
             ppu,
             smp,
             wram: vec![0; 0x20000],
@@ -47,6 +51,10 @@ impl Bus {
             quotient: 0,
             product_or_remainder: 0,
         }
+    }
+
+    pub fn connect_cpu(&mut self, cpu: Weak<RefCell<CPU>>) {
+        self.cpu = cpu;
     }
 
     pub fn reset(&mut self) {
@@ -126,10 +134,18 @@ impl Bus {
                             let port = (addr.lo16() - 0x2140) % 4;
                             bus.borrow().smp.borrow_mut().io_read(0x2140 + port)
                         }
+                        // TODO: Move these math registers to the CPU
                         0x4214 => bus.borrow_mut().quotient as u8,
                         0x4215 => (bus.borrow_mut().quotient >> 8) as u8,
                         0x4216 => bus.borrow_mut().product_or_remainder as u8,
                         0x4217 => (bus.borrow_mut().product_or_remainder >> 8) as u8,
+                        0x4200..=0x421F | 0x4300..=0x437F => bus
+                            .borrow_mut()
+                            .cpu
+                            .upgrade()
+                            .unwrap()
+                            .borrow_mut()
+                            .io_read(addr),
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
                                 access_type: AccessType::Read,
@@ -188,6 +204,7 @@ impl Bus {
                             let port = (addr.lo16() - 0x2140) % 4;
                             bus.borrow().smp.borrow_mut().io_write(0x2140 + port, data);
                         }
+                        // TODO: Move these math registers to the CPU
                         0x4202 => {
                             bus.borrow_mut().multiplicand_a = data;
                         }
@@ -214,11 +231,13 @@ impl Bus {
                                 bus.borrow_mut().product_or_remainder = dividend % divisor;
                             }
                         }
-                        0x4200..=0x42FF => {
-                            log::debug!("TODO: CPU IO write {addr}");
-                        }
-                        0x4300..=0x437F => {
-                            log::debug!("TODO: DMA write {addr}");
+                        0x4200..=0x421F | 0x4300..=0x437F => {
+                            bus.borrow_mut()
+                                .cpu
+                                .upgrade()
+                                .unwrap()
+                                .borrow_mut()
+                                .io_write(addr, data);
                         }
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {

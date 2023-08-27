@@ -1,3 +1,5 @@
+use bitfield::bitfield_bitrange;
+
 use std::fmt;
 use std::ops::*;
 
@@ -5,6 +7,8 @@ use std::ops::*;
 #[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 #[allow(non_camel_case_types)]
 pub struct u24(pub u32);
+
+bitfield_bitrange! {struct u24(u32)}
 
 impl u24 {
     pub fn raw(&self) -> usize {
