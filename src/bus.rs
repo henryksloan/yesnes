@@ -91,6 +91,13 @@ impl Bus {
                     0x4215 => (bus.borrow_mut().quotient >> 8) as u8,
                     0x4216 => bus.borrow_mut().product_or_remainder as u8,
                     0x4217 => (bus.borrow_mut().product_or_remainder >> 8) as u8,
+                    0x4200..=0x421F | 0x4300..=0x437F => bus
+                        .borrow_mut()
+                        .cpu
+                        .upgrade()
+                        .unwrap()
+                        .borrow_mut()
+                        .io_peak(addr),
                     _ => 0,
                 }
             }

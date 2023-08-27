@@ -408,21 +408,26 @@ impl YesnesApp {
 impl eframe::App for YesnesApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
-        self.show_windows(ctx);
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| self.menu_bar(ctx, ui));
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
-            let paused = *self.emu_paused.lock().unwrap();
-            self.register_area(ui, paused);
-            self.control_area(ui);
-            self.disassembly_table(ui, paused);
-        });
+        egui::CentralPanel::default().show(ctx, |_ui| {});
+
+        egui::Window::new("CPU Debugger")
+            .default_width(480.0)
+            .default_height(640.0)
+            .show(ctx, |ui| {
+                self.show_windows(ctx);
+                egui::TopBottomPanel::top("menu_bar").show_inside(ui, |ui| self.menu_bar(ctx, ui));
+                // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
+                let paused = *self.emu_paused.lock().unwrap();
+                self.register_area(ui, paused);
+                self.control_area(ui);
+                self.disassembly_table(ui, paused);
+            });
     }
 }
 
 pub fn run() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(860.0, 620.0)),
+        initial_window_size: Some(egui::vec2(1260.0, 1000.0)),
         ..Default::default()
     };
     eframe::run_native(
