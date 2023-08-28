@@ -2,19 +2,28 @@
 use eframe::egui;
 
 pub struct LineInputWindow {
+    id: egui::Id,
     title: String,
     open: bool,
     text: String,
     request_focus_once: bool,
+    parent_window_id: Option<egui::Id>,
 }
 
 impl LineInputWindow {
-    pub fn new(title: String) -> Self {
+    pub fn new(title: String, parent_window_id: Option<egui::Id>) -> Self {
+        let id = if let Some(parent_window_id) = parent_window_id {
+            parent_window_id.with(&title)
+        } else {
+            egui::Id::new(&title)
+        };
         Self {
+            id,
             title,
             open: false,
             text: String::new(),
             request_focus_once: false,
+            parent_window_id,
         }
     }
 
@@ -31,8 +40,10 @@ impl LineInputWindow {
     where
         F: FnOnce(&str),
     {
+        let open_before = self.open;
         let mut submitted = false;
         egui::Window::new(&self.title)
+            .id(self.id)
             .open(&mut self.open)
             .resizable(false)
             .collapsible(false)
@@ -48,6 +59,12 @@ impl LineInputWindow {
             });
         if submitted {
             self.open = false;
+        }
+        if open_before && !self.open {
+            // If submitted or closed, focus the parent window (if specified)
+            if let Some(parent_window_id) = self.parent_window_id {
+                ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, parent_window_id))
+            }
         }
     }
 }
