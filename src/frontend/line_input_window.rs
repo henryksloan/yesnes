@@ -2,6 +2,7 @@
 use eframe::egui;
 
 pub struct LineInputWindow {
+    id: egui::Id,
     title: String,
     open: bool,
     text: String,
@@ -11,7 +12,13 @@ pub struct LineInputWindow {
 
 impl LineInputWindow {
     pub fn new(title: String, parent_window_id: Option<egui::Id>) -> Self {
+        let id = if let Some(parent_window_id) = parent_window_id {
+            parent_window_id.with(&title)
+        } else {
+            egui::Id::new(&title)
+        };
         Self {
+            id,
             title,
             open: false,
             text: String::new(),
@@ -36,6 +43,7 @@ impl LineInputWindow {
         let open_before = self.open;
         let mut submitted = false;
         egui::Window::new(&self.title)
+            .id(self.id)
             .open(&mut self.open)
             .resizable(false)
             .collapsible(false)

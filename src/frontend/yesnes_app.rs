@@ -63,7 +63,7 @@ impl eframe::App for YesnesApp {
         self.cpu_debugger_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
         self.memory_view_window
-            .show(ctx, paused, self.active_window_id);
+            .show_with_shortcuts(ctx, paused, self.active_window_id);
 
         ctx.memory_mut(|memory| {
             // Set the active window ID to the topmost (last-in-order) Area in the Middle order class

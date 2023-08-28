@@ -1,6 +1,6 @@
 mod shortcuts;
 
-use shortcuts::{DisassemblerShortcut, DISASSEMBLER_SHORTCUTS};
+use shortcuts::*;
 
 use super::app_window::{AppWindow, ShortcutWindow};
 use super::emu_thread::{run_instruction_and_disassemble, EmuThreadMessage};

@@ -1,4 +1,9 @@
-use super::app_window::AppWindow;
+mod shortcuts;
+
+use shortcuts::*;
+
+use super::app_window::{AppWindow, ShortcutWindow};
+use super::line_input_window::*;
 
 use crate::bus::Bus;
 use crate::snes::SNES;
@@ -15,16 +20,21 @@ pub struct MemoryViewWindow {
     // TODO: Consider a smarter scheme than occasionally copying the whole memory
     memory_mirror: Vec<u8>,
     memory_stale: bool,
+    scroll_to_row: Option<(usize, egui::Align)>,
+    go_to_address_window: LineInputWindow,
 }
 
 impl MemoryViewWindow {
     pub fn new(title: String, snes: Arc<Mutex<SNES>>) -> Self {
+        let id = egui::Id::new(&title);
         Self {
-            id: egui::Id::new(&title),
+            id,
             title,
             snes,
             memory_mirror: vec![0; 0x100_0000],
             memory_stale: true,
+            scroll_to_row: None,
+            go_to_address_window: LineInputWindow::new("Go to address".to_string(), Some(id)),
         }
     }
 
@@ -49,6 +59,9 @@ impl MemoryViewWindow {
             .column(Column::exact(45.0))
             .columns(Column::exact(14.0), 0x10)
             .min_scrolled_height(0.0);
+        if let Some((row_nr, align)) = self.scroll_to_row.take() {
+            table = table.scroll_to_row(row_nr, Some(align));
+        }
         table
             .header(20.0, |mut header| {
                 header.col(|_ui| {});
@@ -74,6 +87,18 @@ impl MemoryViewWindow {
                 });
             });
     }
+
+    fn show_windows(&mut self, ctx: &egui::Context) {
+        self.go_to_address_window.show(ctx, |text| {
+            let lower_input = text.to_lowercase();
+            let trimmed_input = lower_input.trim().trim_start_matches("0x");
+            let parsed_addr = u32::from_str_radix(trimmed_input, 16);
+            if let Ok(addr) = parsed_addr {
+                let addr_line = addr >> 4;
+                self.scroll_to_row = Some((addr_line as usize, egui::Align::Center));
+            }
+        });
+    }
 }
 
 impl AppWindow for MemoryViewWindow {
@@ -82,6 +107,8 @@ impl AppWindow for MemoryViewWindow {
     }
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
+        self.show_windows(ctx);
+
         egui::Window::new(&self.title)
             .default_width(480.0)
             .default_height(640.0)
@@ -91,5 +118,23 @@ impl AppWindow for MemoryViewWindow {
                 }
                 self.memory_viewer_table(ui, paused);
             });
+    }
+}
+
+impl ShortcutWindow for MemoryViewWindow {
+    type Shortcut = MemoryViewShortcut;
+
+    const WINDOW_SHORTCUTS: &'static [Self::Shortcut] = MEMORY_VIEW_SHORTCUTS;
+
+    fn handle_shortcut(&mut self, shortcut: &Self::Shortcut) {
+        match shortcut {
+            Self::Shortcut::GoToAddress => {
+                self.go_to_address_window.open();
+            }
+        }
+    }
+
+    fn shortcut_enabled(&mut self, shortcut: &Self::Shortcut) -> bool {
+        true
     }
 }
