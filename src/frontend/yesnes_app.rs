@@ -9,6 +9,7 @@ use crossbeam::channel;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
+use crate::bus::Bus;
 use crate::cpu::registers::Registers;
 use crate::disassembler::Disassembler;
 use crate::snes::SNES;
@@ -76,6 +77,7 @@ fn run_emu_thread(
 
 struct YesnesApp {
     snes: Arc<Mutex<SNES>>,
+    // CPU debugger fields
     disassembler: Arc<Mutex<Disassembler>>,
     // A copy of the CPU's registers, frozen while unpaused.
     registers_mirror: Registers,
@@ -86,6 +88,10 @@ struct YesnesApp {
     run_to_address_window: LineInputWindow,
     emu_message_sender: channel::Sender<EmuThreadMessage>,
     emu_paused: Arc<Mutex<bool>>,
+    // CPU memory viewer fields
+    // TODO: Consider a smarter scheme than occasionally copying the whole memory
+    memory_mirror: Vec<u8>,
+    memory_stale: bool,
 }
 
 impl Default for YesnesApp {
@@ -114,6 +120,8 @@ impl Default for YesnesApp {
             run_to_address_window: LineInputWindow::new("Run to address".to_string()),
             emu_message_sender: sender,
             emu_paused: emu_paused.clone(),
+            memory_mirror: vec![0; 0x100_0000],
+            memory_stale: true,
         };
         app.scroll_pc_near_top();
         app
@@ -134,6 +142,7 @@ impl YesnesApp {
         }
     }
 
+    // TODO: Somehow make shortcuts particular to the focused window
     fn handle_shortcut(&mut self, shortcut: Shortcut) {
         match shortcut {
             Shortcut::GoToAddress => {
@@ -371,7 +380,7 @@ impl YesnesApp {
         let mut table = TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::initial(60.0))
+            .column(Column::exact(60.0))
             .column(Column::remainder())
             .min_scrolled_height(0.0);
         if let Some((row_nr, align)) = self.scroll_to_row.take() {
@@ -403,10 +412,58 @@ impl YesnesApp {
                 });
             });
     }
+
+    fn refresh_stale_memory(&mut self, paused: bool) {
+        // TODO: A more dynamic mechanism for refreshing,
+        // e.g. events (reset, new frame, etc.) rather than pausing and unpausing
+        if self.memory_stale && paused {
+            self.memory_stale = false;
+            let bus = &self.snes.lock().unwrap().bus;
+            for i in 0..0x100_0000 {
+                self.memory_mirror[i] = Bus::peak_u8(bus.clone(), u24(i as u32));
+            }
+        }
+    }
+
+    fn memory_viewer_table(&mut self, ui: &mut egui::Ui, paused: bool) {
+        self.refresh_stale_memory(paused);
+        let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
+        let mut table = TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::exact(45.0))
+            .columns(Column::exact(14.0), 0x10)
+            .min_scrolled_height(0.0);
+        table
+            .header(20.0, |mut header| {
+                header.col(|_ui| {});
+                for low_nybble in 0x00..=0x0F {
+                    // Left label column
+                    header.col(|ui| {
+                        ui.strong(format!("{low_nybble:02X}"));
+                    });
+                }
+            })
+            .body(|body| {
+                body.rows(text_height, 0x10_0000, |row_index, mut row| {
+                    let row_addr = row_index * 0x10;
+                    row.col(|ui| {
+                        ui.strong(format!("{:06X}", row_addr));
+                    });
+                    for low_nybble in 0x0..=0xF {
+                        row.col(|ui| {
+                            let data = self.memory_mirror[row_addr | low_nybble];
+                            ui.label(format!("{:02X}", data));
+                        });
+                    }
+                });
+            });
+    }
 }
 
 impl eframe::App for YesnesApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let paused = *self.emu_paused.lock().unwrap();
         // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
         egui::CentralPanel::default().show(ctx, |_ui| {});
 
@@ -417,10 +474,16 @@ impl eframe::App for YesnesApp {
                 self.show_windows(ctx);
                 egui::TopBottomPanel::top("menu_bar").show_inside(ui, |ui| self.menu_bar(ctx, ui));
                 // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
-                let paused = *self.emu_paused.lock().unwrap();
                 self.register_area(ui, paused);
                 self.control_area(ui);
                 self.disassembly_table(ui, paused);
+            });
+
+        egui::Window::new("CPU Memory Viewer")
+            .default_width(480.0)
+            .default_height(640.0)
+            .show(ctx, |ui| {
+                self.memory_viewer_table(ui, paused);
             });
     }
 }

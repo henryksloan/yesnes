@@ -14,9 +14,10 @@ pub struct Bus {
     cpu: Weak<RefCell<CPU>>,
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
-    // TODO: Probably want Box<[u8; 0x20000]>
+    // TODO: Probably want Box<[u8; 0x20000]>, but need to somehow avoid allocating on stack first
     wram: Vec<u8>,
-    // TODO: These should eventually be encapsulated
+    // TODO: These should eventually be encapsulated,
+    // which should include only allocating according to the ROM header
     cart_test: Vec<u8>,
     sram: Vec<u8>,
     // TODO: These arithmetic ops take place in the CPU (ALU) and take cycle (mult=8, div=16)
@@ -45,7 +46,7 @@ impl Bus {
                     .expect("Expected a rom file"),
             )
             .unwrap(),
-            sram: vec![0; 0x60000],
+            sram: vec![0; 0x80000],
             multiplicand_a: 0,
             dividend: 0,
             quotient: 0,
