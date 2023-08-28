@@ -92,6 +92,7 @@ struct YesnesApp {
     // TODO: Consider a smarter scheme than occasionally copying the whole memory
     memory_mirror: Vec<u8>,
     memory_stale: bool,
+    active_window_id: Option<egui::Id>,
 }
 
 impl Default for YesnesApp {
@@ -122,6 +123,8 @@ impl Default for YesnesApp {
             emu_paused: emu_paused.clone(),
             memory_mirror: vec![0; 0x100_0000],
             memory_stale: true,
+            // TODO: Once I factor out the different windows to structs, get the window ID from there
+            active_window_id: None,
         };
         app.scroll_pc_near_top();
         app
@@ -463,17 +466,22 @@ impl YesnesApp {
 
 impl eframe::App for YesnesApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
         let paused = *self.emu_paused.lock().unwrap();
         // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
         egui::CentralPanel::default().show(ctx, |_ui| {});
 
+        self.show_windows(ctx);
+
+        // TODO: Initially focus the CPU debugger, probably after encapsulating these windows
         egui::Window::new("CPU Debugger")
             .default_width(480.0)
             .default_height(640.0)
             .show(ctx, |ui| {
-                self.show_windows(ctx);
+                if Some(egui::Id::new("CPU Debugger")) != self.active_window_id {
+                    ui.set_enabled(false);
+                }
                 egui::TopBottomPanel::top("menu_bar").show_inside(ui, |ui| self.menu_bar(ctx, ui));
-                // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
                 self.register_area(ui, paused);
                 self.control_area(ui);
                 self.disassembly_table(ui, paused);
@@ -483,8 +491,21 @@ impl eframe::App for YesnesApp {
             .default_width(480.0)
             .default_height(640.0)
             .show(ctx, |ui| {
+                if Some(egui::Id::new("CPU Memory Viewer")) != self.active_window_id {
+                    ui.set_enabled(false);
+                }
                 self.memory_viewer_table(ui, paused);
             });
+
+        ctx.memory_mut(|memory| {
+            // Set the active window ID to the topmost (last-in-order) Area in the Middle order class
+            self.active_window_id = memory
+                .layer_ids()
+                .into_iter()
+                .filter(|layer_id| layer_id.order == egui::Order::Middle)
+                .map(|layer_id| layer_id.id)
+                .last();
+        });
     }
 }
 
