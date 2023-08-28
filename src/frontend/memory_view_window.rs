@@ -50,6 +50,17 @@ impl MemoryViewWindow {
         }
     }
 
+    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        egui::menu::bar(ui, |ui| {
+            use MemoryViewShortcut::*;
+            ui.menu_button("Search", |ui| {
+                ui.menu_button("Go to", |ui| {
+                    self.menu_button_with_shortcut(ui, GoToAddress, "Address...");
+                });
+            });
+        });
+    }
+
     fn memory_viewer_table(&mut self, ui: &mut egui::Ui, paused: bool) {
         self.refresh_stale_memory(paused);
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
@@ -95,7 +106,7 @@ impl MemoryViewWindow {
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
                 let addr_line = addr >> 4;
-                self.scroll_to_row = Some((addr_line as usize, egui::Align::Center));
+                self.scroll_to_row = Some((addr_line as usize, egui::Align::TOP));
             }
         });
     }
@@ -110,12 +121,13 @@ impl AppWindow for MemoryViewWindow {
         self.show_windows(ctx);
 
         egui::Window::new(&self.title)
-            .default_width(480.0)
             .default_height(640.0)
             .show(ctx, |ui| {
                 if !focused {
                     ui.set_enabled(false);
                 }
+                egui::TopBottomPanel::top(self.id.with("menu_bar"))
+                    .show_inside(ui, |ui| self.menu_bar(ui));
                 self.memory_viewer_table(ui, paused);
             });
     }
@@ -134,7 +146,7 @@ impl ShortcutWindow for MemoryViewWindow {
         }
     }
 
-    fn shortcut_enabled(&mut self, shortcut: &Self::Shortcut) -> bool {
+    fn shortcut_enabled(&mut self, _shortcut: &Self::Shortcut) -> bool {
         true
     }
 }
