@@ -2,7 +2,7 @@ mod shortcuts;
 
 use shortcuts::{DisassemblerShortcut, DISASSEMBLER_SHORTCUTS};
 
-use super::app_window::AppWindow;
+use super::app_window::{AppWindow, ShortcutWindow};
 use super::emu_thread::{run_instruction_and_disassemble, EmuThreadMessage};
 use super::line_input_window::*;
 use super::registers::*;
@@ -232,13 +232,34 @@ impl DebuggerWindow {
 }
 
 impl AppWindow for DebuggerWindow {
-    type Shortcut = DisassemblerShortcut;
-
-    const WINDOW_SHORTCUTS: &'static [Self::Shortcut] = DISASSEMBLER_SHORTCUTS;
-
     fn id(&self) -> egui::Id {
         self.id
     }
+
+    fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
+        // DO NOT SUBMIT: Dismissing these should refocus this window
+        self.show_windows(ctx);
+
+        egui::Window::new(&self.title)
+            .default_width(480.0)
+            .default_height(640.0)
+            .show(ctx, |ui| {
+                if !focused {
+                    ui.set_enabled(false);
+                }
+                egui::TopBottomPanel::top(self.id.with("menu_bar"))
+                    .show_inside(ui, |ui| self.menu_bar(ui));
+                self.register_area(ui, paused);
+                self.control_area(ui);
+                self.disassembly_table(ui, paused);
+            });
+    }
+}
+
+impl ShortcutWindow for DebuggerWindow {
+    type Shortcut = DisassemblerShortcut;
+
+    const WINDOW_SHORTCUTS: &'static [Self::Shortcut] = DISASSEMBLER_SHORTCUTS;
 
     fn handle_shortcut(&mut self, shortcut: &Self::Shortcut) {
         match shortcut {
@@ -303,24 +324,5 @@ impl AppWindow for DebuggerWindow {
             Self::Shortcut::Pause => !(*self.emu_paused.lock().unwrap()),
             _ => true,
         }
-    }
-
-    fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
-        // DO NOT SUBMIT: Dismissing these should refocus this window
-        self.show_windows(ctx);
-
-        egui::Window::new(&self.title)
-            .default_width(480.0)
-            .default_height(640.0)
-            .show(ctx, |ui| {
-                if !focused {
-                    ui.set_enabled(false);
-                }
-                egui::TopBottomPanel::top(self.id.with("menu_bar"))
-                    .show_inside(ui, |ui| self.menu_bar(ui));
-                self.register_area(ui, paused);
-                self.control_area(ui);
-                self.disassembly_table(ui, paused);
-            });
     }
 }

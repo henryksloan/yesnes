@@ -1,17 +1,25 @@
 use egui::KeyboardShortcut;
 
+pub trait AppWindow {
+    fn id(&self) -> egui::Id;
+    fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool);
+
+    fn show(&mut self, ctx: &egui::Context, paused: bool, active_window_id: Option<egui::Id>) {
+        let focused = Some(self.id()) == active_window_id;
+        self.show_impl(ctx, paused, focused);
+    }
+}
+
 pub trait ToEguiShortcut {
     fn to_egui_shortcut(&self) -> &'static KeyboardShortcut;
 }
 
-pub trait AppWindow {
+pub trait ShortcutWindow: AppWindow {
     type Shortcut: 'static + ToEguiShortcut;
     const WINDOW_SHORTCUTS: &'static [Self::Shortcut];
 
-    fn id(&self) -> egui::Id;
     fn handle_shortcut(&mut self, shortcut: &Self::Shortcut);
     fn shortcut_enabled(&mut self, shortcut: &Self::Shortcut) -> bool;
-    fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool);
 
     fn consume_shortcuts(&mut self, ctx: &egui::Context) {
         for shortcut in Self::WINDOW_SHORTCUTS {
@@ -61,7 +69,12 @@ pub trait AppWindow {
         self.button_with_shortcut_impl(ui, shortcut, text, true);
     }
 
-    fn show(&mut self, ctx: &egui::Context, paused: bool, active_window_id: Option<egui::Id>) {
+    fn show_with_shortcuts(
+        &mut self,
+        ctx: &egui::Context,
+        paused: bool,
+        active_window_id: Option<egui::Id>,
+    ) {
         let focused = Some(self.id()) == active_window_id;
         if focused {
             self.consume_shortcuts(ctx);

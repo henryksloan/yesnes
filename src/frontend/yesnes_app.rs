@@ -1,27 +1,21 @@
-use super::app_window::AppWindow;
+use super::app_window::{AppWindow, ShortcutWindow};
 use super::debugger_window::DebuggerWindow;
 use super::emu_thread::run_emu_thread;
+use super::memory_view_window::MemoryViewWindow;
 
-use crate::bus::Bus;
 use crate::disassembler::Disassembler;
 use crate::snes::SNES;
-use crate::u24::u24;
 
 use crossbeam::channel;
 use eframe::egui;
-use egui_extras::{Column, TableBuilder};
 
 use std::sync::{Arc, Mutex};
 
 struct YesnesApp {
-    snes: Arc<Mutex<SNES>>,
     emu_paused: Arc<Mutex<bool>>,
-    // CPU memory viewer fields
-    // TODO: Consider a smarter scheme than occasionally copying the whole memory
-    memory_mirror: Vec<u8>,
-    memory_stale: bool,
     active_window_id: Option<egui::Id>,
     cpu_debugger_window: DebuggerWindow,
+    memory_view_window: MemoryViewWindow,
 }
 
 impl Default for YesnesApp {
@@ -39,71 +33,22 @@ impl Default for YesnesApp {
             receiver,
             emu_paused.clone(),
         );
-        let disassembler_window = DebuggerWindow::new(
+        let cpu_debugger_window = DebuggerWindow::new(
             "CPU Debugger".to_string(),
             snes.clone(),
             disassembler,
             emu_paused.clone(),
             sender,
         );
+        let memory_view_window =
+            MemoryViewWindow::new("CPU Memory Viewer".to_string(), snes.clone());
         Self {
-            snes: snes.clone(),
             emu_paused: emu_paused.clone(),
-            memory_mirror: vec![0; 0x100_0000],
-            memory_stale: true,
             // TODO: Once I factor out the different windows to structs, get the window ID from there
             active_window_id: None,
-            cpu_debugger_window: disassembler_window,
+            cpu_debugger_window,
+            memory_view_window,
         }
-    }
-}
-
-impl YesnesApp {
-    fn refresh_stale_memory(&mut self, paused: bool) {
-        // TODO: A more dynamic mechanism for refreshing,
-        // e.g. events (reset, new frame, etc.) rather than pausing and unpausing
-        if self.memory_stale && paused {
-            self.memory_stale = false;
-            let bus = &self.snes.lock().unwrap().bus;
-            for i in 0..0x100_0000 {
-                self.memory_mirror[i] = Bus::peak_u8(bus.clone(), u24(i as u32));
-            }
-        }
-    }
-
-    fn memory_viewer_table(&mut self, ui: &mut egui::Ui, paused: bool) {
-        self.refresh_stale_memory(paused);
-        let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
-        let mut table = TableBuilder::new(ui)
-            .striped(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::exact(45.0))
-            .columns(Column::exact(14.0), 0x10)
-            .min_scrolled_height(0.0);
-        table
-            .header(20.0, |mut header| {
-                header.col(|_ui| {});
-                for low_nybble in 0x00..=0x0F {
-                    // Left label column
-                    header.col(|ui| {
-                        ui.strong(format!("{low_nybble:02X}"));
-                    });
-                }
-            })
-            .body(|body| {
-                body.rows(text_height, 0x10_0000, |row_index, mut row| {
-                    let row_addr = row_index * 0x10;
-                    row.col(|ui| {
-                        ui.strong(format!("{:06X}", row_addr));
-                    });
-                    for low_nybble in 0x0..=0xF {
-                        row.col(|ui| {
-                            let data = self.memory_mirror[row_addr | low_nybble];
-                            ui.label(format!("{:02X}", data));
-                        });
-                    }
-                });
-            });
     }
 }
 
@@ -116,17 +61,9 @@ impl eframe::App for YesnesApp {
 
         // TODO: Initially focus the CPU debugger
         self.cpu_debugger_window
+            .show_with_shortcuts(ctx, paused, self.active_window_id);
+        self.memory_view_window
             .show(ctx, paused, self.active_window_id);
-
-        egui::Window::new("CPU Memory Viewer")
-            .default_width(480.0)
-            .default_height(640.0)
-            .show(ctx, |ui| {
-                if Some(egui::Id::new("CPU Memory Viewer")) != self.active_window_id {
-                    ui.set_enabled(false);
-                }
-                self.memory_viewer_table(ui, paused);
-            });
 
         ctx.memory_mut(|memory| {
             // Set the active window ID to the topmost (last-in-order) Area in the Middle order class
