@@ -40,8 +40,9 @@ impl DebuggerWindow {
         emu_paused: Arc<Mutex<bool>>,
         emu_message_sender: channel::Sender<EmuThreadMessage>,
     ) -> Self {
+        let id = egui::Id::new(&title);
         let mut window = Self {
-            id: egui::Id::new(&title),
+            id,
             title,
             snes,
             disassembler,
@@ -50,8 +51,8 @@ impl DebuggerWindow {
             scroll_to_row: None,
             prev_top_row: None,
             prev_bottom_row: None,
-            go_to_address_window: LineInputWindow::new("Go to address".to_string()),
-            run_to_address_window: LineInputWindow::new("Run to address".to_string()),
+            go_to_address_window: LineInputWindow::new("Go to address".to_string(), Some(id)),
+            run_to_address_window: LineInputWindow::new("Run to address".to_string(), Some(id)),
             emu_message_sender,
         };
         window.scroll_pc_near_top();
@@ -237,7 +238,6 @@ impl AppWindow for DebuggerWindow {
     }
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
-        // DO NOT SUBMIT: Dismissing these should refocus this window
         self.show_windows(ctx);
 
         egui::Window::new(&self.title)

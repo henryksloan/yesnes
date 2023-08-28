@@ -6,15 +6,17 @@ pub struct LineInputWindow {
     open: bool,
     text: String,
     request_focus_once: bool,
+    parent_window_id: Option<egui::Id>,
 }
 
 impl LineInputWindow {
-    pub fn new(title: String) -> Self {
+    pub fn new(title: String, parent_window_id: Option<egui::Id>) -> Self {
         Self {
             title,
             open: false,
             text: String::new(),
             request_focus_once: false,
+            parent_window_id,
         }
     }
 
@@ -31,6 +33,7 @@ impl LineInputWindow {
     where
         F: FnOnce(&str),
     {
+        let open_before = self.open;
         let mut submitted = false;
         egui::Window::new(&self.title)
             .open(&mut self.open)
@@ -48,6 +51,12 @@ impl LineInputWindow {
             });
         if submitted {
             self.open = false;
+        }
+        if open_before && !self.open {
+            // If submitted or closed, focus the parent window (if specified)
+            if let Some(parent_window_id) = self.parent_window_id {
+                ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, parent_window_id))
+            }
         }
     }
 }
