@@ -342,6 +342,7 @@ impl CPU {
                 (jsl, NoFlag; 0x22=>absolute_long)
                 (rtl, NoFlag; 0x6B=>implied)
                 (rts, NoFlag; 0x60=>implied)
+                (rti, NoFlag; 0x40=>implied)
                 (ora, MFlag; 0x01=>indexed_indirect, 0x03=>stack_relative,
                  0x05=>direct, 0x07=>indirect_long, 0x09=>immediate,
                  0x0D=>absolute, 0x0F=>absolute_long, 0x11=>indirect_indexed,
@@ -462,7 +463,6 @@ impl CPU {
                 let return_pb = cpu.borrow().reg.pc.hi8();
                 let return_pc = cpu.borrow().reg.pc.lo16();
                 yield_ticks!(cpu, CPU::stack_push_u8(cpu.clone(), return_pb));
-                yield_ticks!(cpu, CPU::stack_push_u16(cpu.clone(), return_pc));
                 yield_ticks!(cpu, CPU::stack_push_u16(cpu.clone(), return_pc));
                 let p = cpu.borrow().reg.p.get();
                 // TODO: If E flag, do some special stuff
@@ -1603,6 +1603,18 @@ impl CPU {
 
     fn rtl<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         CPU::return_op(cpu, true)
+    }
+
+    fn rti<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            let p = yield_all!(CPU::stack_pull_u8(cpu.clone()));
+            cpu.borrow_mut().reg.p.set(p);
+            cpu.borrow_mut().reg.pc = {
+                let addr = yield_all!(CPU::stack_pull_u16(cpu.clone())) as u32;
+                let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;
+                u24((pb << 16) | addr)
+            };
+        }
     }
 
     fn pull_p<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
