@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 /// Tracks the timing of the video scan... TODO: Complete this, including noting the frequency
 pub struct PpuCounter {
-    h_ticks: u16,
-    scanline: u16,
+    pub h_ticks: u16,
+    pub scanline: u16,
 }
 
 impl PpuCounter {
@@ -32,8 +32,8 @@ impl PpuCounter {
                 counter.borrow_mut().h_ticks -= 1364;
                 counter.borrow_mut().scanline += 1;
                 // TODO: Overscan mode
-                if counter.borrow().scanline >= 224 {
-                    counter.borrow_mut().scanline -= 224;
+                if counter.borrow().scanline >= 261 {
+                    counter.borrow_mut().scanline -= 261;
                 }
             }
             new_scanline

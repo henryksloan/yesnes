@@ -11,7 +11,10 @@ use std::rc::Rc;
 
 use paste::paste;
 
+// TODO: There are emulation-mode and non-emulation-mode vectors
 pub const RESET_VECTOR: u24 = u24(0xFFFC);
+
+pub const NMI_VECTOR: u24 = u24(0xFFEA);
 
 macro_rules! yield_ticks {
     ($cpu_rc:ident, $gen_expr:expr) => {{
@@ -241,6 +244,7 @@ pub struct CPU {
     bus: Rc<RefCell<Bus>>,
     ppu_counter: Rc<RefCell<PpuCounter>>,
     dmas_enqueued: Option<u8>,
+    nmi_enqueued: bool,
     ticks_run: u64,
 }
 
@@ -252,6 +256,7 @@ impl CPU {
             bus,
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
             dmas_enqueued: None,
+            nmi_enqueued: false,
             ticks_run: 0,
         }
     }
@@ -452,6 +457,20 @@ impl CPU {
                 CPU::run_dma(cpu.clone(), dmas_enqueued);
             }
 
+            if cpu.borrow().nmi_enqueued {
+                cpu.borrow_mut().nmi_enqueued = false;
+                let return_pb = cpu.borrow().reg.pc.hi8();
+                let return_pc = cpu.borrow().reg.pc.lo16();
+                yield_ticks!(cpu, CPU::stack_push_u8(cpu.clone(), return_pb));
+                yield_ticks!(cpu, CPU::stack_push_u16(cpu.clone(), return_pc));
+                yield_ticks!(cpu, CPU::stack_push_u16(cpu.clone(), return_pc));
+                let p = cpu.borrow().reg.p.get();
+                // TODO: If E flag, do some special stuff
+                yield_ticks!(cpu, CPU::stack_push_u8(cpu.clone(), p));
+                cpu.borrow_mut().reg.pc =
+                    u24(ignore_yields!(Bus::read_u16(cpu.borrow().bus.clone(), NMI_VECTOR)) as u32);
+            }
+
             // TODO: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
             // But I think it's good enough if we just attach ticks_run to whatever this function yield (like yield_all).
             // In fact, this is wrong, as we're returning from the device generator without flushing our cycles.
@@ -465,6 +484,13 @@ impl CPU {
         // by avoiding the nesting? If so, it would be worth finding a middle-ground.
         move || {
             dummy_yield!();
+            // TODO: Overscan mode
+            if cpu.borrow().ppu_counter.borrow().scanline == 225 {
+                if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {
+                    log::debug!("vblank interrupt");
+                    cpu.borrow_mut().nmi_enqueued = true;
+                }
+            }
         }
     }
 
@@ -547,7 +573,10 @@ impl CPU {
 
     pub fn io_write(&mut self, addr: u24, data: u8) {
         match addr.lo16() {
-            0x4200 => self.io_reg.interrupt_control.0 = data,
+            0x4200 => {
+                log::debug!("Wrote {data:02X} to interrupt control");
+                self.io_reg.interrupt_control.0 = data
+            }
             0x420B => {
                 log::debug!("TODO: Start GP-DMA transfer: {addr} {data:02X}");
                 self.dmas_enqueued = Some(data);
