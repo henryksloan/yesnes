@@ -454,8 +454,9 @@ impl CPU {
             );
 
             // TODO: Proper DMA activation and pause timing
-            if let Some(dmas_enqueued) = cpu.borrow_mut().dmas_enqueued.take() {
-                CPU::run_dma(cpu.clone(), dmas_enqueued);
+            let dmas_enqueued = cpu.borrow_mut().dmas_enqueued.take();
+            if let Some(dmas_enqueued) = dmas_enqueued {
+                yield_ticks!(cpu, CPU::run_dma(cpu.clone(), dmas_enqueued));
             }
 
             if cpu.borrow().nmi_enqueued {
@@ -622,8 +623,11 @@ impl CPU {
                 let cpu_addr_step = channel_regs.setup.cpu_addr_step();
                 let ppu_reg_offsets = channel_regs.setup.gpdma_ppu_reg_offsets();
                 let unit_size = ppu_reg_offsets.len();
+                let ppu_reg_base = channel_regs.ppu_reg;
                 for i in 0..n_bytes {
-                    let ppu_reg_addr = u24(0x2100 | ppu_reg_offsets[i as usize % unit_size] as u32);
+                    let ppu_reg =
+                        ppu_reg_base.wrapping_add(ppu_reg_offsets[i as usize % unit_size]);
+                    let ppu_reg_addr = u24(0x2100 | ppu_reg as u32);
                     if io_to_cpu {
                         let data = yield_all!(CPU::read_u8(cpu.clone(), ppu_reg_addr));
                         yield_all!(CPU::write_u8(cpu.clone(), cpu_addr, data));
