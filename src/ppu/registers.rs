@@ -6,7 +6,7 @@ pub struct IoRegisters {
     pub layer_enable: LayerEnable,
     pub display_control_2: DisplayControl2,
     pub bg_mode: BackgroundMode,
-    pub mosiac: Mosaic,
+    pub mosaic: Mosaic,
     pub bg_tilemap_addr_size: [TilemapAddrSize; 4],
     pub bg_chr_addr: BackgroundChrAddr,
     pub bg_scroll: [BackgroundScroll; 4],
@@ -106,10 +106,30 @@ bitfield! {
   pub bg2_base, _: 7, 4;
   pub bg3_base, _: 11, 8;
   pub bg4_base, _: 15, 12;
+
+  pub u8, lo_byte, set_lo_byte: 7, 0;
+  pub u8, hi_byte, set_hi_byte: 15, 8;
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct BackgroundScrollComponent {
+    pub val: u16,
+    pub write_latch: bool,
+}
+
+impl BackgroundScrollComponent {
+    pub fn write_next(&mut self, data: u8) {
+        self.val = if self.write_latch {
+            (self.val & 0xFF00) | data as u16
+        } else {
+            (self.val & 0x00FF) | ((data as u16) << 8)
+        };
+        self.write_latch = !self.write_latch;
+    }
 }
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct BackgroundScroll {
-    h: u16,
-    v: u16,
+    pub h: BackgroundScrollComponent,
+    pub v: BackgroundScrollComponent,
 }
