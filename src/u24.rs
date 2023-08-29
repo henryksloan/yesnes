@@ -22,6 +22,10 @@ impl u24 {
     pub fn hi8(&self) -> u8 {
         (self.0 >> 16) as u8
     }
+
+    pub fn wrapping_add_signed(&self, other: i32) -> u24 {
+        u24(self.0.wrapping_add_signed(other))
+    }
 }
 
 impl fmt::Display for u24 {

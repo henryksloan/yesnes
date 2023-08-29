@@ -278,10 +278,29 @@ bitfield! {
   #[derive(Clone, Copy, Default)]
   pub struct DmaSetup(u8);
   impl Debug;
-  pub transfer_word_size, _: 2, 0;
+  pub transfer_unit_select, _: 2, 0;
   pub gpdma_src_addr_step, _: 4, 3;
   pub hdma_addr_mode, _: 6;
   pub transfer_direction, _: 7;
+}
+
+impl DmaSetup {
+    pub fn cpu_addr_step(&self) -> i32 {
+        match self.gpdma_src_addr_step() {
+            0b00 => 1,
+            0b10 => -1,
+            _ => 0,
+        }
+    }
+
+    pub fn gpdma_ppu_reg_offsets(&self) -> &'static [u8] {
+        match self.transfer_unit_select() {
+            0b000 | 0b010 | 0b110 => &[0],
+            0b001 | 0b101 => &[0, 1],
+            0b011 | 0b111 => &[0, 0, 1, 1],
+            0b100 | _ => &[0, 1, 2, 3],
+        }
+    }
 }
 
 bitfield! {

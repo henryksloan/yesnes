@@ -41,6 +41,7 @@ impl MemoryViewWindow {
     fn refresh_stale_memory(&mut self, paused: bool) {
         // TODO: A more dynamic mechanism for refreshing,
         // e.g. events (reset, new frame, etc.) rather than pausing and unpausing
+        self.memory_stale |= !paused;
         if self.memory_stale && paused {
             self.memory_stale = false;
             let bus = &self.snes.lock().unwrap().bus;

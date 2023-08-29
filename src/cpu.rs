@@ -240,6 +240,7 @@ pub struct CPU {
     io_reg: IoRegisters,
     bus: Rc<RefCell<Bus>>,
     ppu_counter: Rc<RefCell<PpuCounter>>,
+    dmas_enqueued: Option<u8>,
     ticks_run: u64,
 }
 
@@ -250,6 +251,7 @@ impl CPU {
             io_reg: IoRegisters::new(),
             bus,
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
+            dmas_enqueued: None,
             ticks_run: 0,
         }
     }
@@ -445,6 +447,11 @@ impl CPU {
                 (transfer_y_x, NoFlag; 0xBB=>implied)
             );
 
+            // TODO: Proper DMA activation and pause timing
+            if let Some(dmas_enqueued) = cpu.borrow_mut().dmas_enqueued.take() {
+                CPU::run_dma(cpu.clone(), dmas_enqueued);
+            }
+
             // TODO: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
             // But I think it's good enough if we just attach ticks_run to whatever this function yield (like yield_all).
             // In fact, this is wrong, as we're returning from the device generator without flushing our cycles.
@@ -513,7 +520,7 @@ impl CPU {
         match addr.lo16() {
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
-                let channel_regs = &self.io_reg.dma_channels[channel_index];
+                let channel_regs = self.io_reg.dma_channels[channel_index];
                 match (addr.0 as usize) & 0xF {
                     0x0 => channel_regs.setup.0,
                     0x1 => channel_regs.ppu_reg,
@@ -543,6 +550,7 @@ impl CPU {
             0x4200 => self.io_reg.interrupt_control.0 = data,
             0x420B => {
                 log::debug!("TODO: Start GP-DMA transfer: {addr} {data:02X}");
+                self.dmas_enqueued = Some(data);
             }
             0x420C => {
                 log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
@@ -569,6 +577,34 @@ impl CPU {
             0x420D => self.io_reg.waitstate_control.0 = data,
             _ => log::debug!("TODO: CPU IO write {addr}: {data:02X}"), // TODO: Remove this fallback
             _ => panic!("Invalid IO write of CPU at {addr:#06X}"),
+        }
+    }
+
+    fn run_dma<'a>(cpu: Rc<RefCell<CPU>>, channel_mask: u8) -> impl Yieldable<()> + 'a {
+        move || {
+            for channel_i in 0..=7 {
+                if (channel_mask >> channel_i) & 1 != 1 {
+                    continue;
+                }
+                let channel_regs = cpu.borrow().io_reg.dma_channels[channel_i];
+                let mut cpu_addr = channel_regs.addr.0;
+                let n_bytes = channel_regs.indirect_addr_or_byte_count.dma_byte_count();
+                let io_to_cpu = channel_regs.setup.transfer_direction();
+                let cpu_addr_step = channel_regs.setup.cpu_addr_step();
+                let ppu_reg_offsets = channel_regs.setup.gpdma_ppu_reg_offsets();
+                let unit_size = ppu_reg_offsets.len();
+                for i in 0..n_bytes {
+                    let ppu_reg_addr = u24(0x2100 | ppu_reg_offsets[i as usize % unit_size] as u32);
+                    if io_to_cpu {
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), ppu_reg_addr));
+                        yield_all!(CPU::write_u8(cpu.clone(), cpu_addr, data));
+                    } else {
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), cpu_addr));
+                        yield_all!(CPU::write_u8(cpu.clone(), ppu_reg_addr, data));
+                    }
+                    cpu_addr = cpu_addr.wrapping_add_signed(cpu_addr_step);
+                }
+            }
         }
     }
 
