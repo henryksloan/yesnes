@@ -461,7 +461,7 @@ impl CPU {
 
             if cpu.borrow().nmi_enqueued {
                 cpu.borrow_mut().nmi_enqueued = false;
-                let return_pb = cpu.borrow().reg.pc.hi8();
+                let return_pb = cpu.borrow().reg.pc.bank();
                 let return_pc = cpu.borrow().reg.pc.lo16();
                 yield_ticks!(cpu, CPU::stack_push_u8(cpu.clone(), return_pb));
                 yield_ticks!(cpu, CPU::stack_push_u16(cpu.clone(), return_pc));
@@ -616,6 +616,7 @@ impl CPU {
                 if (channel_mask >> channel_i) & 1 != 1 {
                     continue;
                 }
+                // TODO: Ban wram-to-wram
                 let channel_regs = cpu.borrow().io_reg.dma_channels[channel_i];
                 let mut cpu_addr = channel_regs.addr.0;
                 let n_bytes = channel_regs.indirect_addr_or_byte_count.dma_byte_count();
@@ -922,7 +923,7 @@ impl CPU {
     ) -> impl Yieldable<Pointer> + 'a {
         move || {
             let indirect_addr = {
-                let pb = cpu.borrow().reg.pc.hi8();
+                let pb = cpu.borrow().reg.pc.bank();
                 let addr_lo = fetch!(cpu) as u32;
                 u24(((pb << 16) as u32 | (fetch!(cpu) << 8) as u32 | addr_lo)
                     + cpu.borrow().reg.get_x() as u32)
@@ -1463,7 +1464,7 @@ impl CPU {
 
     fn jsl<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
-            let return_pb = cpu.borrow().reg.pc.hi8();
+            let return_pb = cpu.borrow().reg.pc.bank();
             let return_pc = cpu.borrow().reg.pc.lo16();
             yield_all!(CPU::stack_push_u8(cpu.clone(), return_pb));
             yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
@@ -1630,7 +1631,7 @@ impl CPU {
 
     fn push_pb<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            let data = cpu.borrow_mut().reg.pc.hi8();
+            let data = cpu.borrow_mut().reg.pc.bank();
             yield_all!(CPU::stack_push_u8(cpu.clone(), data));
         }
     }

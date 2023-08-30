@@ -16,6 +16,7 @@ pub struct Bus {
     smp: Rc<RefCell<SMP>>,
     // TODO: Probably want Box<[u8; 0x20000]>, but need to somehow avoid allocating on stack first
     wram: Vec<u8>,
+    wram_port_addr: u24,
     // TODO: These should eventually be encapsulated,
     // which should include only allocating according to the ROM header
     cart_test: Vec<u8>,
@@ -39,6 +40,7 @@ impl Bus {
             ppu,
             smp,
             wram: vec![0; 0x20000],
+            wram_port_addr: u24(0),
             cart_test: fs::read(
                 &std::env::args()
                     .collect::<Vec<String>>()
@@ -70,13 +72,13 @@ impl Bus {
     pub fn peak_u8(bus: Rc<RefCell<Bus>>, addr: u24) -> u8 {
         // TODO: Some generalized mapper logic
         // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
-        match addr.hi8() {
+        match addr.bank() {
             0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
                 bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
             }
             0x00..=0x7D | 0x80..=0xFF if (0x8000..=0xFFFF).contains(&addr.lo16()) => {
                 let len = bus.borrow().cart_test.len();
-                bus.borrow().cart_test[(((addr.hi8() as usize & !0x80) * 0x8000)
+                bus.borrow().cart_test[(((addr.bank() as usize & !0x80) * 0x8000)
                     | (addr.lo16() as usize - 0x8000))
                     % len]
             }
@@ -84,14 +86,19 @@ impl Bus {
                 match addr.lo16() {
                     // TODO: System area
                     0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
+                    0x2100..=0x213F => bus.borrow().ppu.borrow().io_peak(addr.lo16()),
                     0x2140..=0x217F => {
                         let port = (addr.lo16() - 0x2140) % 4;
-                        bus.borrow().smp.borrow_mut().io_peak(0x2140 + port)
+                        bus.borrow().smp.borrow().io_peak(0x2140 + port)
                     }
-                    0x4214 => bus.borrow_mut().quotient as u8,
-                    0x4215 => (bus.borrow_mut().quotient >> 8) as u8,
-                    0x4216 => bus.borrow_mut().product_or_remainder as u8,
-                    0x4217 => (bus.borrow_mut().product_or_remainder >> 8) as u8,
+                    0x2180 => {
+                        let wram_port_addr = bus.borrow().wram_port_addr;
+                        bus.borrow().wram[wram_port_addr.0 as usize]
+                    }
+                    0x4214 => bus.borrow().quotient as u8,
+                    0x4215 => (bus.borrow().quotient >> 8) as u8,
+                    0x4216 => bus.borrow().product_or_remainder as u8,
+                    0x4217 => (bus.borrow().product_or_remainder >> 8) as u8,
                     0x4200..=0x421F | 0x4300..=0x437F => bus
                         .borrow_mut()
                         .cpu
@@ -104,10 +111,10 @@ impl Bus {
             }
             0x70..=0x7D | 0xF0..=0xFF => {
                 bus.borrow().sram
-                    [(((addr.hi8() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
+                    [(((addr.bank() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
             }
             0x7E..=0x7F => {
-                bus.borrow().wram[0x10000 * (addr.hi8() as usize - 0x7E) + addr.lo16() as usize]
+                bus.borrow().wram[0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize]
             }
             _ => 0,
         }
@@ -123,13 +130,13 @@ impl Bus {
         move || {
             // TODO: Some generalized mapper logic
             // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
-            match addr.hi8() {
+            match addr.bank() {
                 0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
                     bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
                 }
                 0x00..=0x7D | 0x80..=0xFF if (0x8000..=0xFFFF).contains(&addr.lo16()) => {
                     let len = bus.borrow().cart_test.len();
-                    bus.borrow().cart_test[(((addr.hi8() as usize & !0x80) * 0x8000)
+                    bus.borrow().cart_test[(((addr.bank() as usize & !0x80) * 0x8000)
                         | (addr.lo16() as usize - 0x8000))
                         % len]
                 }
@@ -137,10 +144,19 @@ impl Bus {
                     match addr.lo16() {
                         // TODO: System area
                         0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
+                        0x2100..=0x213F => {
+                            // TODO: Uncomment once PPU actually does stuff
+                            // yield YieldReason::Sync(Device::PPU);
+                            bus.borrow().ppu.borrow_mut().io_read(addr.lo16())
+                        }
                         0x2140..=0x217F => {
                             yield YieldReason::Sync(Device::SMP);
                             let port = (addr.lo16() - 0x2140) % 4;
                             bus.borrow().smp.borrow_mut().io_read(0x2140 + port)
+                        }
+                        0x2180 => {
+                            let wram_port_addr = bus.borrow().wram_port_addr;
+                            bus.borrow().wram[wram_port_addr.0 as usize]
                         }
                         // TODO: Move these math registers to the CPU
                         0x4214 => bus.borrow_mut().quotient as u8,
@@ -165,10 +181,11 @@ impl Bus {
                 }
                 0x70..=0x7D | 0xF0..=0xFF => {
                     bus.borrow().sram
-                        [(((addr.hi8() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
+                        [(((addr.bank() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
                 }
                 0x7E..=0x7F => {
-                    bus.borrow().wram[0x10000 * (addr.hi8() as usize - 0x7E) + addr.lo16() as usize]
+                    bus.borrow().wram
+                        [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize]
                 }
                 _ => {
                     yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
@@ -193,7 +210,7 @@ impl Bus {
         move || {
             // TODO: Some generalized mapper logic
             // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
-            match addr.hi8() {
+            match addr.bank() {
                 0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
                     // bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
                 }
@@ -202,16 +219,22 @@ impl Bus {
                         // TODO: System area
                         0x0000..=0x1FFF => bus.borrow_mut().wram[addr.lo16() as usize] = data,
                         0x2100..=0x213F => {
-                            log::debug!("TODO: PPU IO write {addr}");
-                        }
-                        0x2180..=0x2183 => {
-                            log::debug!("TODO: WRAM access write {addr}");
+                            // TODO: Uncomment once PPU actually does stuff
+                            // yield YieldReason::Sync(Device::PPU);
+                            bus.borrow().ppu.borrow_mut().io_write(addr.lo16(), data);
                         }
                         0x2140..=0x217F => {
                             yield YieldReason::Sync(Device::SMP);
                             let port = (addr.lo16() - 0x2140) % 4;
                             bus.borrow().smp.borrow_mut().io_write(0x2140 + port, data);
                         }
+                        0x2180 => {
+                            let wram_port_addr = bus.borrow().wram_port_addr;
+                            bus.borrow_mut().wram[wram_port_addr.0 as usize] = data;
+                        }
+                        0x2181 => bus.borrow_mut().wram_port_addr.set_lo_byte(data),
+                        0x2182 => bus.borrow_mut().wram_port_addr.set_hi_byte(data),
+                        0x2183 => bus.borrow_mut().wram_port_addr.set_bank(data & 1),
                         // TODO: Move these math registers to the CPU
                         0x4202 => {
                             bus.borrow_mut().multiplicand_a = data;
@@ -256,13 +279,12 @@ impl Bus {
                     }
                 }
                 0x70..=0x7D | 0xF0..=0xFF if (0x0000..=0x7FFF).contains(&addr.lo16()) => {
-                    bus.borrow_mut().sram
-                        [(((addr.hi8() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize] =
-                        data
+                    bus.borrow_mut().sram[(((addr.bank() as usize & !0x80) - 0x70) * 0x8000)
+                        | addr.lo16() as usize] = data
                 }
                 0x7E..=0x7F => {
                     bus.borrow_mut().wram
-                        [0x10000 * (addr.hi8() as usize - 0x7E) + addr.lo16() as usize] = data
+                        [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize] = data
                 }
                 _ => {
                     yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {

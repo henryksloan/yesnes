@@ -24,14 +24,19 @@ impl PPU {
         }
     }
 
+    pub fn io_peak(&self, addr: u16) -> u8 {
+        // TODO
+        0
+    }
+
     pub fn io_read(&mut self, addr: u16) -> u8 {
         match addr {
             // TODO: Open bus?
             _ => {
-                log::debug!("TODO: PPU IO read {addr}");
+                log::debug!("TODO: PPU IO read {addr:04X}");
                 0
             } // TODO: Remove this fallback
-            _ => panic!("Invalid IO read of PPU at {addr:#06X}"),
+            _ => panic!("Invalid IO read of PPU at {addr:#04X}"),
         }
     }
 
@@ -40,7 +45,7 @@ impl PPU {
             0x2100 => self.io_reg.display_control_1.0 = data,
             0x2105 => self.io_reg.bg_mode.0 = data,
             0x2106 => self.io_reg.mosaic.0 = data,
-            0x2107..=0x210A => self.io_reg.bg_tilemap_addr_size[addr as usize - 0x2701].0 = data,
+            0x2107..=0x210A => self.io_reg.bg_tilemap_addr_size[addr as usize - 0x2107].0 = data,
             0x210B => self.io_reg.bg_chr_addr.set_lo_byte(data),
             0x210C => self.io_reg.bg_chr_addr.set_hi_byte(data),
             // TODO: 0x210D and 0x210E are also mode7 registers; consider storing them separately?
@@ -55,8 +60,8 @@ impl PPU {
                     self.io_reg.bg_scroll[bg_i as usize].v.write_next(data);
                 }
             }
-            _ => log::debug!("TODO: PPU IO write {addr}: {data:02X}"), // TODO: Remove this fallback
-            _ => panic!("Invalid IO write of PPU at {addr:#06X}"),
+            _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
+            _ => panic!("Invalid IO write of PPU at {addr:#04X}"),
         }
     }
 }
