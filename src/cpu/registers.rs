@@ -257,7 +257,7 @@ impl WaitstateControl {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug)]
 pub struct DmaChannelRegisters {
     pub setup: DmaSetup,
     // 43x1h - BBADx - DMA/HDMA I/O-Bus Address (PPU-Bus aka B-Bus) (R/W)

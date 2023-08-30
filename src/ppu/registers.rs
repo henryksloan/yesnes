@@ -14,6 +14,9 @@ pub struct IoRegisters {
     // 2116h - VMADDL - VRAM Address (lower 8bit) (W)
     // 2117h - VMADDH - VRAM Address (upper 8bit) (W)
     pub vram_addr: u16,
+    // 2121h - CGADD - Palette CGRAM Address (Color Generator Memory) (W)
+    pub cgram_addr: u8,
+    pub cgram_access_latch: bool,
 }
 
 impl IoRegisters {
@@ -29,6 +32,14 @@ impl IoRegisters {
             self.vram_addr = self
                 .vram_addr
                 .wrapping_add(self.vram_addr_incr_mode.step_words());
+        }
+    }
+
+    pub fn cgram_bits(&self) -> (usize, usize) {
+        if self.cgram_access_latch {
+            (15, 8)
+        } else {
+            (7, 0)
         }
     }
 }
@@ -129,17 +140,17 @@ bitfield! {
 #[derive(Clone, Copy, Default, Debug)]
 pub struct BackgroundScrollComponent {
     pub val: u16,
-    pub write_latch: bool,
+    pub access_latch: bool,
 }
 
 impl BackgroundScrollComponent {
     pub fn write_next(&mut self, data: u8) {
-        self.val = if self.write_latch {
+        self.val = if self.access_latch {
             (self.val & 0xFF00) | data as u16
         } else {
             (self.val & 0x00FF) | ((data as u16) << 8)
         };
-        self.write_latch = !self.write_latch;
+        self.access_latch = !self.access_latch;
     }
 }
 

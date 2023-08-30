@@ -1,4 +1,5 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+// TODO: Remove this once I figure out how to get terminal logging on Windows
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 #![feature(generators, generator_trait)]
 #![feature(type_alias_impl_trait)]
 #![feature(trait_alias)]
