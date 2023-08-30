@@ -485,6 +485,9 @@ impl SMP {
                  0xB6=>absolute_y, 0xB7=>indirect_indexed, 0xA7=>indexed_indirect)
                 (sbc_mem_to_mem; 0xA9=>direct_to_direct,
                  0xB8=>immediate_to_direct, 0xB9=>indirect_to_indirect)
+                (xcn; 0x9F=>implied)
+                (tclr1; 0x4E=>absolute)
+                (tset1; 0x0E=>absolute)
                 (asl_acc; 0x1C=>implied)
                 (asl_mem; 0x0B=>direct, 0x1B=>direct_x, 0x0C=>absolute)
                 (rol_acc; 0x3C=>implied)
@@ -979,7 +982,7 @@ impl SMP {
         SMP::adc_algorithm(smp, src_1s_complement, dest_data)
     }
 
-    // CMP doesn't memory/registers, so we don't use the macro for it
+    // CMP doesn't modify memory/registers, so we don't use the macro for it
     fn cmp_mem_to_mem<'a>(
         smp: Rc<RefCell<SMP>>,
         addrs: MemToMemAddresses,
@@ -1012,6 +1015,36 @@ impl SMP {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
             let y = smp.borrow().reg.y;
             Self::cmp_algorithm(smp.clone(), src_data, y);
+        }
+    }
+
+    // Special ALU Operations
+
+    fn tclr1<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let a = smp.borrow().reg.a;
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr));
+            smp.borrow_mut().reg.psw.n = data > a;
+            smp.borrow_mut().reg.psw.z = data == a;
+            yield_all!(SMP::write_u8(smp.clone(), addr, data & !a));
+        }
+    }
+
+    fn tset1<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let a = smp.borrow().reg.a;
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr));
+            smp.borrow_mut().reg.psw.n = data > a;
+            smp.borrow_mut().reg.psw.z = data == a;
+            yield_all!(SMP::write_u8(smp.clone(), addr, data | a));
+        }
+    }
+
+    fn xcn<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let a = smp.borrow().reg.a;
+            smp.borrow_mut().reg.a = (a >> 4) | (a << 4);
         }
     }
 
@@ -1156,7 +1189,8 @@ impl SMP {
             smp.borrow_mut().reg.psw.v = (yva >> 8) & 1 == 1;
             smp.borrow_mut().reg.psw.n = (new_a >> 7) == 1;
             smp.borrow_mut().reg.psw.z = new_a == 0;
-            smp.borrow_mut().reg.psw.h = (smp.borrow().reg.x & 0xF) <= (new_y & 0xF);
+            let reg_x = smp.borrow().reg.x;
+            smp.borrow_mut().reg.psw.h = (reg_x & 0xF) <= (new_y & 0xF);
         }
     }
 
