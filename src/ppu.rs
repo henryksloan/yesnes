@@ -1,6 +1,7 @@
 pub mod counter;
 mod registers;
 
+use bitfield::{BitRange, BitRangeMut};
 pub use counter::PpuCounter;
 use registers::IoRegisters;
 
@@ -42,6 +43,16 @@ impl PPU {
 
     pub fn io_read(&mut self, addr: u16) -> u8 {
         match addr {
+            0x2139 => {
+                let vram_addr = self.io_reg.vram_addr as usize;
+                self.io_reg.update_vram_addr(false);
+                self.vram[vram_addr].bit_range(7, 0)
+            }
+            0x213A => {
+                let vram_addr = self.io_reg.vram_addr as usize;
+                self.io_reg.update_vram_addr(true);
+                self.vram[vram_addr].bit_range(15, 8)
+            }
             // TODO: Open bus?
             _ => {
                 log::debug!("TODO: PPU IO read {addr:04X}");
@@ -70,6 +81,19 @@ impl PPU {
                 } else {
                     self.io_reg.bg_scroll[bg_i as usize].v.write_next(data);
                 }
+            }
+            0x2115 => self.io_reg.vram_addr_incr_mode.0 = data,
+            0x2116 => self.io_reg.vram_addr.set_bit_range(7, 0, data),
+            0x2117 => self.io_reg.vram_addr.set_bit_range(15, 8, data),
+            0x2118 => {
+                let vram_addr = self.io_reg.vram_addr as usize;
+                self.io_reg.update_vram_addr(false);
+                self.vram[vram_addr].set_bit_range(7, 0, data);
+            }
+            0x2119 => {
+                let vram_addr = self.io_reg.vram_addr as usize;
+                self.io_reg.update_vram_addr(true);
+                self.vram[vram_addr].set_bit_range(15, 8, data);
             }
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
             _ => panic!("Invalid IO write of PPU at {addr:#04X}"),

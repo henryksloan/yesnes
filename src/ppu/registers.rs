@@ -10,11 +10,26 @@ pub struct IoRegisters {
     pub bg_tilemap_addr_size: [TilemapAddrSize; 4],
     pub bg_chr_addr: BackgroundChrAddr,
     pub bg_scroll: [BackgroundScroll; 4],
+    pub vram_addr_incr_mode: VramAddrIncrMode,
+    // 2116h - VMADDL - VRAM Address (lower 8bit) (W)
+    // 2117h - VMADDH - VRAM Address (upper 8bit) (W)
+    pub vram_addr: u16,
 }
 
 impl IoRegisters {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// Updates the VRAM address if byte specified (high or low) of
+    /// the data read/write ports were accessed AND that byte matches
+    /// the one specified in bit 2115.7
+    pub fn update_vram_addr(&mut self, hi_byte: bool) {
+        if self.vram_addr_incr_mode.incr_byte() == hi_byte {
+            self.vram_addr = self
+                .vram_addr
+                .wrapping_add(self.vram_addr_incr_mode.step_words());
+        }
     }
 }
 
@@ -132,4 +147,24 @@ impl BackgroundScrollComponent {
 pub struct BackgroundScroll {
     pub h: BackgroundScrollComponent,
     pub v: BackgroundScrollComponent,
+}
+
+bitfield! {
+  /// 2115h - VMAIN - VRAM Address Increment Mode (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct VramAddrIncrMode(u8);
+  impl Debug;
+  pub step, _: 1, 0;
+  pub translation, _: 3, 2;
+  pub incr_byte, _: 7;
+}
+
+impl VramAddrIncrMode {
+    pub fn step_words(&self) -> u16 {
+        match self.step() {
+            0b00 => 1,
+            0b01 => 32,
+            0b10 | 0b11 | _ => 128,
+        }
+    }
 }
