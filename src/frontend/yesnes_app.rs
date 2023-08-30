@@ -1,4 +1,4 @@
-use super::app_window::{AppWindow, ShortcutWindow};
+use super::app_window::ShortcutWindow;
 use super::debugger_window::DebuggerWindow;
 use super::emu_thread::run_emu_thread;
 use super::memory_view_window::MemoryViewWindow;

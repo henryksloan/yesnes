@@ -43,6 +43,18 @@ impl PPU {
         0
     }
 
+    pub fn debug_dump_vram(&self) {
+        for bg_i in 0..4 {
+            let bg_addr = (self.io_reg.bg_tilemap_addr_size[bg_i].base() as usize) << 10;
+            for row in 0..32 {
+                for col in 0..32 {
+                    print!("{:03X} ", self.vram[bg_addr + (row * 32) + col] & 0x3FF);
+                }
+                println!();
+            }
+        }
+    }
+
     pub fn io_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x2139 => {

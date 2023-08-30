@@ -143,6 +143,20 @@ impl Registers {
     // Sets the P register.
     pub fn set_p(&mut self, val: u8) {
         self.p.set(val);
+        if !self.index_reg_16_bits() {
+            self.x &= 0xFF;
+            self.y &= 0xFF;
+        }
+    }
+
+    /// Swap the C and E flags (for the XCE instruction), clearing the
+    /// MSBs of X and Y if appropriate
+    pub fn swap_carry_emulation_flags(&mut self) {
+        std::mem::swap(&mut self.p.c, &mut self.p.e);
+        if !self.index_reg_16_bits() {
+            self.x &= 0xFF;
+            self.y &= 0xFF;
+        }
     }
 }
 
@@ -190,7 +204,7 @@ impl StatusRegister {
             | ((self.c as u8) << 0)
     }
 
-    pub fn set(&mut self, data: u8) {
+    pub(self) fn set(&mut self, data: u8) {
         self.n = ((data >> 7) & 1) == 1;
         self.v = ((data >> 6) & 1) == 1;
         self.m = ((data >> 5) & 1) == 1;

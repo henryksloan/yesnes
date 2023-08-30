@@ -1128,16 +1128,16 @@ impl CPU {
     fn rep<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let p = &mut cpu.borrow_mut().reg.p;
-            p.set(p.get() & !data as u8);
+            let p = cpu.borrow().reg.get_p();
+            cpu.borrow_mut().reg.set_p(p & !data as u8);
         }
     }
 
     fn sep<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let p = &mut cpu.borrow_mut().reg.p;
-            p.set(p.get() | data as u8);
+            let p = cpu.borrow().reg.get_p();
+            cpu.borrow_mut().reg.set_p(p | data as u8);
         }
     }
 
@@ -1156,8 +1156,7 @@ impl CPU {
     fn xce<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
             dummy_yield!();
-            let p = &mut cpu.borrow_mut().reg.p;
-            std::mem::swap(&mut p.c, &mut p.e);
+            cpu.borrow_mut().reg.swap_carry_emulation_flags();
         }
     }
 
@@ -1277,6 +1276,7 @@ impl CPU {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer)).wrapping_add(1);
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
+            // TODO: Simplify some of these functions with n_bits!()
             let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
                 8
             } else {
@@ -1369,10 +1369,7 @@ impl CPU {
 
             let carry = cpu.borrow().reg.p.c as u16;
             let result = if cpu.borrow().reg.p.d {
-                // let temp = bcd_to_bin(self.a).unwrap() + bcd_to_bin(data).unwrap() + carry as u8;
-                // self.p.set(StatusRegister::CARRY, temp > 99);
-                // bin_to_bcd(temp % 100).unwrap()
-                unimplemented!("BCD Decimal mode is not yet");
+                unimplemented!("BCD Decimal mode is not yet implemented");
             } else {
                 let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
                 cpu.borrow_mut().reg.p.c = temp > 0xFFFF;
@@ -1612,7 +1609,7 @@ impl CPU {
     fn rti<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
             let p = yield_all!(CPU::stack_pull_u8(cpu.clone()));
-            cpu.borrow_mut().reg.p.set(p);
+            cpu.borrow_mut().reg.set_p(p);
             cpu.borrow_mut().reg.pc = {
                 let addr = yield_all!(CPU::stack_pull_u16(cpu.clone())) as u32;
                 let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;

@@ -67,4 +67,8 @@ impl SNES {
     pub fn run_instruction_debug(&mut self) -> bool {
         self.scheduler.run_instruction_debug()
     }
+
+    pub fn debug_dump_vram(&self) {
+        self.ppu.borrow().debug_dump_vram();
+    }
 }
