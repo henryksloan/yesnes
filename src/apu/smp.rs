@@ -555,6 +555,7 @@ impl SMP {
                 (branch_bit_5_clear; 0xB3=>direct_and_relative)
                 (branch_bit_6_clear; 0xD3=>direct_and_relative)
                 (branch_bit_7_clear; 0xF3=>direct_and_relative)
+                (cbne; 0x2E=>direct_and_relative, 0xDE=>direct_x_and_relative)
                 (dbnz_y; 0xFE=>immediate)
                 (dbnz_mem; 0x6E=>direct_and_relative)
                 (bra; 0x2F=>immediate)
@@ -879,6 +880,17 @@ impl SMP {
     fn direct_and_relative<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
         move || {
             let src_addr = yield_all!(Self::direct(smp.clone()));
+            let dest_addr = yield_all!(Self::immediate(smp.clone()));
+            MemToMemAddresses {
+                src_addr,
+                dest_addr,
+            }
+        }
+    }
+
+    fn direct_x_and_relative<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        move || {
+            let src_addr = yield_all!(Self::direct_x(smp.clone()));
             let dest_addr = yield_all!(Self::immediate(smp.clone()));
             MemToMemAddresses {
                 src_addr,
@@ -1291,6 +1303,18 @@ impl SMP {
             let offset = yield_all!(SMP::read_u8(smp.clone(), addr));
             let dest_pc = (src_pc as i32 + (offset as i8 as i32)) as u16;
             if smp.borrow().reg.y != 0 {
+                smp.borrow_mut().reg.pc = dest_pc;
+            }
+        }
+    }
+
+    fn cbne<'a>(smp: Rc<RefCell<SMP>>, addrs: MemToMemAddresses) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
+            let src_pc = smp.borrow().reg.pc;
+            let offset = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
+            let dest_pc = (src_pc as i32 + (offset as i8 as i32)) as u16;
+            if smp.borrow().reg.a != data {
                 smp.borrow_mut().reg.pc = dest_pc;
             }
         }

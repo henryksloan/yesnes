@@ -545,6 +545,8 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
+            // DO NOT SUBMIT: Remove debugging value
+            0x4210 => 0x80,
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
                 let channel_regs = self.io_reg.dma_channels[channel_index];

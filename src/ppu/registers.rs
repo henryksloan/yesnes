@@ -119,7 +119,8 @@ bitfield! {
   pub mirror_h, _: 0;
   pub mirror_v, _: 1;
 
-  pub base, _: 7, 2;
+  // TODO: SNESTEK says this goes up to bit 7, but it seems to be incorrect?
+  pub base, _: 6, 2;
 }
 
 bitfield! {

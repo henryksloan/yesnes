@@ -52,6 +52,7 @@ impl PPU {
                 }
                 println!();
             }
+            println!();
         }
     }
 
