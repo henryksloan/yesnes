@@ -281,7 +281,7 @@ impl CPU {
         self.io_reg.interrupt_control.0 = 0;
         for channel_regs in self.io_reg.dma_channels.iter_mut() {
             channel_regs.setup.0 = 0xFF;
-            channel_regs.ppu_reg = 0xFF;
+            channel_regs.io_reg = 0xFF;
             channel_regs.addr.0 = u24(0xFFFFFF);
             channel_regs.indirect_addr_or_byte_count.0 = u24(0xFFFFFF);
             channel_regs.hdma_table_curr_addr.0 = 0xFF;
@@ -550,7 +550,7 @@ impl CPU {
                 let channel_regs = self.io_reg.dma_channels[channel_index];
                 match (addr.0 as usize) & 0xF {
                     0x0 => channel_regs.setup.0,
-                    0x1 => channel_regs.ppu_reg,
+                    0x1 => channel_regs.io_reg,
                     0x2 => channel_regs.addr.lo_byte(),
                     0x3 => channel_regs.addr.hi_byte(),
                     0x4 => channel_regs.addr.bank_byte(),
@@ -590,7 +590,7 @@ impl CPU {
                 let channel_regs = &mut self.io_reg.dma_channels[channel_index];
                 match (addr.0 as usize) & 0xF {
                     0x0 => channel_regs.setup.0 = data,
-                    0x1 => channel_regs.ppu_reg = data,
+                    0x1 => channel_regs.io_reg = data,
                     0x2 => channel_regs.addr.set_lo_byte(data),
                     0x3 => channel_regs.addr.set_hi_byte(data),
                     0x4 => channel_regs.addr.set_bank_byte(data),
@@ -622,19 +622,18 @@ impl CPU {
                 let n_bytes = channel_regs.indirect_addr_or_byte_count.dma_byte_count();
                 let io_to_cpu = channel_regs.setup.transfer_direction();
                 let cpu_addr_step = channel_regs.setup.cpu_addr_step();
-                let ppu_reg_offsets = channel_regs.setup.gpdma_ppu_reg_offsets();
-                let unit_size = ppu_reg_offsets.len();
-                let ppu_reg_base = channel_regs.ppu_reg;
+                let io_reg_offsets = channel_regs.setup.gpdma_io_reg_offsets();
+                let unit_size = io_reg_offsets.len();
+                let io_reg_base = channel_regs.io_reg;
                 for i in 0..n_bytes {
-                    let ppu_reg =
-                        ppu_reg_base.wrapping_add(ppu_reg_offsets[i as usize % unit_size]);
-                    let ppu_reg_addr = u24(0x2100 | ppu_reg as u32);
+                    let io_reg = io_reg_base.wrapping_add(io_reg_offsets[i as usize % unit_size]);
+                    let io_reg_addr = u24(0x2100 | io_reg as u32);
                     if io_to_cpu {
-                        let data = yield_all!(CPU::read_u8(cpu.clone(), ppu_reg_addr));
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), io_reg_addr));
                         yield_all!(CPU::write_u8(cpu.clone(), cpu_addr, data));
                     } else {
                         let data = yield_all!(CPU::read_u8(cpu.clone(), cpu_addr));
-                        yield_all!(CPU::write_u8(cpu.clone(), ppu_reg_addr, data));
+                        yield_all!(CPU::write_u8(cpu.clone(), io_reg_addr, data));
                     }
                     cpu_addr = cpu_addr.wrapping_add_signed(cpu_addr_step);
                 }

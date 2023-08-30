@@ -7,14 +7,25 @@ use registers::IoRegisters;
 use crate::scheduler::{Device, DeviceGenerator, YieldReason};
 
 pub struct PPU {
+    vram: Vec<u16>,
     io_reg: IoRegisters,
+    ticks_run: u64,
 }
 
 impl PPU {
     pub fn new() -> Self {
         Self {
             io_reg: IoRegisters::new(),
+            vram: vec![0; 0x8000],
+            ticks_run: 0,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.vram.fill(0);
+        self.ticks_run = 0;
+        // TODO: Most of these are indeterminate, but it might be good to initialize to 0 for determinism
+        self.io_reg = IoRegisters::new();
     }
 
     pub fn run(&mut self) -> impl DeviceGenerator {

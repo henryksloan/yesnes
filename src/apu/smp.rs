@@ -385,30 +385,17 @@ impl SMP {
         smp.borrow_mut().ram.fill(0);
         smp.borrow_mut().ticks_run = 0;
         smp.borrow_mut().io_reg = IoRegisters::new();
-        smp.borrow_mut().io_reg.control.0 = 0xB0;
+        smp.borrow_mut().io_reg.internal_ports.fill(0);
+        smp.borrow_mut().io_reg.external_ports.fill(0);
+        smp.borrow_mut().io_reg.control.0 = 0x80;
+        smp.borrow_mut().io_reg.dsp_addr = 0xFF;
+        // TODO: Apparently should be DSP[7Fh]
+        smp.borrow_mut().io_reg.dsp_data = 0;
+        smp.borrow_mut().io_reg.timer_dividers.fill(0xFF);
+        smp.borrow_mut().io_reg.timers.fill(0);
         smp.borrow_mut().reg = Registers::new();
         // TODO: Simplify
-        smp.borrow_mut().reg.pc = {
-            let lo = {
-                let mut gen = Self::read_u8(smp.clone(), RESET_VECTOR);
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u16,
-                        _ => {}
-                    }
-                }
-            };
-            let hi = {
-                let mut gen = Self::read_u8(smp.clone(), RESET_VECTOR + 1);
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u16,
-                        _ => {}
-                    }
-                }
-            };
-            (hi << 8) | lo
-        };
+        smp.borrow_mut().reg.pc = ignore_yields!(Self::read_u16(smp.clone(), RESET_VECTOR));
         smp.borrow_mut().reg.sp = 0xEF;
     }
 
