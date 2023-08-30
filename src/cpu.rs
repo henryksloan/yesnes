@@ -1038,7 +1038,7 @@ impl CPU {
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
 
@@ -1049,7 +1049,7 @@ impl CPU {
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
 
@@ -1060,7 +1060,7 @@ impl CPU {
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
 
