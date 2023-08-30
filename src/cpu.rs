@@ -852,7 +852,7 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24(((fetch!(cpu) << 8) as u32 | addr_lo) + cpu.borrow().reg.get_y() as u32)
+                u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32)
             };
             Pointer { addr, long }
         }
@@ -885,7 +885,7 @@ impl CPU {
         move || {
             let indirect_addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24((fetch!(cpu) << 8) as u32 | addr_lo)
+                u24(((fetch!(cpu) as u32) << 8) | addr_lo)
             };
             let addr = u24({
                 let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
@@ -903,7 +903,7 @@ impl CPU {
         move || {
             let indirect_addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24((fetch!(cpu) << 8) as u32 | addr_lo)
+                u24(((fetch!(cpu) as u32) << 8) | addr_lo)
             };
             let addr = u24({
                 let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
@@ -924,9 +924,11 @@ impl CPU {
             let indirect_addr = {
                 let pb = cpu.borrow().reg.pc.bank();
                 let addr_lo = fetch!(cpu) as u32;
-                u24(((pb << 16) as u32 | (fetch!(cpu) << 8) as u32 | addr_lo)
-                    + cpu.borrow().reg.get_x() as u32)
+                let lo16 = (((fetch!(cpu) as u32) << 8) | addr_lo)
+                    .wrapping_add(cpu.borrow().reg.get_x() as u32);
+                u24(((pb as u32) << 16) | lo16)
             };
+            // TODO: Use read_u16 to simplify some of these addressing modes
             let addr = u24({
                 let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
                 ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32) << 8)
