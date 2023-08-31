@@ -147,14 +147,6 @@ impl DebuggerWindow {
                     .send(EmuThreadMessage::RunToAddress(next_line.addr));
             }
             self.button_with_shortcut(ui, DisassemblerShortcut::Reset, "Reset");
-            // TODO: Remove debug button "Dump VRAM"
-            let button = egui::Button::new("Dump VRAM");
-            if ui
-                .add_enabled(*self.emu_paused.lock().unwrap(), button)
-                .clicked()
-            {
-                self.snes.lock().unwrap().debug_dump_vram();
-            }
         });
     }
 
