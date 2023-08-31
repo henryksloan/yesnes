@@ -141,7 +141,9 @@ impl PPU {
                 let cgram_addr = self.io_reg.cgram_addr as usize;
                 let write_bits = self.io_reg.cgram_bits();
                 self.io_reg.cgram_access_latch = !self.io_reg.cgram_access_latch;
-                self.io_reg.cgram_addr = self.io_reg.cgram_addr.wrapping_add(1);
+                if !self.io_reg.cgram_access_latch {
+                    self.io_reg.cgram_addr = self.io_reg.cgram_addr.wrapping_add(1);
+                }
                 self.cgram[cgram_addr].set_bit_range(write_bits.0, write_bits.1, data);
             }
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
