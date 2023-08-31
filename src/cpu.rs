@@ -231,6 +231,34 @@ macro_rules! fetch {
     }};
 }
 
+/// Translates a binary integer to a "Binary Coded Decimal"
+/// i.e. decimal(49) => 0x49
+fn bin_to_bcd(x: u16) -> Result<u16, String> {
+    if x > 9999 {
+        Err(format!("Invalid decimal {x:X} for BCD"))
+    } else {
+        let ones = x % 10;
+        let tens = (x / 10) % 10;
+        let hundreds = (x / 100) % 10;
+        let thousands = (x / 1000) % 10;
+        Ok((thousands << 12) | (hundreds << 8) | (tens << 4) | ones)
+    }
+}
+
+/// Translates a "Binary Coded Decimal" to a binary integer
+/// i.e. 0x49 => decimal(49)
+fn bcd_to_bin(x: u16) -> Result<u16, String> {
+    let ones = x & 0x000F;
+    let tens = (x & 0x00F0) >> 4;
+    let hundreds = (x & 0x0F00) >> 8;
+    let thousands = (x & 0xF000) >> 12;
+    if ones > 9 || tens > 9 || hundreds > 9 || thousands > 9 {
+        Err(format!("Invalid BCD {x:X}"))
+    } else {
+        Ok(1000 * thousands + 100 * hundreds + 10 * tens + ones)
+    }
+}
+
 #[derive(Copy, Clone)]
 struct Pointer {
     pub addr: u24,
@@ -1371,25 +1399,34 @@ impl CPU {
                 }
             };
 
-            let carry = cpu.borrow().reg.p.c as u16;
-            let result = if cpu.borrow().reg.p.d {
-                unimplemented!("BCD Decimal mode is not yet implemented");
-            } else {
-                let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
-                cpu.borrow_mut().reg.p.c = temp > 0xFFFF;
-                temp as u16
-            };
-
-            let overflow = ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & 0x80) != 0;
-            cpu.borrow_mut().reg.p.v = overflow;
-            cpu.borrow_mut().reg.set_a(result);
-            let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
+            let n_bits: u32 = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
                 8
             } else {
                 16
             };
-            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = result == 0;
+            let carry = cpu.borrow().reg.p.c as u16;
+            let result = if cpu.borrow().reg.p.d {
+                let temp = bcd_to_bin(cpu.borrow().reg.get_a())
+                    .unwrap()
+                    .wrapping_add(bcd_to_bin(data).unwrap())
+                    .wrapping_add(carry as u16);
+                let bcd_max = if n_bits == 8 { 100 } else { 10000 };
+                cpu.borrow_mut().reg.p.c = temp >= bcd_max;
+                // TODO: This sets V incorrectly; V seems to depend on the weird implementation of BCD adjustment
+                bin_to_bcd(temp % bcd_max).unwrap()
+            } else {
+                let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
+                cpu.borrow_mut().reg.p.c = temp > ((1 << n_bits) - 1);
+                temp as u16
+            };
+
+            let overflow =
+                ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & (1 << (n_bits - 1))) != 0;
+            cpu.borrow_mut().reg.p.v = overflow;
+            cpu.borrow_mut().reg.set_a(result);
+            let new_a = cpu.borrow_mut().reg.get_a();
+            cpu.borrow_mut().reg.p.n = (new_a >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.z = new_a == 0;
         }
     }
 
@@ -1416,6 +1453,7 @@ impl CPU {
             let n_bits = if flag || cpu.borrow().reg.p.e { 8 } else { 16 };
             cpu.borrow_mut().reg.p.c = result >= 0;
             cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+            // TODO: I think this should take into account n_bits
             cpu.borrow_mut().reg.p.z = result == 0;
         }
     }
