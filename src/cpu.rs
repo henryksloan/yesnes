@@ -1083,7 +1083,7 @@ impl CPU {
             let val = cpu.borrow().reg.get_a() | data;
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
-            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
@@ -1091,10 +1091,10 @@ impl CPU {
     fn eor<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let val = cpu.borrow().reg.get_a() | data;
+            let val = cpu.borrow().reg.get_a() ^ data;
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
-            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
@@ -1105,7 +1105,7 @@ impl CPU {
             let val = cpu.borrow().reg.get_a() & data;
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
-            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
@@ -1313,7 +1313,7 @@ impl CPU {
             };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1329,7 +1329,7 @@ impl CPU {
             };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1345,7 +1345,7 @@ impl CPU {
             };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1361,7 +1361,7 @@ impl CPU {
             };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1574,7 +1574,7 @@ impl CPU {
             }
         };
         cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
-        cpu.borrow_mut().reg.p.z = result & ((1 << (n_bits - 1)) - 1) == 0;
+        cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
 
@@ -1621,7 +1621,7 @@ impl CPU {
         cpu.borrow_mut().reg.p.c = (data & check_mask) == check_mask;
         let result = if left { data << 1 } else { data >> 1 };
         cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
-        cpu.borrow_mut().reg.p.z = result & ((1 << (n_bits - 1)) - 1) == 0;
+        cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
 
