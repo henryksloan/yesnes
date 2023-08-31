@@ -1,4 +1,5 @@
 use bitfield::bitfield_bitrange;
+use bitfield::BitRangeMut;
 
 use std::fmt;
 use std::ops::*;
@@ -19,8 +20,28 @@ impl u24 {
         (self.0 & 0xFFFF) as u16
     }
 
-    pub fn hi8(&self) -> u8 {
+    pub fn lo_byte(&self) -> u8 {
+        self.0 as u8
+    }
+
+    pub fn set_lo_byte(&mut self, data: u8) {
+        self.set_bit_range(7, 0, data);
+    }
+
+    pub fn hi_byte(&self) -> u8 {
+        (self.0 >> 8) as u8
+    }
+
+    pub fn set_hi_byte(&mut self, data: u8) {
+        self.set_bit_range(15, 8, data);
+    }
+
+    pub fn bank(&self) -> u8 {
         (self.0 >> 16) as u8
+    }
+
+    pub fn set_bank(&mut self, data: u8) {
+        self.set_bit_range(23, 16, data);
     }
 
     pub fn wrapping_add_signed(&self, other: i32) -> u24 {

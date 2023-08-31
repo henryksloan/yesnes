@@ -51,6 +51,7 @@ pub fn run_emu_thread(
                     }
                 }
             }
+            // TODO: This should correctly handle mirrored PC addresses
             EmuThreadMessage::RunToAddress(addr) => {
                 *paused.lock().unwrap() = false;
                 loop {
@@ -62,7 +63,11 @@ pub fn run_emu_thread(
                         *paused.lock().unwrap() = true;
                         break;
                     } else {
-                        run_instruction_and_disassemble(&mut snes, &disassembler);
+                        let should_break =
+                            run_instruction_and_disassemble(&mut snes, &disassembler);
+                        if should_break {
+                            *paused.lock().unwrap() = true;
+                        }
                     }
                 }
             }

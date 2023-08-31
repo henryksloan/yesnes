@@ -385,30 +385,17 @@ impl SMP {
         smp.borrow_mut().ram.fill(0);
         smp.borrow_mut().ticks_run = 0;
         smp.borrow_mut().io_reg = IoRegisters::new();
-        smp.borrow_mut().io_reg.control.0 = 0xB0;
+        smp.borrow_mut().io_reg.internal_ports.fill(0);
+        smp.borrow_mut().io_reg.external_ports.fill(0);
+        smp.borrow_mut().io_reg.control.0 = 0x80;
+        smp.borrow_mut().io_reg.dsp_addr = 0xFF;
+        // TODO: Apparently should be DSP[7Fh]
+        smp.borrow_mut().io_reg.dsp_data = 0;
+        smp.borrow_mut().io_reg.timer_dividers.fill(0xFF);
+        smp.borrow_mut().io_reg.timers.fill(0);
         smp.borrow_mut().reg = Registers::new();
         // TODO: Simplify
-        smp.borrow_mut().reg.pc = {
-            let lo = {
-                let mut gen = Self::read_u8(smp.clone(), RESET_VECTOR);
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u16,
-                        _ => {}
-                    }
-                }
-            };
-            let hi = {
-                let mut gen = Self::read_u8(smp.clone(), RESET_VECTOR + 1);
-                loop {
-                    match Pin::new(&mut gen).resume(()) {
-                        GeneratorState::Complete(out) => break out as u16,
-                        _ => {}
-                    }
-                }
-            };
-            (hi << 8) | lo
-        };
+        smp.borrow_mut().reg.pc = ignore_yields!(Self::read_u16(smp.clone(), RESET_VECTOR));
         smp.borrow_mut().reg.sp = 0xEF;
     }
 
@@ -498,6 +485,9 @@ impl SMP {
                  0xB6=>absolute_y, 0xB7=>indirect_indexed, 0xA7=>indexed_indirect)
                 (sbc_mem_to_mem; 0xA9=>direct_to_direct,
                  0xB8=>immediate_to_direct, 0xB9=>indirect_to_indirect)
+                (xcn; 0x9F=>implied)
+                (tclr1; 0x4E=>absolute)
+                (tset1; 0x0E=>absolute)
                 (asl_acc; 0x1C=>implied)
                 (asl_mem; 0x0B=>direct, 0x1B=>direct_x, 0x0C=>absolute)
                 (rol_acc; 0x3C=>implied)
@@ -565,6 +555,7 @@ impl SMP {
                 (branch_bit_5_clear; 0xB3=>direct_and_relative)
                 (branch_bit_6_clear; 0xD3=>direct_and_relative)
                 (branch_bit_7_clear; 0xF3=>direct_and_relative)
+                (cbne; 0x2E=>direct_and_relative, 0xDE=>direct_x_and_relative)
                 (dbnz_y; 0xFE=>immediate)
                 (dbnz_mem; 0x6E=>direct_and_relative)
                 (bra; 0x2F=>immediate)
@@ -897,6 +888,17 @@ impl SMP {
         }
     }
 
+    fn direct_x_and_relative<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        move || {
+            let src_addr = yield_all!(Self::direct_x(smp.clone()));
+            let dest_addr = yield_all!(Self::immediate(smp.clone()));
+            MemToMemAddresses {
+                src_addr,
+                dest_addr,
+            }
+        }
+    }
+
     // Instructions:
 
     // Generate MOV operations
@@ -992,7 +994,7 @@ impl SMP {
         SMP::adc_algorithm(smp, src_1s_complement, dest_data)
     }
 
-    // CMP doesn't memory/registers, so we don't use the macro for it
+    // CMP doesn't modify memory/registers, so we don't use the macro for it
     fn cmp_mem_to_mem<'a>(
         smp: Rc<RefCell<SMP>>,
         addrs: MemToMemAddresses,
@@ -1025,6 +1027,36 @@ impl SMP {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
             let y = smp.borrow().reg.y;
             Self::cmp_algorithm(smp.clone(), src_data, y);
+        }
+    }
+
+    // Special ALU Operations
+
+    fn tclr1<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let a = smp.borrow().reg.a;
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr));
+            smp.borrow_mut().reg.psw.n = data > a;
+            smp.borrow_mut().reg.psw.z = data == a;
+            yield_all!(SMP::write_u8(smp.clone(), addr, data & !a));
+        }
+    }
+
+    fn tset1<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+        move || {
+            let a = smp.borrow().reg.a;
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr));
+            smp.borrow_mut().reg.psw.n = data > a;
+            smp.borrow_mut().reg.psw.z = data == a;
+            yield_all!(SMP::write_u8(smp.clone(), addr, data | a));
+        }
+    }
+
+    fn xcn<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let a = smp.borrow().reg.a;
+            smp.borrow_mut().reg.a = (a >> 4) | (a << 4);
         }
     }
 
@@ -1169,7 +1201,8 @@ impl SMP {
             smp.borrow_mut().reg.psw.v = (yva >> 8) & 1 == 1;
             smp.borrow_mut().reg.psw.n = (new_a >> 7) == 1;
             smp.borrow_mut().reg.psw.z = new_a == 0;
-            smp.borrow_mut().reg.psw.h = (smp.borrow().reg.x & 0xF) <= (new_y & 0xF);
+            let reg_x = smp.borrow().reg.x;
+            smp.borrow_mut().reg.psw.h = (reg_x & 0xF) <= (new_y & 0xF);
         }
     }
 
@@ -1270,6 +1303,18 @@ impl SMP {
             let offset = yield_all!(SMP::read_u8(smp.clone(), addr));
             let dest_pc = (src_pc as i32 + (offset as i8 as i32)) as u16;
             if smp.borrow().reg.y != 0 {
+                smp.borrow_mut().reg.pc = dest_pc;
+            }
+        }
+    }
+
+    fn cbne<'a>(smp: Rc<RefCell<SMP>>, addrs: MemToMemAddresses) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
+            let src_pc = smp.borrow().reg.pc;
+            let offset = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
+            let dest_pc = (src_pc as i32 + (offset as i8 as i32)) as u16;
+            if smp.borrow().reg.a != data {
                 smp.borrow_mut().reg.pc = dest_pc;
             }
         }

@@ -50,6 +50,7 @@ impl SNES {
     pub fn reset(&mut self) {
         self.cpu.borrow_mut().reset();
         self.bus.borrow_mut().reset();
+        self.ppu.borrow_mut().reset();
         SMP::reset(self.smp.clone());
         self.scheduler =
             Self::create_scheduler(self.cpu.clone(), self.ppu.clone(), self.smp.clone());
@@ -65,5 +66,9 @@ impl SNES {
 
     pub fn run_instruction_debug(&mut self) -> bool {
         self.scheduler.run_instruction_debug()
+    }
+
+    pub fn debug_dump_vram(&self) {
+        self.ppu.borrow().debug_dump_vram();
     }
 }

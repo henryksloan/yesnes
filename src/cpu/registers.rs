@@ -143,6 +143,20 @@ impl Registers {
     // Sets the P register.
     pub fn set_p(&mut self, val: u8) {
         self.p.set(val);
+        if !self.index_reg_16_bits() {
+            self.x &= 0xFF;
+            self.y &= 0xFF;
+        }
+    }
+
+    /// Swap the C and E flags (for the XCE instruction), clearing the
+    /// MSBs of X and Y if appropriate
+    pub fn swap_carry_emulation_flags(&mut self) {
+        std::mem::swap(&mut self.p.c, &mut self.p.e);
+        if !self.index_reg_16_bits() {
+            self.x &= 0xFF;
+            self.y &= 0xFF;
+        }
     }
 }
 
@@ -190,7 +204,7 @@ impl StatusRegister {
             | ((self.c as u8) << 0)
     }
 
-    pub fn set(&mut self, data: u8) {
+    pub(self) fn set(&mut self, data: u8) {
         self.n = ((data >> 7) & 1) == 1;
         self.v = ((data >> 6) & 1) == 1;
         self.m = ((data >> 5) & 1) == 1;
@@ -257,11 +271,11 @@ impl WaitstateControl {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug)]
 pub struct DmaChannelRegisters {
     pub setup: DmaSetup,
     // 43x1h - BBADx - DMA/HDMA I/O-Bus Address (PPU-Bus aka B-Bus) (R/W)
-    pub ppu_reg: u8,
+    pub io_reg: u8,
     // Either holds HDMA Table address or current GP-DMA address
     pub addr: DmaAddr,
     // Either holds HDMA indirect address or remaining GP-DMA byte count
@@ -293,7 +307,7 @@ impl DmaSetup {
         }
     }
 
-    pub fn gpdma_ppu_reg_offsets(&self) -> &'static [u8] {
+    pub fn gpdma_io_reg_offsets(&self) -> &'static [u8] {
         match self.transfer_unit_select() {
             0b000 | 0b010 | 0b110 => &[0],
             0b001 | 0b101 => &[0, 1],

@@ -281,7 +281,7 @@ impl CPU {
         self.io_reg.interrupt_control.0 = 0;
         for channel_regs in self.io_reg.dma_channels.iter_mut() {
             channel_regs.setup.0 = 0xFF;
-            channel_regs.ppu_reg = 0xFF;
+            channel_regs.io_reg = 0xFF;
             channel_regs.addr.0 = u24(0xFFFFFF);
             channel_regs.indirect_addr_or_byte_count.0 = u24(0xFFFFFF);
             channel_regs.hdma_table_curr_addr.0 = 0xFF;
@@ -461,7 +461,7 @@ impl CPU {
 
             if cpu.borrow().nmi_enqueued {
                 cpu.borrow_mut().nmi_enqueued = false;
-                let return_pb = cpu.borrow().reg.pc.hi8();
+                let return_pb = cpu.borrow().reg.pc.bank();
                 let return_pc = cpu.borrow().reg.pc.lo16();
                 yield_ticks!(cpu, CPU::stack_push_u8(cpu.clone(), return_pb));
                 yield_ticks!(cpu, CPU::stack_push_u16(cpu.clone(), return_pc));
@@ -545,12 +545,14 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
+            // DO NOT SUBMIT: Remove debugging value
+            0x4210 => 0x80,
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
                 let channel_regs = self.io_reg.dma_channels[channel_index];
                 match (addr.0 as usize) & 0xF {
                     0x0 => channel_regs.setup.0,
-                    0x1 => channel_regs.ppu_reg,
+                    0x1 => channel_regs.io_reg,
                     0x2 => channel_regs.addr.lo_byte(),
                     0x3 => channel_regs.addr.hi_byte(),
                     0x4 => channel_regs.addr.bank_byte(),
@@ -590,7 +592,7 @@ impl CPU {
                 let channel_regs = &mut self.io_reg.dma_channels[channel_index];
                 match (addr.0 as usize) & 0xF {
                     0x0 => channel_regs.setup.0 = data,
-                    0x1 => channel_regs.ppu_reg = data,
+                    0x1 => channel_regs.io_reg = data,
                     0x2 => channel_regs.addr.set_lo_byte(data),
                     0x3 => channel_regs.addr.set_hi_byte(data),
                     0x4 => channel_regs.addr.set_bank_byte(data),
@@ -616,24 +618,24 @@ impl CPU {
                 if (channel_mask >> channel_i) & 1 != 1 {
                     continue;
                 }
+                // TODO: Ban wram-to-wram
                 let channel_regs = cpu.borrow().io_reg.dma_channels[channel_i];
                 let mut cpu_addr = channel_regs.addr.0;
                 let n_bytes = channel_regs.indirect_addr_or_byte_count.dma_byte_count();
                 let io_to_cpu = channel_regs.setup.transfer_direction();
                 let cpu_addr_step = channel_regs.setup.cpu_addr_step();
-                let ppu_reg_offsets = channel_regs.setup.gpdma_ppu_reg_offsets();
-                let unit_size = ppu_reg_offsets.len();
-                let ppu_reg_base = channel_regs.ppu_reg;
+                let io_reg_offsets = channel_regs.setup.gpdma_io_reg_offsets();
+                let unit_size = io_reg_offsets.len();
+                let io_reg_base = channel_regs.io_reg;
                 for i in 0..n_bytes {
-                    let ppu_reg =
-                        ppu_reg_base.wrapping_add(ppu_reg_offsets[i as usize % unit_size]);
-                    let ppu_reg_addr = u24(0x2100 | ppu_reg as u32);
+                    let io_reg = io_reg_base.wrapping_add(io_reg_offsets[i as usize % unit_size]);
+                    let io_reg_addr = u24(0x2100 | io_reg as u32);
                     if io_to_cpu {
-                        let data = yield_all!(CPU::read_u8(cpu.clone(), ppu_reg_addr));
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), io_reg_addr));
                         yield_all!(CPU::write_u8(cpu.clone(), cpu_addr, data));
                     } else {
                         let data = yield_all!(CPU::read_u8(cpu.clone(), cpu_addr));
-                        yield_all!(CPU::write_u8(cpu.clone(), ppu_reg_addr, data));
+                        yield_all!(CPU::write_u8(cpu.clone(), io_reg_addr, data));
                     }
                     cpu_addr = cpu_addr.wrapping_add_signed(cpu_addr_step);
                 }
@@ -852,7 +854,7 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24(((fetch!(cpu) << 8) as u32 | addr_lo) + cpu.borrow().reg.get_y() as u32)
+                u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32)
             };
             Pointer { addr, long }
         }
@@ -885,7 +887,7 @@ impl CPU {
         move || {
             let indirect_addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24((fetch!(cpu) << 8) as u32 | addr_lo)
+                u24(((fetch!(cpu) as u32) << 8) | addr_lo)
             };
             let addr = u24({
                 let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
@@ -903,7 +905,7 @@ impl CPU {
         move || {
             let indirect_addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24((fetch!(cpu) << 8) as u32 | addr_lo)
+                u24(((fetch!(cpu) as u32) << 8) | addr_lo)
             };
             let addr = u24({
                 let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
@@ -922,11 +924,13 @@ impl CPU {
     ) -> impl Yieldable<Pointer> + 'a {
         move || {
             let indirect_addr = {
-                let pb = cpu.borrow().reg.pc.hi8();
+                let pb = cpu.borrow().reg.pc.bank();
                 let addr_lo = fetch!(cpu) as u32;
-                u24(((pb << 16) as u32 | (fetch!(cpu) << 8) as u32 | addr_lo)
-                    + cpu.borrow().reg.get_x() as u32)
+                let lo16 = (((fetch!(cpu) as u32) << 8) | addr_lo)
+                    .wrapping_add(cpu.borrow().reg.get_x() as u32);
+                u24(((pb as u32) << 16) | lo16)
             };
+            // TODO: Use read_u16 to simplify some of these addressing modes
             let addr = u24({
                 let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
                 ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32) << 8)
@@ -1038,7 +1042,7 @@ impl CPU {
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
 
@@ -1049,7 +1053,7 @@ impl CPU {
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
 
@@ -1060,7 +1064,7 @@ impl CPU {
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
 
@@ -1128,16 +1132,16 @@ impl CPU {
     fn rep<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let p = &mut cpu.borrow_mut().reg.p;
-            p.set(p.get() & !data as u8);
+            let p = cpu.borrow().reg.get_p();
+            cpu.borrow_mut().reg.set_p(p & !data as u8);
         }
     }
 
     fn sep<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let p = &mut cpu.borrow_mut().reg.p;
-            p.set(p.get() | data as u8);
+            let p = cpu.borrow().reg.get_p();
+            cpu.borrow_mut().reg.set_p(p | data as u8);
         }
     }
 
@@ -1156,8 +1160,7 @@ impl CPU {
     fn xce<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
             dummy_yield!();
-            let p = &mut cpu.borrow_mut().reg.p;
-            std::mem::swap(&mut p.c, &mut p.e);
+            cpu.borrow_mut().reg.swap_carry_emulation_flags();
         }
     }
 
@@ -1277,6 +1280,7 @@ impl CPU {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer)).wrapping_add(1);
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
+            // TODO: Simplify some of these functions with n_bits!()
             let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
                 8
             } else {
@@ -1369,10 +1373,7 @@ impl CPU {
 
             let carry = cpu.borrow().reg.p.c as u16;
             let result = if cpu.borrow().reg.p.d {
-                // let temp = bcd_to_bin(self.a).unwrap() + bcd_to_bin(data).unwrap() + carry as u8;
-                // self.p.set(StatusRegister::CARRY, temp > 99);
-                // bin_to_bcd(temp % 100).unwrap()
-                unimplemented!("BCD Decimal mode is not yet");
+                unimplemented!("BCD Decimal mode is not yet implemented");
             } else {
                 let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
                 cpu.borrow_mut().reg.p.c = temp > 0xFFFF;
@@ -1463,7 +1464,7 @@ impl CPU {
 
     fn jsl<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
-            let return_pb = cpu.borrow().reg.pc.hi8();
+            let return_pb = cpu.borrow().reg.pc.bank();
             let return_pc = cpu.borrow().reg.pc.lo16();
             yield_all!(CPU::stack_push_u8(cpu.clone(), return_pb));
             yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
@@ -1612,7 +1613,7 @@ impl CPU {
     fn rti<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
             let p = yield_all!(CPU::stack_pull_u8(cpu.clone()));
-            cpu.borrow_mut().reg.p.set(p);
+            cpu.borrow_mut().reg.set_p(p);
             cpu.borrow_mut().reg.pc = {
                 let addr = yield_all!(CPU::stack_pull_u16(cpu.clone())) as u32;
                 let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;
@@ -1630,7 +1631,7 @@ impl CPU {
 
     fn push_pb<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            let data = cpu.borrow_mut().reg.pc.hi8();
+            let data = cpu.borrow_mut().reg.pc.bank();
             yield_all!(CPU::stack_push_u8(cpu.clone(), data));
         }
     }

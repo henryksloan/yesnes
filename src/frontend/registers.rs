@@ -1,6 +1,7 @@
 //! GUI elements to display and edit processer registers.
 use crate::cpu::{Registers, StatusRegister};
 
+// TODO: It's not actually great to not show some of the nybbles; maybe just gray them out?
 /// Adds an editable view of the given CPU register, masked to its bottom `hex_digits` nybbles.
 pub fn register_drag_value<T: eframe::emath::Numeric>(
     ui: &mut egui::Ui,

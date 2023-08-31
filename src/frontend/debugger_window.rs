@@ -132,7 +132,29 @@ impl DebuggerWindow {
             self.button_with_shortcut(ui, DisassemblerShortcut::Continue, "Continue");
             self.button_with_shortcut(ui, DisassemblerShortcut::Pause, "Pause");
             self.button_with_shortcut(ui, DisassemblerShortcut::Trace, "Trace");
+            // TODO: Implement step over more completely
+            let button = egui::Button::new("Step over");
+            if ui
+                .add_enabled(*self.emu_paused.lock().unwrap(), button)
+                .clicked()
+            {
+                let snes = self.snes.lock().unwrap();
+                let cpu_pc = snes.cpu.borrow().registers().pc;
+                let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
+                let next_line = self.disassembler.lock().unwrap().get_line(cpu_pc_line + 1);
+                let _ = self
+                    .emu_message_sender
+                    .send(EmuThreadMessage::RunToAddress(next_line.addr));
+            }
             self.button_with_shortcut(ui, DisassemblerShortcut::Reset, "Reset");
+            // TODO: Remove debug button "Dump VRAM"
+            let button = egui::Button::new("Dump VRAM");
+            if ui
+                .add_enabled(*self.emu_paused.lock().unwrap(), button)
+                .clicked()
+            {
+                self.snes.lock().unwrap().debug_dump_vram();
+            }
         });
     }
 

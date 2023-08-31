@@ -26,8 +26,7 @@ impl eframe::emath::Numeric for StatusRegister {
     }
 
     fn from_f64(num: f64) -> Self {
-        let mut new_register = Self::default();
-        new_register.set(num as u32 as u8);
+        let mut new_register = Self::new(num as u32 as u8);
         new_register.e = ((num as u32) >> 8) & 1 == 1;
         new_register
     }
