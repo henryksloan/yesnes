@@ -231,6 +231,16 @@ macro_rules! fetch {
     }};
 }
 
+macro_rules! fetch_u16 {
+    ($cpu_rc: ident) => {{
+        let lo = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
+        $cpu_rc.borrow_mut().reg.pc += 1u32;
+        let hi = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
+        $cpu_rc.borrow_mut().reg.pc += 1u32;
+        ((hi as u16) << 8) | lo as u16
+    }};
+}
+
 /// Translates a binary integer to a "Binary Coded Decimal"
 /// i.e. decimal(49) => 0x49
 fn bin_to_bcd(x: u16) -> Result<u16, String> {
@@ -363,6 +373,7 @@ impl CPU {
                 (branch_z_clear, NoFlag; 0xD0=>implied)
                 (branch_z_set, NoFlag; 0xF0=>implied)
                 (bra, NoFlag; 0x80=>implied)
+                (brl, NoFlag; 0x82=>implied)
                 (jsr, NoFlag; 0x20=>absolute, 0xFC=>absolute_indirect_indexed)
                 (jmp, NoFlag; 0x4C=>absolute, 0x6C=>absolute_indirect,
                  0x7C=>absolute_indirect_indexed)
@@ -1658,6 +1669,16 @@ impl CPU {
             if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
                 yield_all!(CPU::step(cpu.clone(), 1));
             }
+        }
+    }
+
+    fn brl<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            let source_pc = cpu.borrow().reg.pc + 2u16;
+            let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
+            cpu.borrow_mut().reg.pc = dest_pc;
+            yield_all!(CPU::step(cpu.clone(), 1));
+            // TODO: Maybe some bank cross cycles? Maybe only for emulation mode...
         }
     }
 
