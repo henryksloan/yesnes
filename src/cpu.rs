@@ -392,6 +392,8 @@ impl CPU {
                 (bit_immediate, MFlag; 0x89=>immediate)
                 (bit, MFlag; 0x24=>direct, 0x2C=>absolute, 0x34=>direct_x,
                  0x3C=>absolute_x)
+                (tsb, MFlag; 0x04=>direct, 0x0C=>absolute)
+                (trb, MFlag; 0x14=>direct, 0x1C=>absolute)
                 (lda, MFlag; 0xA1=>indexed_indirect, 0xA3=>stack_relative,
                  0xA5=>direct, 0xA7=>indirect_long, 0xA9=>immediate,
                  0xAD=>absolute, 0xAF=>absolute_long, 0xB1=>indirect_indexed,
@@ -1116,6 +1118,26 @@ impl CPU {
             let msb = n_bits!(cpu, m) - 1;
             cpu.borrow_mut().reg.p.n = (data >> msb) & 1 == 1;
             cpu.borrow_mut().reg.p.v = (data >> (msb - 1)) & 1 == 1;
+        }
+    }
+
+    fn trb<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let a = cpu.borrow().reg.get_a();
+            let zero = (cpu.borrow().reg.get_a() & data) == 0;
+            cpu.borrow_mut().reg.p.z = zero;
+            let data = yield_all!(CPU::write_pointer(cpu.clone(), pointer, data & !a));
+        }
+    }
+
+    fn tsb<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let a = cpu.borrow().reg.get_a();
+            let zero = (cpu.borrow().reg.get_a() & data) == 0;
+            cpu.borrow_mut().reg.p.z = zero;
+            let data = yield_all!(CPU::write_pointer(cpu.clone(), pointer, data | a));
         }
     }
 
