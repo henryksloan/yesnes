@@ -1244,8 +1244,8 @@ impl CPU {
             cpu.borrow_mut().reg.set_a(data);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1257,8 +1257,8 @@ impl CPU {
             // StatusRegister)
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1268,8 +1268,8 @@ impl CPU {
             cpu.borrow_mut().reg.set_y(data);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
