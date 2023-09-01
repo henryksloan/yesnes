@@ -11,10 +11,20 @@ use std::rc::Rc;
 
 use paste::paste;
 
-// TODO: There are emulation-mode and non-emulation-mode vectors
+// Emulation mode (6502) vectors
 pub const RESET_VECTOR: u24 = u24(0xFFFC);
+pub const NMI_VECTOR_E: u24 = u24(0xFFFA);
+pub const IRQ_VECTOR_E: u24 = u24(0xFFFE);
+pub const ABORT_VECTOR_E: u24 = u24(0xFFF8);
+pub const BRK_VECTOR_E: u24 = u24(0xFFFE);
+pub const COP_VECTOR_E: u24 = u24(0xFFF4);
 
+// 65C816 mode vectors
 pub const NMI_VECTOR: u24 = u24(0xFFEA);
+pub const IRQ_VECTOR: u24 = u24(0xFFEE);
+pub const ABORT_VECTOR: u24 = u24(0xFFF8);
+pub const BRK_VECTOR: u24 = u24(0xFFE6);
+pub const COP_VECTOR: u24 = u24(0xFFE4);
 
 macro_rules! yield_ticks {
     ($cpu_rc:ident, $gen_expr:expr) => {{
@@ -243,30 +253,22 @@ macro_rules! fetch_u16 {
 
 /// Translates a binary integer to a "Binary Coded Decimal"
 /// i.e. decimal(49) => 0x49
-fn bin_to_bcd(x: u16) -> Result<u16, String> {
-    if x > 9999 {
-        Err(format!("Invalid decimal {x:X} for BCD"))
-    } else {
-        let ones = x % 10;
-        let tens = (x / 10) % 10;
-        let hundreds = (x / 100) % 10;
-        let thousands = (x / 1000) % 10;
-        Ok((thousands << 12) | (hundreds << 8) | (tens << 4) | ones)
-    }
+fn bin_to_bcd(x: u16) -> u16 {
+    let ones = x % 10;
+    let tens = (x / 10) % 10;
+    let hundreds = (x / 100) % 10;
+    let thousands = (x / 1000) % 10;
+    (thousands << 12) | (hundreds << 8) | (tens << 4) | ones
 }
 
 /// Translates a "Binary Coded Decimal" to a binary integer
 /// i.e. 0x49 => decimal(49)
-fn bcd_to_bin(x: u16) -> Result<u16, String> {
+fn bcd_to_bin(x: u16) -> u16 {
     let ones = x & 0x000F;
     let tens = (x & 0x00F0) >> 4;
     let hundreds = (x & 0x0F00) >> 8;
     let thousands = (x & 0xF000) >> 12;
-    if ones > 9 || tens > 9 || hundreds > 9 || thousands > 9 {
-        Err(format!("Invalid BCD {x:X}"))
-    } else {
-        Ok(1000 * thousands + 100 * hundreds + 10 * tens + ones)
-    }
+    1000 * thousands + 100 * hundreds + 10 * tens + ones
 }
 
 #[derive(Copy, Clone)]
@@ -353,6 +355,7 @@ impl CPU {
             // TODO: Add COP (coprocessor interrupt)
             // TODO: Add ASL and LSR
             instrs!(cpu, opcode,
+                (brk, NoFlag; 0x0=>implied)
                 (clc, NoFlag; 0x18=>implied)
                 (cli, NoFlag; 0x58=>implied)
                 (cld, NoFlag; 0xD8=>implied)
@@ -507,15 +510,12 @@ impl CPU {
 
             if cpu.borrow().nmi_enqueued {
                 cpu.borrow_mut().nmi_enqueued = false;
-                let return_pb = cpu.borrow().reg.pc.bank();
-                let return_pc = cpu.borrow().reg.pc.lo16();
-                yield_ticks!(cpu, CPU::stack_push_u8(cpu.clone(), return_pb));
-                yield_ticks!(cpu, CPU::stack_push_u16(cpu.clone(), return_pc));
-                let p = cpu.borrow().reg.p.get();
-                // TODO: If E flag, do some special stuff
-                yield_ticks!(cpu, CPU::stack_push_u8(cpu.clone(), p));
-                cpu.borrow_mut().reg.pc =
-                    u24(ignore_yields!(Bus::read_u16(cpu.borrow().bus.clone(), NMI_VECTOR)) as u32);
+                let vector = if cpu.borrow().reg.p.e {
+                    NMI_VECTOR_E
+                } else {
+                    NMI_VECTOR
+                };
+                yield_ticks!(cpu, CPU::interrupt(cpu.clone(), vector));
             }
 
             // TODO: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
@@ -1480,31 +1480,35 @@ impl CPU {
         subtract: bool,
     ) -> impl InstructionGenerator + 'a {
         move || {
-            // TODO: Really need to check the 8- and 16-bit flag logic
-            let data = {
-                let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-                if subtract {
-                    ((mem_val as i16).wrapping_neg().wrapping_sub(1)) as u16
-                } else {
-                    mem_val
-                }
-            };
-
             let n_bits: u32 = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
                 8
             } else {
                 16
             };
+
+            // TODO: Really need to check the 8- and 16-bit flag logic
+            let data = {
+                let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+                if subtract {
+                    if n_bits == 8 {
+                        !(mem_val as i8 as i16) as u16
+                    } else {
+                        !(mem_val as i16) as u16
+                    }
+                } else {
+                    mem_val
+                }
+            };
+
             let carry = cpu.borrow().reg.p.c as u16;
             let result = if cpu.borrow().reg.p.d {
                 let temp = bcd_to_bin(cpu.borrow().reg.get_a())
-                    .unwrap()
-                    .wrapping_add(bcd_to_bin(data).unwrap())
+                    .wrapping_add(bcd_to_bin(data))
                     .wrapping_add(carry as u16);
                 let bcd_max = if n_bits == 8 { 100 } else { 10000 };
                 cpu.borrow_mut().reg.p.c = temp >= bcd_max;
                 // TODO: This sets V incorrectly; V seems to depend on the weird implementation of BCD adjustment
-                bin_to_bcd(temp % bcd_max).unwrap()
+                bin_to_bcd(temp % bcd_max)
             } else {
                 let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
                 cpu.borrow_mut().reg.p.c = temp > ((1 << n_bits) - 1);
@@ -1599,6 +1603,34 @@ impl CPU {
             cpu.borrow_mut().reg.pc = pointer.addr;
         }
     }
+
+    fn interrupt<'a>(cpu: Rc<RefCell<CPU>>, vector: u24) -> impl InstructionGenerator + 'a {
+        move || {
+            if !cpu.borrow().reg.p.e {
+                let return_pb = cpu.borrow().reg.pc.bank();
+                yield_all!(CPU::stack_push_u8(cpu.clone(), return_pb));
+            }
+            let return_pc = cpu.borrow().reg.pc.lo16();
+            yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
+            let p = cpu.borrow().reg.p.get();
+            // TODO: If E flag, do some special stuff with Break flag
+            yield_all!(CPU::stack_push_u8(cpu.clone(), p));
+            cpu.borrow_mut().reg.pc =
+                u24(yield_all!(Bus::read_u16(cpu.borrow().bus.clone(), vector)) as u32);
+        }
+    }
+
+    fn brk<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        let vector = if cpu.borrow().reg.p.e {
+            // The emulation mode break vector is the same as its IRQ vector
+            BRK_VECTOR_E
+        } else {
+            BRK_VECTOR
+        };
+        CPU::interrupt(cpu, vector)
+    }
+
+    // Rotate and shift instructions
 
     fn rotate_through_carry(cpu: Rc<RefCell<CPU>>, data: u16, left: bool) -> u16 {
         let n_bits = n_bits!(cpu, m);
@@ -1704,6 +1736,8 @@ impl CPU {
         }
     }
 
+    // Branch instructions
+
     fn bra<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
             let source_pc = cpu.borrow().reg.pc + 1u16;
@@ -1726,6 +1760,8 @@ impl CPU {
             // TODO: Maybe some bank cross cycles? Maybe only for emulation mode...
         }
     }
+
+    // Return instructions
 
     fn return_op<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl InstructionGenerator + 'a {
         move || {
