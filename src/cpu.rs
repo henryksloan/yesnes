@@ -477,6 +477,8 @@ impl CPU {
                 (push_p, NoFlag; 0x08=>implied)
                 (push_x, NoFlag; 0xDA=>implied)
                 (push_y, NoFlag; 0x5A=>implied)
+                (push_addr, NoFlag; 0xD4=>indirect, 0xF4=>absolute)
+                (push_relative_addr, NoFlag; 0x62=>implied)
                 (pull_a, NoFlag; 0x68=>implied)
                 (pull_b, NoFlag; 0xAB=>implied)
                 (pull_d, NoFlag; 0x2B=>implied)
@@ -590,7 +592,8 @@ impl CPU {
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
             // DO NOT SUBMIT: Remove debugging value
-            0x4210 => 0x80,
+            // DO NOT SUBMIT: This has bit6 set to simulate some weird open bus behavior for testing
+            0x4210 => 0xC0,
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
                 let channel_regs = self.io_reg.dma_channels[channel_index];
@@ -1257,7 +1260,7 @@ impl CPU {
             cpu.borrow_mut().reg.set_x(data);
             // TODO: Need to take into account e flag; probably factor out (maybe to
             // StatusRegister)
-            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            let n_bits = if cpu.borrow().reg.p.x_or_b { 8 } else { 16 };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
@@ -1268,7 +1271,7 @@ impl CPU {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             cpu.borrow_mut().reg.set_y(data);
-            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            let n_bits = if cpu.borrow().reg.p.x_or_b { 8 } else { 16 };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
@@ -1513,7 +1516,7 @@ impl CPU {
             cpu.borrow_mut().reg.p.v = overflow;
             cpu.borrow_mut().reg.set_a(result);
             let new_a = cpu.borrow_mut().reg.get_a();
-            cpu.borrow_mut().reg.p.n = (new_a >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (new_a >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = new_a == 0;
         }
     }
@@ -1540,8 +1543,7 @@ impl CPU {
 
             let n_bits = if flag || cpu.borrow().reg.p.e { 8 } else { 16 };
             cpu.borrow_mut().reg.p.c = result >= 0;
-            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
-            // TODO: I think this should take into account n_bits
+            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = result == 0;
         }
     }
@@ -1769,6 +1771,20 @@ impl CPU {
         move || {
             let data = cpu.borrow_mut().reg.pc.bank();
             yield_all!(CPU::stack_push_u8(cpu.clone(), data));
+        }
+    }
+
+    fn push_addr<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            yield_all!(CPU::stack_push_u16(cpu.clone(), pointer.addr.lo16()));
+        }
+    }
+
+    fn push_relative_addr<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            let source_pc = cpu.borrow().reg.pc + 2u16;
+            let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
+            yield_all!(CPU::stack_push_u16(cpu.clone(), dest_pc.lo16()));
         }
     }
 
