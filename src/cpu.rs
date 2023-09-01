@@ -425,6 +425,8 @@ impl CPU {
                  0x9D=>absolute_x, 0x9F=>absolute_long_x)
                 (stx, XFlag; 0x86=>direct, 0x8E=>absolute, 0x96=>direct_y)
                 (sty, XFlag; 0x84=>direct, 0x8C=>absolute, 0x94=>direct_x)
+                (mvp, NoFlag; 0x44=>implied)
+                (mvn, NoFlag; 0x54=>implied)
                 (inc, MFlag; 0xE6=>direct, 0xEE=>absolute, 0xF6=>direct_x,
                  0xFE=>absolute_x)
                 (ina, NoFlag; 0x1A=>implied)
@@ -1138,7 +1140,7 @@ impl CPU {
             let a = cpu.borrow().reg.get_a();
             let zero = (cpu.borrow().reg.get_a() & data) == 0;
             cpu.borrow_mut().reg.p.z = zero;
-            let data = yield_all!(CPU::write_pointer(cpu.clone(), pointer, data & !a));
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, data & !a));
         }
     }
 
@@ -1148,7 +1150,7 @@ impl CPU {
             let a = cpu.borrow().reg.get_a();
             let zero = (cpu.borrow().reg.get_a() & data) == 0;
             cpu.borrow_mut().reg.p.z = zero;
-            let data = yield_all!(CPU::write_pointer(cpu.clone(), pointer, data | a));
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, data | a));
         }
     }
 
@@ -1298,6 +1300,47 @@ impl CPU {
             let data = cpu.borrow().reg.get_y();
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
         }
+    }
+
+    fn block_transfer_op<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        increment: bool,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            let dst_bank = fetch!(cpu);
+            let src_bank = fetch!(cpu);
+            cpu.borrow_mut().reg.b = dst_bank;
+            let src_addr = u24(((src_bank as u32) << 16) | cpu.borrow().reg.x as u32);
+            let dst_addr = u24(((dst_bank as u32) << 16) | cpu.borrow().reg.y as u32);
+            let data = yield_all!(CPU::read_u8(cpu.clone(), src_addr));
+            yield_all!(CPU::write_u8(cpu.clone(), dst_addr, data));
+            if increment {
+                let x = cpu.borrow().reg.get_x();
+                cpu.borrow_mut().reg.set_x(x.wrapping_add(1));
+                let y = cpu.borrow().reg.get_y();
+                cpu.borrow_mut().reg.set_y(y.wrapping_add(1));
+            } else {
+                let x = cpu.borrow().reg.get_x();
+                cpu.borrow_mut().reg.set_x(x.wrapping_sub(1));
+                let y = cpu.borrow().reg.get_y();
+                cpu.borrow_mut().reg.set_y(y.wrapping_sub(1));
+            }
+            // The entire 16 bits of A is decremented, regardless of the M and E flags
+            let a = cpu.borrow().reg.a;
+            cpu.borrow_mut().reg.a = a.wrapping_sub(1);
+            if cpu.borrow().reg.a != 0xFFFF {
+                // If the transfer isn't complete, return the PC to the beginning of this instruction
+                cpu.borrow_mut().reg.pc -= 3u32;
+            }
+        }
+    }
+
+    fn mvp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        CPU::block_transfer_op(cpu, false)
+    }
+
+    fn mvn<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        CPU::block_transfer_op(cpu, true)
     }
 
     // TODO: Factor out increment and decrement instructions
