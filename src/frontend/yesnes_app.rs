@@ -1,7 +1,8 @@
-use super::app_window::ShortcutWindow;
+use super::app_window::{AppWindow, ShortcutWindow};
 use super::debugger_window::DebuggerWindow;
 use super::emu_thread::run_emu_thread;
 use super::memory_view_window::MemoryViewWindow;
+use super::screen_window::ScreenWindow;
 
 use crate::disassembler::Disassembler;
 use crate::snes::SNES;
@@ -16,6 +17,7 @@ struct YesnesApp {
     active_window_id: Option<egui::Id>,
     cpu_debugger_window: DebuggerWindow,
     memory_view_window: MemoryViewWindow,
+    screen_window: ScreenWindow,
 }
 
 impl Default for YesnesApp {
@@ -42,12 +44,14 @@ impl Default for YesnesApp {
         );
         let memory_view_window =
             MemoryViewWindow::new("CPU Memory Viewer".to_string(), snes.clone());
+        let screen_window = ScreenWindow::new("Screen".to_string(), snes.clone());
         Self {
             emu_paused: emu_paused.clone(),
             // TODO: Once I factor out the different windows to structs, get the window ID from there
             active_window_id: None,
             cpu_debugger_window,
             memory_view_window,
+            screen_window,
         }
     }
 }
@@ -64,6 +68,7 @@ impl eframe::App for YesnesApp {
             .show_with_shortcuts(ctx, paused, self.active_window_id);
         self.memory_view_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
+        self.screen_window.show(ctx, paused, self.active_window_id);
 
         ctx.memory_mut(|memory| {
             // Set the active window ID to the topmost (last-in-order) Area in the Middle order class

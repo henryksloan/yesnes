@@ -11,10 +11,20 @@ use std::rc::Rc;
 
 use paste::paste;
 
-// TODO: There are emulation-mode and non-emulation-mode vectors
+// Emulation mode (6502) vectors
 pub const RESET_VECTOR: u24 = u24(0xFFFC);
+pub const NMI_VECTOR_E: u24 = u24(0xFFFA);
+pub const IRQ_VECTOR_E: u24 = u24(0xFFFE);
+pub const ABORT_VECTOR_E: u24 = u24(0xFFF8);
+pub const BRK_VECTOR_E: u24 = u24(0xFFFE);
+pub const COP_VECTOR_E: u24 = u24(0xFFF4);
 
+// 65C816 mode vectors
 pub const NMI_VECTOR: u24 = u24(0xFFEA);
+pub const IRQ_VECTOR: u24 = u24(0xFFEE);
+pub const ABORT_VECTOR: u24 = u24(0xFFF8);
+pub const BRK_VECTOR: u24 = u24(0xFFE6);
+pub const COP_VECTOR: u24 = u24(0xFFE4);
 
 macro_rules! yield_ticks {
     ($cpu_rc:ident, $gen_expr:expr) => {{
@@ -110,26 +120,22 @@ macro_rules! push_instrs {
 }
 
 macro_rules! transfer_instrs {
-    (kind: $kind:ident, $from:ident => sp) => {
-        paste! {
-            fn [<transfer_ $from _sp>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
-                move || {
-                    dummy_yield!();
-                    let data = cpu.borrow().reg.[<get_ $from>]();
-                    cpu.borrow_mut().reg.set_sp(data);
-                }
-            }
-        }
-    };
     (kind: $kind:ident, $from:ident => $to:ident) => {
         paste! {
             fn [<transfer_ $from _ $to>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
                 move || {
                     dummy_yield!();
-                    let data = cpu.borrow().reg.[<get_ $from>]();
+                    let data = cpu.borrow().reg.$from & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
                     cpu.borrow_mut().reg.[<set_ $to>](data);
-                    cpu.borrow_mut().reg.p.n = ((data >> (n_bits!(cpu, $kind) - 1)) == 1);
-                    cpu.borrow_mut().reg.p.z = (data == 0);
+                    if n_bits!(cpu, $kind) == 16 {
+                        cpu.borrow_mut().reg.$to = data;
+                    } else {
+                        cpu.borrow_mut().reg.$to &= 0xFF00;
+                        cpu.borrow_mut().reg.$to |= data & 0xFF;
+                    }
+                    let result = cpu.borrow().reg.$to & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
+                    cpu.borrow_mut().reg.p.n = (result >> (n_bits!(cpu, $kind) - 1)) == 1;
+                    cpu.borrow_mut().reg.p.z = result == 0;
                 }
             }
         }
@@ -140,13 +146,11 @@ macro_rules! transfer_instrs {
         transfer_instrs!(kind: x, sp => x);
         transfer_instrs!(kind: m, y => a);
         transfer_instrs!(kind: m, x => a);
-        transfer_instrs!(kind: e, x => sp);
         transfer_instrs!(kind: x, x => y);
         transfer_instrs!(kind: x, y => x);
         transfer_instrs!(kind: u16, d => a);
         transfer_instrs!(kind: u16, a => d);
         transfer_instrs!(kind: u16, sp => a);
-        transfer_instrs!(kind: e, a => sp);
     }
 }
 
@@ -231,6 +235,36 @@ macro_rules! fetch {
     }};
 }
 
+macro_rules! fetch_u16 {
+    ($cpu_rc: ident) => {{
+        let lo = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
+        $cpu_rc.borrow_mut().reg.pc += 1u32;
+        let hi = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
+        $cpu_rc.borrow_mut().reg.pc += 1u32;
+        ((hi as u16) << 8) | lo as u16
+    }};
+}
+
+/// Translates a binary integer to a "Binary Coded Decimal"
+/// i.e. decimal(49) => 0x49
+fn bin_to_bcd(x: u16) -> u16 {
+    let ones = x % 10;
+    let tens = (x / 10) % 10;
+    let hundreds = (x / 100) % 10;
+    let thousands = (x / 1000) % 10;
+    (thousands << 12) | (hundreds << 8) | (tens << 4) | ones
+}
+
+/// Translates a "Binary Coded Decimal" to a binary integer
+/// i.e. 0x49 => decimal(49)
+fn bcd_to_bin(x: u16) -> u16 {
+    let ones = x & 0x000F;
+    let tens = (x & 0x00F0) >> 4;
+    let hundreds = (x & 0x0F00) >> 8;
+    let thousands = (x & 0xF000) >> 12;
+    1000 * thousands + 100 * hundreds + 10 * tens + ones
+}
+
 #[derive(Copy, Clone)]
 struct Pointer {
     pub addr: u24,
@@ -310,11 +344,9 @@ impl CPU {
             //     );
             // }
 
-            // TODO: Add BRK
-            // TODO: Add block move instructions
             // TODO: Add COP (coprocessor interrupt)
-            // TODO: Add ASL and LSR
             instrs!(cpu, opcode,
+                (brk, NoFlag; 0x0=>implied)
                 (clc, NoFlag; 0x18=>implied)
                 (cli, NoFlag; 0x58=>implied)
                 (cld, NoFlag; 0xD8=>implied)
@@ -335,6 +367,7 @@ impl CPU {
                 (branch_z_clear, NoFlag; 0xD0=>implied)
                 (branch_z_set, NoFlag; 0xF0=>implied)
                 (bra, NoFlag; 0x80=>implied)
+                (brl, NoFlag; 0x82=>implied)
                 (jsr, NoFlag; 0x20=>absolute, 0xFC=>absolute_indirect_indexed)
                 (jmp, NoFlag; 0x4C=>absolute, 0x6C=>absolute_indirect,
                  0x7C=>absolute_indirect_indexed)
@@ -361,8 +394,11 @@ impl CPU {
                  0x52=>indirect, 0x53=>stack_relative_indirect_indexed,
                  0x55=>direct_x, 0x57=>indirect_long_y, 0x59=>absolute_y,
                  0x5D=>absolute_x, 0x5F=>absolute_long_x)
+                (bit_immediate, MFlag; 0x89=>immediate)
                 (bit, MFlag; 0x24=>direct, 0x2C=>absolute, 0x34=>direct_x,
-                 0x3C=>absolute_x, 0x89=>immediate)
+                 0x3C=>absolute_x)
+                (tsb, MFlag; 0x04=>direct, 0x0C=>absolute)
+                (trb, MFlag; 0x14=>direct, 0x1C=>absolute)
                 (lda, MFlag; 0xA1=>indexed_indirect, 0xA3=>stack_relative,
                  0xA5=>direct, 0xA7=>indirect_long, 0xA9=>immediate,
                  0xAD=>absolute, 0xAF=>absolute_long, 0xB1=>indirect_indexed,
@@ -383,6 +419,8 @@ impl CPU {
                  0x9D=>absolute_x, 0x9F=>absolute_long_x)
                 (stx, XFlag; 0x86=>direct, 0x8E=>absolute, 0x96=>direct_y)
                 (sty, XFlag; 0x84=>direct, 0x8C=>absolute, 0x94=>direct_x)
+                (mvp, NoFlag; 0x44=>implied)
+                (mvn, NoFlag; 0x54=>implied)
                 (inc, MFlag; 0xE6=>direct, 0xEE=>absolute, 0xF6=>direct_x,
                  0xFE=>absolute_x)
                 (ina, NoFlag; 0x1A=>implied)
@@ -433,6 +471,8 @@ impl CPU {
                 (push_p, NoFlag; 0x08=>implied)
                 (push_x, NoFlag; 0xDA=>implied)
                 (push_y, NoFlag; 0x5A=>implied)
+                (push_addr, NoFlag; 0xD4=>indirect, 0xF4=>absolute)
+                (push_relative_addr, NoFlag; 0x62=>implied)
                 (pull_a, NoFlag; 0x68=>implied)
                 (pull_b, NoFlag; 0xAB=>implied)
                 (pull_d, NoFlag; 0x2B=>implied)
@@ -461,15 +501,12 @@ impl CPU {
 
             if cpu.borrow().nmi_enqueued {
                 cpu.borrow_mut().nmi_enqueued = false;
-                let return_pb = cpu.borrow().reg.pc.bank();
-                let return_pc = cpu.borrow().reg.pc.lo16();
-                yield_ticks!(cpu, CPU::stack_push_u8(cpu.clone(), return_pb));
-                yield_ticks!(cpu, CPU::stack_push_u16(cpu.clone(), return_pc));
-                let p = cpu.borrow().reg.p.get();
-                // TODO: If E flag, do some special stuff
-                yield_ticks!(cpu, CPU::stack_push_u8(cpu.clone(), p));
-                cpu.borrow_mut().reg.pc =
-                    u24(ignore_yields!(Bus::read_u16(cpu.borrow().bus.clone(), NMI_VECTOR)) as u32);
+                let vector = if cpu.borrow().reg.p.e {
+                    NMI_VECTOR_E
+                } else {
+                    NMI_VECTOR
+                };
+                yield_ticks!(cpu, CPU::interrupt(cpu.clone(), vector));
             }
 
             // TODO: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
@@ -546,7 +583,8 @@ impl CPU {
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
             // DO NOT SUBMIT: Remove debugging value
-            0x4210 => 0x80,
+            // DO NOT SUBMIT: This has bit6 set to simulate some weird open bus behavior for testing
+            0x4210 => 0xC0,
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
                 let channel_regs = self.io_reg.dma_channels[channel_index];
@@ -716,7 +754,8 @@ impl CPU {
     fn stack_pull_u8<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u8> + 'a {
         // TODO: Does 0x100 ever get used, namely in emulation mode?
         move || {
-            cpu.borrow_mut().reg.sp += 1;
+            let sp = cpu.borrow().reg.sp;
+            cpu.borrow_mut().reg.sp = sp.wrapping_add(1);
             let val = yield_all!(CPU::read_u8(cpu.clone(), u24(cpu.borrow().reg.sp as u32)));
             val
         }
@@ -760,7 +799,8 @@ impl CPU {
                 u24(cpu.borrow().reg.sp as u32),
                 data
             ));
-            cpu.borrow_mut().reg.sp -= 1;
+            let sp = cpu.borrow().reg.sp;
+            cpu.borrow_mut().reg.sp = sp.wrapping_sub(1);
         }
     }
 
@@ -1041,7 +1081,7 @@ impl CPU {
             let val = cpu.borrow().reg.get_a() | data;
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
-            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
@@ -1049,10 +1089,10 @@ impl CPU {
     fn eor<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let val = cpu.borrow().reg.get_a() | data;
+            let val = cpu.borrow().reg.get_a() ^ data;
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
-            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = val == 0;
         }
     }
@@ -1063,8 +1103,19 @@ impl CPU {
             let val = cpu.borrow().reg.get_a() & data;
             cpu.borrow_mut().reg.set_a(val);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
-            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (val >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = val == 0;
+        }
+    }
+
+    fn bit_immediate<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        pointer: Pointer,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let zero = (cpu.borrow().reg.get_a() & data) == 0;
+            cpu.borrow_mut().reg.p.z = zero;
         }
     }
 
@@ -1076,6 +1127,26 @@ impl CPU {
             let msb = n_bits!(cpu, m) - 1;
             cpu.borrow_mut().reg.p.n = (data >> msb) & 1 == 1;
             cpu.borrow_mut().reg.p.v = (data >> (msb - 1)) & 1 == 1;
+        }
+    }
+
+    fn trb<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let a = cpu.borrow().reg.get_a();
+            let zero = (cpu.borrow().reg.get_a() & data) == 0;
+            cpu.borrow_mut().reg.p.z = zero;
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, data & !a));
+        }
+    }
+
+    fn tsb<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            let a = cpu.borrow().reg.get_a();
+            let zero = (cpu.borrow().reg.get_a() & data) == 0;
+            cpu.borrow_mut().reg.p.z = zero;
+            yield_all!(CPU::write_pointer(cpu.clone(), pointer, data | a));
         }
     }
 
@@ -1152,8 +1223,8 @@ impl CPU {
             let (hi, lo) = (a >> 8, a & 0xFF);
             let result = (lo << 8) | hi;
             cpu.borrow_mut().reg.a = result;
-            cpu.borrow_mut().reg.p.n = (lo >> 7) == 1;
-            cpu.borrow_mut().reg.p.z = lo == 0;
+            cpu.borrow_mut().reg.p.n = (hi >> 7) == 1;
+            cpu.borrow_mut().reg.p.z = hi == 0;
         }
     }
 
@@ -1171,8 +1242,8 @@ impl CPU {
             cpu.borrow_mut().reg.set_a(data);
             let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1182,10 +1253,10 @@ impl CPU {
             cpu.borrow_mut().reg.set_x(data);
             // TODO: Need to take into account e flag; probably factor out (maybe to
             // StatusRegister)
-            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            let n_bits = if cpu.borrow().reg.p.x_or_b { 8 } else { 16 };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1193,10 +1264,10 @@ impl CPU {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             cpu.borrow_mut().reg.set_y(data);
-            let n_bits = if cpu.borrow().reg.p.m { 8 } else { 16 };
+            let n_bits = if cpu.borrow().reg.p.x_or_b { 8 } else { 16 };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1227,6 +1298,72 @@ impl CPU {
         }
     }
 
+    fn transfer_a_sp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let a = cpu.borrow().reg.a;
+            if cpu.borrow().reg.p.e {
+                cpu.borrow_mut().reg.sp = (1 << 8) | (a & 0xFF);
+            } else {
+                cpu.borrow_mut().reg.sp = a;
+            }
+        }
+    }
+
+    fn transfer_x_sp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            dummy_yield!();
+            let x = cpu.borrow().reg.x;
+            if cpu.borrow().reg.p.e {
+                cpu.borrow_mut().reg.sp &= 0xFF00;
+                cpu.borrow_mut().reg.sp |= x & 0xFF;
+            } else {
+                cpu.borrow_mut().reg.sp = x;
+            }
+        }
+    }
+
+    fn block_transfer_op<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        increment: bool,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            let dst_bank = fetch!(cpu);
+            let src_bank = fetch!(cpu);
+            cpu.borrow_mut().reg.b = dst_bank;
+            let src_addr = u24(((src_bank as u32) << 16) | cpu.borrow().reg.x as u32);
+            let dst_addr = u24(((dst_bank as u32) << 16) | cpu.borrow().reg.y as u32);
+            let data = yield_all!(CPU::read_u8(cpu.clone(), src_addr));
+            yield_all!(CPU::write_u8(cpu.clone(), dst_addr, data));
+            if increment {
+                let x = cpu.borrow().reg.get_x();
+                cpu.borrow_mut().reg.set_x(x.wrapping_add(1));
+                let y = cpu.borrow().reg.get_y();
+                cpu.borrow_mut().reg.set_y(y.wrapping_add(1));
+            } else {
+                let x = cpu.borrow().reg.get_x();
+                cpu.borrow_mut().reg.set_x(x.wrapping_sub(1));
+                let y = cpu.borrow().reg.get_y();
+                cpu.borrow_mut().reg.set_y(y.wrapping_sub(1));
+            }
+            // The entire 16 bits of A is decremented, regardless of the M and E flags
+            let a = cpu.borrow().reg.a;
+            cpu.borrow_mut().reg.a = a.wrapping_sub(1);
+            if cpu.borrow().reg.a != 0xFFFF {
+                // If the transfer isn't complete, return the PC to the beginning of this instruction
+                cpu.borrow_mut().reg.pc -= 3u32;
+            }
+        }
+    }
+
+    fn mvp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        CPU::block_transfer_op(cpu, false)
+    }
+
+    fn mvn<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        CPU::block_transfer_op(cpu, true)
+    }
+
     // TODO: Factor out increment and decrement instructions
     fn ina<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
@@ -1240,7 +1377,7 @@ impl CPU {
             };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1256,7 +1393,7 @@ impl CPU {
             };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1272,7 +1409,7 @@ impl CPU {
             };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1288,7 +1425,7 @@ impl CPU {
             };
             // TODO: Factor out these flag updates
             cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = data == 0;
+            cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
 
@@ -1361,11 +1498,21 @@ impl CPU {
         subtract: bool,
     ) -> impl InstructionGenerator + 'a {
         move || {
+            let n_bits: u32 = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
+                8
+            } else {
+                16
+            };
+
             // TODO: Really need to check the 8- and 16-bit flag logic
             let data = {
                 let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
                 if subtract {
-                    ((mem_val as i16).wrapping_neg().wrapping_sub(1)) as u16
+                    if n_bits == 8 {
+                        !(mem_val as i8 as i16) as u16
+                    } else {
+                        !(mem_val as i16) as u16
+                    }
                 } else {
                     mem_val
                 }
@@ -1373,23 +1520,26 @@ impl CPU {
 
             let carry = cpu.borrow().reg.p.c as u16;
             let result = if cpu.borrow().reg.p.d {
-                unimplemented!("BCD Decimal mode is not yet implemented");
+                let temp = bcd_to_bin(cpu.borrow().reg.get_a())
+                    .wrapping_add(bcd_to_bin(data))
+                    .wrapping_add(carry as u16);
+                let bcd_max = if n_bits == 8 { 100 } else { 10000 };
+                cpu.borrow_mut().reg.p.c = temp >= bcd_max;
+                // TODO: This sets V incorrectly; V seems to depend on the weird implementation of BCD adjustment
+                bin_to_bcd(temp % bcd_max)
             } else {
                 let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
-                cpu.borrow_mut().reg.p.c = temp > 0xFFFF;
+                cpu.borrow_mut().reg.p.c = temp > ((1 << n_bits) - 1);
                 temp as u16
             };
 
-            let overflow = ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & 0x80) != 0;
+            let overflow =
+                ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & (1 << (n_bits - 1))) != 0;
             cpu.borrow_mut().reg.p.v = overflow;
             cpu.borrow_mut().reg.set_a(result);
-            let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
-                8
-            } else {
-                16
-            };
-            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
-            cpu.borrow_mut().reg.p.z = result == 0;
+            let new_a = cpu.borrow_mut().reg.get_a();
+            cpu.borrow_mut().reg.p.n = (new_a >> (n_bits - 1)) & 1 == 1;
+            cpu.borrow_mut().reg.p.z = new_a == 0;
         }
     }
 
@@ -1415,7 +1565,7 @@ impl CPU {
 
             let n_bits = if flag || cpu.borrow().reg.p.e { 8 } else { 16 };
             cpu.borrow_mut().reg.p.c = result >= 0;
-            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = result == 0;
         }
     }
@@ -1472,6 +1622,35 @@ impl CPU {
         }
     }
 
+    fn interrupt<'a>(cpu: Rc<RefCell<CPU>>, vector: u24) -> impl InstructionGenerator + 'a {
+        move || {
+            if !cpu.borrow().reg.p.e {
+                let return_pb = cpu.borrow().reg.pc.bank();
+                yield_all!(CPU::stack_push_u8(cpu.clone(), return_pb));
+            }
+            let return_pc = cpu.borrow().reg.pc.lo16();
+            yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
+            let p = cpu.borrow().reg.p.get();
+            // TODO: If E flag, do some special stuff with Break flag
+            yield_all!(CPU::stack_push_u8(cpu.clone(), p));
+            cpu.borrow_mut().reg.p.i = true;
+            cpu.borrow_mut().reg.pc =
+                u24(yield_all!(Bus::read_u16(cpu.borrow().bus.clone(), vector)) as u32);
+        }
+    }
+
+    fn brk<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        let vector = if cpu.borrow().reg.p.e {
+            // The emulation mode break vector is the same as its IRQ vector
+            BRK_VECTOR_E
+        } else {
+            BRK_VECTOR
+        };
+        CPU::interrupt(cpu, vector)
+    }
+
+    // Rotate and shift instructions
+
     fn rotate_through_carry(cpu: Rc<RefCell<CPU>>, data: u16, left: bool) -> u16 {
         let n_bits = n_bits!(cpu, m);
         let leftmost_mask = 1 << (n_bits - 1);
@@ -1491,7 +1670,7 @@ impl CPU {
             }
         };
         cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
-        cpu.borrow_mut().reg.p.z = result == 0;
+        cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
 
@@ -1538,7 +1717,7 @@ impl CPU {
         cpu.borrow_mut().reg.p.c = (data & check_mask) == check_mask;
         let result = if left { data << 1 } else { data >> 1 };
         cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
-        cpu.borrow_mut().reg.p.z = result == 0;
+        cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
 
@@ -1576,6 +1755,8 @@ impl CPU {
         }
     }
 
+    // Branch instructions
+
     fn bra<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
             let source_pc = cpu.borrow().reg.pc + 1u16;
@@ -1588,6 +1769,18 @@ impl CPU {
             }
         }
     }
+
+    fn brl<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            let source_pc = cpu.borrow().reg.pc + 2u16;
+            let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
+            cpu.borrow_mut().reg.pc = dest_pc;
+            yield_all!(CPU::step(cpu.clone(), 1));
+            // TODO: Maybe some bank cross cycles? Maybe only for emulation mode...
+        }
+    }
+
+    // Return instructions
 
     fn return_op<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl InstructionGenerator + 'a {
         move || {
@@ -1633,6 +1826,20 @@ impl CPU {
         move || {
             let data = cpu.borrow_mut().reg.pc.bank();
             yield_all!(CPU::stack_push_u8(cpu.clone(), data));
+        }
+    }
+
+    fn push_addr<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionGenerator + 'a {
+        move || {
+            yield_all!(CPU::stack_push_u16(cpu.clone(), pointer.addr.lo16()));
+        }
+    }
+
+    fn push_relative_addr<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
+        move || {
+            let source_pc = cpu.borrow().reg.pc + 2u16;
+            let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
+            yield_all!(CPU::stack_push_u16(cpu.clone(), dest_pc.lo16()));
         }
     }
 

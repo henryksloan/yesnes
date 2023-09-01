@@ -68,7 +68,7 @@ impl SNES {
         self.scheduler.run_instruction_debug()
     }
 
-    pub fn debug_dump_vram(&self) {
-        self.ppu.borrow().debug_dump_vram();
+    pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
+        self.ppu.borrow().debug_get_frame()
     }
 }
