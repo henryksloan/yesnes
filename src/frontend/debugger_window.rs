@@ -13,7 +13,7 @@ use crossbeam::channel;
 use egui_extras::{Column, TableBuilder};
 
 use crate::cpu::registers::Registers;
-use crate::disassembler::Disassembler;
+use crate::disassembler::{DebugCpu, DisassembledInstruction, Disassembler};
 use crate::snes::SNES;
 use crate::u24::u24;
 
@@ -21,7 +21,7 @@ pub struct DebuggerWindow {
     id: egui::Id,
     title: String,
     snes: Arc<Mutex<SNES>>,
-    disassembler: Arc<Mutex<Disassembler>>,
+    disassembler: Arc<Mutex<Disassembler<DebugCpu>>>,
     emu_paused: Arc<Mutex<bool>>,
     registers_mirror: Registers,
     scroll_to_row: Option<(usize, egui::Align)>,
@@ -36,7 +36,7 @@ impl DebuggerWindow {
     pub fn new(
         title: String,
         snes: Arc<Mutex<SNES>>,
-        disassembler: Arc<Mutex<Disassembler>>,
+        disassembler: Arc<Mutex<Disassembler<DebugCpu>>>,
         emu_paused: Arc<Mutex<bool>>,
         emu_message_sender: channel::Sender<EmuThreadMessage>,
     ) -> Self {
@@ -159,7 +159,7 @@ impl DebuggerWindow {
                 let next_line = self.disassembler.lock().unwrap().get_line(cpu_pc_line + 1);
                 let _ = self
                     .emu_message_sender
-                    .send(EmuThreadMessage::RunToAddress(next_line.addr));
+                    .send(EmuThreadMessage::RunToAddress(next_line.0));
             }
             self.button_with_shortcut(ui, DisassemblerShortcut::Reset, "Reset");
         });
@@ -185,13 +185,13 @@ impl DebuggerWindow {
                 // Probably worth making that a message from emu thread to this thread.
                 let _ = self
                     .emu_message_sender
-                    .send(EmuThreadMessage::RunToAddress(u24(addr)));
+                    .send(EmuThreadMessage::RunToAddress(addr as usize));
             }
         });
     }
 
     fn disassembly_row(
-        disassembler: &Disassembler,
+        disassembler: &Disassembler<DebugCpu>,
         paused: bool,
         registers_mirror: &Registers,
         prev_top_row: &mut Option<usize>,
@@ -204,9 +204,9 @@ impl DebuggerWindow {
         }
         *prev_bottom_row = Some(row_index);
         let disassembly_line = disassembler.get_line(row_index);
-        let row_addr = disassembly_line.addr;
+        let row_addr = disassembly_line.0;
         row.col(|ui| {
-            if paused && row_addr == registers_mirror.pc {
+            if paused && row_addr == registers_mirror.pc.into() {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }
             ui.label(format!("{:08X}", row_addr));
@@ -214,9 +214,9 @@ impl DebuggerWindow {
         row.col(|ui| {
             ui.label(format!(
                 "{} {:?}({:08X})",
-                disassembly_line.instruction.instruction_data.mnemonic(),
-                disassembly_line.instruction.instruction_data.mode,
-                disassembly_line.instruction.operand,
+                disassembly_line.1.mnemonic(),
+                disassembly_line.1.instruction_data.mode,
+                disassembly_line.1.operand,
             ));
         });
     }

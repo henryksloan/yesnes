@@ -67,9 +67,33 @@ impl fmt::LowerHex for u24 {
     }
 }
 
-impl<T: Into<u32>> From<T> for u24 {
-    fn from(num: T) -> Self {
-        u24(num.into() & 0xFFFFFF)
+impl Into<usize> for u24 {
+    fn into(self) -> usize {
+        self.raw()
+    }
+}
+
+impl From<usize> for u24 {
+    fn from(num: usize) -> Self {
+        u24(num as u32)
+    }
+}
+
+impl From<u32> for u24 {
+    fn from(num: u32) -> Self {
+        u24(num & 0xFFFFFF)
+    }
+}
+
+impl From<u16> for u24 {
+    fn from(num: u16) -> Self {
+        u24(num as u32)
+    }
+}
+
+impl From<u8> for u24 {
+    fn from(num: u8) -> Self {
+        u24(num as u32)
     }
 }
 

@@ -4,7 +4,7 @@ use super::emu_thread::run_emu_thread;
 use super::memory_view_window::MemoryViewWindow;
 use super::screen_window::ScreenWindow;
 
-use crate::disassembler::Disassembler;
+use crate::disassembler::{DebugCpu, Disassembler};
 use crate::snes::SNES;
 
 use crossbeam::channel;
@@ -23,9 +23,9 @@ struct YesnesApp {
 impl Default for YesnesApp {
     fn default() -> Self {
         let snes = Arc::new(Mutex::new(SNES::new()));
-        let disassembler = Arc::new(Mutex::new(Disassembler::new(
+        let disassembler = Arc::new(Mutex::new(Disassembler::new(DebugCpu::new(
             snes.lock().unwrap().bus.clone(),
-        )));
+        ))));
         disassembler.lock().unwrap().disassemble();
         let (sender, receiver) = channel::bounded(1024);
         let emu_paused = Arc::new(Mutex::new(true));
