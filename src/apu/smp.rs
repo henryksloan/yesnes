@@ -628,7 +628,6 @@ impl SMP {
                 0x0000..=0x00EF => smp.borrow().ram[addr as usize],
                 0x00F0..=0x00FF => yield_all!(SMP::read_io_reg(smp.clone(), addr)),
                 0x0100..=0xFFBF => smp.borrow_mut().ram[addr as usize],
-                // TODO: Use control register to determine RAM/ROM
                 0xFFC0..=0xFFFF => {
                     if smp.borrow().io_reg.control.rom_at_high_addresses() {
                         BOOT_ROM[addr as usize - 0xFFC0]

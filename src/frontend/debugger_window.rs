@@ -120,6 +120,21 @@ impl DebuggerWindow {
                         status_register_panel(ui, &mut self.registers_mirror.p);
                     });
             });
+            // TODO: Better system to surface timing details
+            // I like the idea of a dedicated window for scan timing, plus specifics (subcycle) in each chip's debugger window
+            if paused {
+                ui.label(format!(
+                    "{}",
+                    self.snes
+                        .lock()
+                        .unwrap()
+                        .cpu
+                        .borrow()
+                        .ppu_counter
+                        .borrow()
+                        .h_ticks
+                ));
+            }
         });
         if paused {
             let snes = self.snes.lock().unwrap();

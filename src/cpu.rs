@@ -28,12 +28,14 @@ pub const COP_VECTOR: u24 = u24(0xFFE4);
 
 macro_rules! yield_ticks {
     ($cpu_rc:ident, $gen_expr:expr) => {{
-        let ticks_to_yield = $cpu_rc.borrow().ticks_run;
-        $cpu_rc.borrow_mut().ticks_run = 0;
         let mut gen = $gen_expr;
         loop {
             match Pin::new(&mut gen).resume(()) {
-                GeneratorState::Yielded(yield_reason) => yield (yield_reason, ticks_to_yield),
+                GeneratorState::Yielded(yield_reason) => {
+                    let ticks_to_yield = $cpu_rc.borrow().ticks_run;
+                    $cpu_rc.borrow_mut().ticks_run = 0;
+                    yield (yield_reason, ticks_to_yield)
+                }
                 GeneratorState::Complete(out) => break out,
             }
         }
@@ -276,7 +278,7 @@ pub struct CPU {
     reg: Registers,
     io_reg: IoRegisters,
     bus: Rc<RefCell<Bus>>,
-    ppu_counter: Rc<RefCell<PpuCounter>>,
+    pub ppu_counter: Rc<RefCell<PpuCounter>>,
     dmas_enqueued: Option<u8>,
     nmi_enqueued: bool,
     ticks_run: u64,
@@ -557,10 +559,10 @@ impl CPU {
         let addr = addr.raw();
         if addr & 0x408000 != 0 {
             if addr & 0x800000 != 0 {
-                // 00-3f:8000-ffff; 40-7f:0000-ffff
+                // 80-bf:8000-ffff; c0-ff:0000-ffff
                 self.io_reg.waitstate_control.high_rom_cycles()
             } else {
-                // 80-bf:8000-ffff; c0-ff:0000-ffff
+                // 00-3f:8000-ffff; 40-7f:0000-ffff
                 8
             }
         } else if addr.wrapping_add(0x6000) & 0x4000 != 0 {
@@ -688,6 +690,14 @@ impl CPU {
             let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
             yield_all!(CPU::step(cpu.clone(), 4));
             data
+        }
+    }
+
+    fn read_u16<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u16> + 'a {
+        move || {
+            let lo = yield_all!(CPU::read_u8(cpu.clone(), addr)) as u16;
+            let hi = yield_all!(CPU::read_u8(cpu.clone(), addr + 1u32)) as u16;
+            (hi << 8) | lo
         }
     }
 
@@ -1634,8 +1644,7 @@ impl CPU {
             // TODO: If E flag, do some special stuff with Break flag
             yield_all!(CPU::stack_push_u8(cpu.clone(), p));
             cpu.borrow_mut().reg.p.i = true;
-            cpu.borrow_mut().reg.pc =
-                u24(yield_all!(Bus::read_u16(cpu.borrow().bus.clone(), vector)) as u32);
+            cpu.borrow_mut().reg.pc = u24(yield_all!(CPU::read_u16(cpu.clone(), vector)) as u32);
         }
     }
 
