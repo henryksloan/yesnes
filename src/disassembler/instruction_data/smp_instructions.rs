@@ -19,11 +19,7 @@ pub enum SmpAddressingMode {
     AccImmediate,
     XImmediate,
     YImmediate,
-    ImmediateMFlag,
-    ImmediateXFlag,
-    ImmediateByte,
     PcRelative,
-    PcRelativeLong,
     YRelative,
     Direct,
     DirectX,
@@ -36,8 +32,6 @@ pub enum SmpAddressingMode {
     XDirect,
     YDirect,
     YaDirect,
-    DirectIndexedX,
-    DirectIndexedY,
     XIndexedDirect,
     XYIndexedDirect,
     YXIndexedDirect,
@@ -49,7 +43,6 @@ pub enum SmpAddressingMode {
     XIndexedIndirectAcc,
     YIndexedDirectX,
     XIndexedDirectY,
-    Indirect,
     AccIndirectX,
     IndirectXAcc,
     IndirectXIndirectY,
@@ -58,10 +51,6 @@ pub enum SmpAddressingMode {
     YIndexedIndirectAcc,
     IndirectIncrementXAcc,
     AccIndirectIncrementX,
-    IndexedIndirectX,
-    IndirectIndexedY,
-    IndirectLong,
-    IndirectIndexedYLong,
     Absolute,
     AccAbsolute,
     XAbsolute,
@@ -77,16 +66,30 @@ pub enum SmpAddressingMode {
     CarryAbsoluteBit,
     AbsoluteBitCarry,
     CarryAbsoluteNotBit,
-    AbsoluteLong,
-    AbsoluteLongX,
-    StackRelative,
-    StackRelativeIndirectIndexed,
-    AbsoluteIndirect,
-    AbsoluteIndirectLong,
-    AbsoluteIndirectIndexed,
-    BlockMove,
     TVector(u8),
     PVector,
+}
+
+impl SmpAddressingMode {
+    pub(in crate::disassembler) fn operand_bytes(&self) -> usize {
+        match *self {
+            _ => 0, // DO NOT SUBMIT
+        }
+    }
+
+    // pub fn is_indirect(&self) -> bool {
+    //     matches!(
+    //         *self,
+    //         IndexedIndirectX
+    //             | IndirectIndexedY
+    //             | IndirectLong
+    //             | IndirectIndexedYLong
+    //             | StackRelativeIndirectIndexed
+    //             | AbsoluteIndirect
+    //             | AbsoluteIndirectLong
+    //             | AbsoluteIndirectIndexed
+    //     )
+    // }
 }
 
 #[rustfmt::skip]
@@ -110,20 +113,22 @@ pub struct SmpInstructionData {
     pub mode: SmpAddressingMode,
 }
 
+impl crate::disassembler::InstructionData<SmpAnalysisState> for SmpInstructionData {
+    fn operand_bytes(&self, _analysis_state: &SmpAnalysisState) -> usize {
+        self.mode.operand_bytes()
+    }
+}
+
 impl SmpInstructionData {
     pub fn mnemonic(&self) -> String {
         format!("{:?}", self.instruction)
     }
 }
 
-// impl crate::disassembler::InstructionData<SmpAnalysisState> for SmpInstructionData {
-//     fn operand_bytes(&self, analysis_state: &SmpAnalysisState) -> usize {
-//         self.mode.operand_bytes(analysis_state)
-//     }
-// }
-
 use SmpAddressingMode::*;
 use SmpInstruction::*;
+
+use crate::disassembler::debug_smp::SmpAnalysisState;
 #[rustfmt::skip]
 pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x00 - 0x0f

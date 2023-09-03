@@ -96,26 +96,6 @@ impl CpuDisassembledInstruction {
         }
     }
 
-    pub(self) fn update_analysis_state(&self, analysis_state: &mut CpuAnalysisState) {
-        if let Some(new_m_flag) = self.new_m_flag {
-            analysis_state.reg.m = new_m_flag;
-        }
-        if let Some(new_x_flag) = self.new_x_flag {
-            analysis_state.reg.x = new_x_flag;
-        }
-        if self.assume_clears_e {
-            analysis_state.reg.e = false;
-        }
-        if matches!(self.instruction_data.instruction, CpuInstruction::PHP) {
-            analysis_state.p_stack.push(analysis_state.reg);
-        }
-        if matches!(self.instruction_data.instruction, CpuInstruction::PLP) {
-            if let Some(popped) = analysis_state.p_stack.pop() {
-                analysis_state.reg = popped;
-            }
-        }
-    }
-
     pub fn is_conditional_branch(&self) -> bool {
         use CpuInstruction::*;
         matches!(
@@ -159,7 +139,23 @@ impl DisassembledInstruction<CpuAnalysisState, CpuInstructionData> for CpuDisass
     }
 
     fn update_analysis_state(&self, analysis_state: &mut CpuAnalysisState) {
-        self.update_analysis_state(analysis_state);
+        if let Some(new_m_flag) = self.new_m_flag {
+            analysis_state.reg.m = new_m_flag;
+        }
+        if let Some(new_x_flag) = self.new_x_flag {
+            analysis_state.reg.x = new_x_flag;
+        }
+        if self.assume_clears_e {
+            analysis_state.reg.e = false;
+        }
+        if matches!(self.instruction_data.instruction, CpuInstruction::PHP) {
+            analysis_state.p_stack.push(analysis_state.reg);
+        }
+        if matches!(self.instruction_data.instruction, CpuInstruction::PLP) {
+            if let Some(popped) = analysis_state.p_stack.pop() {
+                analysis_state.reg = popped;
+            }
+        }
     }
 }
 

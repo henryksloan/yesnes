@@ -1,5 +1,6 @@
 // Some of the design ideas for this disassembler come from bsnes-plus and Higan-S
 pub mod debug_cpu;
+pub mod debug_smp;
 pub mod instruction_data;
 
 pub use debug_cpu::{CpuAnalysisState, CpuDisassembledInstruction, DebugCpu};
@@ -24,7 +25,7 @@ pub trait DisassembledInstruction<State, Data: InstructionData<State>> {
 
 // TODO: Figure out a way to make this not public
 pub trait DebugProcessor {
-    type Address: Into<usize> + From<usize> + Copy;
+    type Address: Into<usize> + TryFrom<usize> + Copy + Default;
     type AnalysisState: Default + Clone;
     type Decoded: InstructionData<Self::AnalysisState> + Copy;
     type Disassembled: DisassembledInstruction<Self::AnalysisState, Self::Decoded> + Clone + Copy;
@@ -39,6 +40,7 @@ pub trait DebugProcessor {
         disassembled: &Self::Disassembled,
     ) -> AnalysisStep<Self::Address>;
 }
+
 pub struct Disassembler<D: DebugProcessor> {
     debug_processor: D,
     disassembly_cache: Vec<Option<D::Disassembled>>,
@@ -90,10 +92,9 @@ impl<D: DebugProcessor> Disassembler<D> {
             for i in 0..operand_bytes {
                 let operand_byte_offset = operand_bytes - i;
                 operand <<= 8;
-                operand |= self
-                    .debug_processor
-                    .peak_u8(D::Address::from(addr.into() + operand_byte_offset))
-                    as u32;
+                operand |= self.debug_processor.peak_u8(
+                    D::Address::try_from(addr.into() + operand_byte_offset).unwrap_or_default(),
+                ) as u32;
             }
             let disassembled = D::Disassembled::from_instruction_data(decoded, operand);
             disassembled.update_analysis_state(analysis_state);
@@ -104,15 +105,18 @@ impl<D: DebugProcessor> Disassembler<D> {
                 AnalysisStep::BranchAndContinue(dest_addr) => {
                     self.analyze(dest_addr, &mut analysis_state.clone());
                     // TODO: Factor out this address change
-                    addr = D::Address::from(addr.into() + (usize::from(operand_bytes) + 1));
+                    addr = D::Address::try_from(addr.into() + (usize::from(operand_bytes) + 1))
+                        .unwrap_or_default();
                 }
                 AnalysisStep::Call(dest_addr) => {
                     self.analyze(dest_addr, analysis_state);
-                    addr = D::Address::from(addr.into() + (usize::from(operand_bytes) + 1));
+                    addr = D::Address::try_from(addr.into() + (usize::from(operand_bytes) + 1))
+                        .unwrap_or_default();
                 }
                 AnalysisStep::Branch(dest_addr) => addr = dest_addr,
                 AnalysisStep::Continue => {
-                    addr = D::Address::from(addr.into() + (usize::from(operand_bytes) + 1));
+                    addr = D::Address::try_from(addr.into() + (usize::from(operand_bytes) + 1))
+                        .unwrap_or_default();
                 }
             }
         }
