@@ -7,7 +7,7 @@ pub struct SNES {
     pub cpu: Rc<RefCell<CPU>>,
     pub bus: Rc<RefCell<Bus>>,
     ppu: Rc<RefCell<PPU>>,
-    smp: Rc<RefCell<SMP>>,
+    pub smp: Rc<RefCell<SMP>>,
 
     scheduler: Scheduler,
 }

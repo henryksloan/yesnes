@@ -4,6 +4,9 @@ pub mod debug_smp;
 pub mod instruction_data;
 
 pub use debug_cpu::{CpuAnalysisState, CpuDisassembledInstruction, DebugCpu};
+pub use debug_smp::{DebugSmp, SmpAnalysisState, SmpDisassembledInstruction};
+
+use crate::snes::SNES;
 
 pub enum AnalysisStep<Address> {
     Break,
@@ -19,6 +22,7 @@ pub trait InstructionData<State> {
 
 pub trait DisassembledInstruction<State, Data: InstructionData<State>> {
     fn mnemonic(&self) -> String;
+    fn mode_str(&self) -> String;
     fn from_instruction_data(data: Data, operand: u32) -> Self;
     fn update_analysis_state(&self, analysis_state: &mut State);
 }
@@ -29,6 +33,7 @@ pub trait DebugProcessor {
     type AnalysisState: Default + Clone;
     type Decoded: InstructionData<Self::AnalysisState> + Copy;
     type Disassembled: DisassembledInstruction<Self::AnalysisState, Self::Decoded> + Clone + Copy;
+    type Registers;
 
     const ADDR_SPACE_SIZE: usize;
     const INSTRUCTION_DATA: [Self::Decoded; 256];
@@ -39,6 +44,9 @@ pub trait DebugProcessor {
         addr: Self::Address,
         disassembled: &Self::Disassembled,
     ) -> AnalysisStep<Self::Address>;
+    fn registers(snes: &SNES) -> Self::Registers;
+    fn set_registers(snes: &mut SNES, registers: &Self::Registers);
+    fn pc(registers: &Self::Registers) -> Self::Address;
 }
 
 pub struct Disassembler<D: DebugProcessor> {

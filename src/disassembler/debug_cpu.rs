@@ -6,6 +6,7 @@ use super::{AnalysisStep, DebugProcessor, DisassembledInstruction};
 
 use crate::bus::Bus;
 use crate::cpu::{self, StatusRegister};
+use crate::snes::SNES;
 use crate::u24::u24;
 
 use std::cell::RefCell;
@@ -157,6 +158,11 @@ impl DisassembledInstruction<CpuAnalysisState, CpuInstructionData> for CpuDisass
             }
         }
     }
+
+    fn mode_str(&self) -> String {
+        // TODO: Do per-mode formatting at some point
+        format!("{:?}({:08X})", self.instruction_data.mode, self.operand)
+    }
 }
 
 pub struct DebugCpu {
@@ -177,6 +183,7 @@ impl DebugProcessor for DebugCpu {
     type AnalysisState = CpuAnalysisState;
     type Decoded = CpuInstructionData;
     type Disassembled = CpuDisassembledInstruction;
+    type Registers = cpu::Registers;
 
     const ADDR_SPACE_SIZE: usize = 1 << 24;
     const INSTRUCTION_DATA: [Self::Decoded; 256] = CPU_INSTRUCTION_DATA;
@@ -253,5 +260,17 @@ impl DebugProcessor for DebugCpu {
         } else {
             return AnalysisStep::Continue;
         }
+    }
+
+    fn registers(snes: &SNES) -> Self::Registers {
+        *snes.cpu.borrow().registers()
+    }
+
+    fn set_registers(snes: &mut SNES, registers: &Self::Registers) {
+        *snes.cpu.borrow_mut().registers_mut() = *registers;
+    }
+
+    fn pc(registers: &Self::Registers) -> u24 {
+        registers.pc
     }
 }

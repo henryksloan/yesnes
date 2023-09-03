@@ -580,21 +580,25 @@ impl SMP {
         }
     }
 
+    fn peak_io_reg(&self, addr: u16) -> u8 {
+        match addr {
+            0x00F0 => todo!("IO reg read {addr:#06X}"),
+            0x00F1 => self.io_reg.control.0,
+            0x00F2 => self.io_reg.dsp_addr,
+            0x00F3 => self.io_reg.dsp_data,
+            0x00F4..=0x00F7 => self.io_reg.external_ports[addr as usize - 0x00F4],
+            0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
+            0x00FA..=0x00FC => self.io_reg.timer_dividers[addr as usize - 0x00FA],
+            0x00FD..=0x00FF => self.io_reg.timers[addr as usize - 0x00FD],
+            _ => panic!("Address {:#02X} is not an SMP IO register", addr),
+        }
+    }
+
     fn read_io_reg<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             dummy_yield!();
-            match addr {
-                0x00F0 => todo!("IO reg read {addr:#06X}"),
-                0x00F1 => smp.borrow().io_reg.control.0,
-                0x00F2 => smp.borrow().io_reg.dsp_addr,
-                0x00F3 => smp.borrow().io_reg.dsp_data,
-                0x00F4..=0x00F7 => smp.borrow().io_reg.external_ports[addr as usize - 0x00F4],
-                0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
-                0x00FA..=0x00FC => smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA],
-                0x00FD..=0x00FF => smp.borrow_mut().io_reg.timers[addr as usize - 0x00FD],
-                _ => panic!("Address {:#02X} is not an SMP IO register", addr),
-            }
+            smp.borrow().peak_io_reg(addr)
         }
     }
 
@@ -620,6 +624,27 @@ impl SMP {
         }
     }
 
+    pub fn peak_u8(&self, addr: u16) -> u8 {
+        let data = match addr {
+            0x0000..=0x00EF => self.ram[addr as usize],
+            0x00F0..=0x00FF => self.peak_io_reg(addr),
+            0x0100..=0xFFBF => self.ram[addr as usize],
+            0xFFC0..=0xFFFF => {
+                if self.io_reg.control.rom_at_high_addresses() {
+                    BOOT_ROM[addr as usize - 0xFFC0]
+                } else {
+                    self.ram[addr as usize]
+                }
+            }
+        };
+        data
+    }
+
+    pub fn peak_u16(&self, addr: u16) -> u16 {
+        let lo = self.peak_u8(addr);
+        ((self.peak_u8(addr.wrapping_add(1)) as u16) << 8) | lo as u16
+    }
+
     fn read_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
@@ -632,7 +657,7 @@ impl SMP {
                     if smp.borrow().io_reg.control.rom_at_high_addresses() {
                         BOOT_ROM[addr as usize - 0xFFC0]
                     } else {
-                        smp.borrow_mut().ram[addr as usize]
+                        smp.borrow().ram[addr as usize]
                     }
                 }
             };

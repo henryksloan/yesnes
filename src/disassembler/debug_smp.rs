@@ -4,6 +4,12 @@ pub use super::instruction_data::smp_instructions::{
 
 use super::{AnalysisStep, DebugProcessor, DisassembledInstruction};
 
+use crate::apu::smp::{self, SMP};
+use crate::snes::SNES;
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
 #[derive(Clone)]
 pub struct SmpAnalysisState;
 
@@ -38,13 +44,20 @@ impl DisassembledInstruction<SmpAnalysisState, SmpInstructionData> for SmpDisass
     }
 
     fn update_analysis_state(&self, _analysis_state: &mut SmpAnalysisState) {}
+
+    fn mode_str(&self) -> String {
+        // TODO: Do per-mode formatting at some point
+        format!("{:?}({:08X})", self.instruction_data.mode, self.operand)
+    }
 }
 
-pub struct DebugSmp;
+pub struct DebugSmp {
+    smp: Rc<RefCell<SMP>>,
+}
 
 impl DebugSmp {
-    pub fn new() -> Self {
-        Self
+    pub fn new(smp: Rc<RefCell<SMP>>) -> Self {
+        Self { smp }
     }
 }
 
@@ -56,26 +69,37 @@ impl DebugProcessor for DebugSmp {
     type AnalysisState = SmpAnalysisState;
     type Decoded = SmpInstructionData;
     type Disassembled = SmpDisassembledInstruction;
+    type Registers = smp::Registers;
 
     const ADDR_SPACE_SIZE: usize = 1 << 24;
     const INSTRUCTION_DATA: [Self::Decoded; 256] = SMP_INSTRUCTION_DATA;
 
     fn entry_points(&self) -> Vec<u16> {
-        // TODO: Also analyze other vectors. The 0xFFF* vectors are emu mode, the 0xFFE* vectors are not.
-        // vec![u24(
-        //     Bus::peak_u16(self.bus.clone(), smp::RESET_VECTOR) as u32
-        // )]
-        todo!()
+        // TODO: Also analyze other vectors
+        vec![self.smp.borrow().peak_u16(smp::RESET_VECTOR)]
     }
 
     fn peak_u8(&self, addr: u16) -> u8 {
-        todo!()
+        self.smp.borrow().peak_u8(addr)
     }
 
     fn analysis_step(
         addr: Self::Address,
         disassembled: &Self::Disassembled,
     ) -> AnalysisStep<Self::Address> {
-        todo!()
+        // DO NOT SUBMIT
+        AnalysisStep::Break
+    }
+
+    fn registers(snes: &SNES) -> Self::Registers {
+        *snes.smp.borrow().registers()
+    }
+
+    fn set_registers(snes: &mut SNES, registers: &Self::Registers) {
+        *snes.smp.borrow_mut().registers_mut() = *registers;
+    }
+
+    fn pc(registers: &Self::Registers) -> u16 {
+        registers.pc
     }
 }
