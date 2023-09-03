@@ -141,35 +141,32 @@ impl SmpAddressingMode {
         }
     }
 
-    // pub fn is_indirect(&self) -> bool {
-    //     matches!(
-    //         *self,
-    //         IndexedIndirectX
-    //             | IndirectIndexedY
-    //             | IndirectLong
-    //             | IndirectIndexedYLong
-    //             | StackRelativeIndirectIndexed
-    //             | AbsoluteIndirect
-    //             | AbsoluteIndirectLong
-    //             | AbsoluteIndirectIndexed
-    //     )
-    // }
+    pub fn is_indirect(&self) -> bool {
+        matches!(
+            *self,
+            AccIndirectX
+                | AccXIndexedIndirect
+                | AccYIndexedIndirect
+                | IndirectXIndirectY
+                | AbsoluteIndirectX
+                | IndirectIncrementXAcc
+                | AccIndirectIncrementX
+                | IndirectXAcc
+                | XIndexedIndirectAcc
+                | YIndexedIndirectAcc
+        )
+    }
 }
 
-// TODO: Weird to have multiple BBS/BBC ops, as that info is also captured by the addressing mode
 #[rustfmt::skip]
 #[derive(Debug, Clone, Copy)]
 pub enum SmpInstruction {
-    ADC, ADDW, AND, AND1, ASL, BBC0, BBC1, BBC2, BBC3, BBC4,
-    BBC5, BBC6, BBC7, BBS0, BBS1, BBS2, BBS3, BBS4, BBS5, BBS6,
-    BBS7, BCC, BCS, BEQ, BMI, BNE, BPL, BRA, BRK, BVC,
-    BVS, CALL, CBNE, CLR0, CLR1, CLR2, CLR3, CLR4, CLR5, CLR6,
-    CLR7, CLRC, CLRP, CLRV, CMP, CMPW, DAA, DAS, DBNZ, DEC,
-    DECW, DI, DIV, EI, EOR, EOR1, INC, INCW, JMP, LSR, MOV,
-    MOV1, MOVW, MUL, NOP, NOT1, NOTC, OR, OR1, PCALL, POP,
-    PUSH, RET, RETI, ROL, ROR, SBC, SET0, SET1, SET2, SET3,
-    SET4, SET5, SET6, SET7, SETC, SETP, SLEEP, STOP, SUBW,
-    TCALL, TCLR, TSET, XCN
+    ADC, ADDW, AND, AND1, ASL, BBC, BBS, BCC, BCS, BEQ, BMI,
+    BNE, BPL, BRA, BRK, BVC, BVS, CALL, CBNE, CLR, CLRC, CLRP,
+    CLRV, CMP, CMPW, DAA, DAS, DBNZ, DEC, DECW, DI, DIV, EI, EOR,
+    EOR1, INC, INCW, JMP, LSR, MOV, MOV1, MOVW, MUL, NOP, NOT1,
+    NOTC, OR, OR1, PCALL, POP, PUSH, RET, RETI, ROL, ROR, SBC, SET,
+    SETC, SETP, SLEEP, STOP, SUBW, TCALL, TCLR, TSET, XCN
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -199,8 +196,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x00 - 0x0f
   SmpInstructionData { instruction: NOP, mode: Implied },
   SmpInstructionData { instruction: TCALL, mode: TVector(0) },
-  SmpInstructionData { instruction: SET0, mode: Direct },
-  SmpInstructionData { instruction: BBS0, mode: DirectRelativeBit(0) },
+  SmpInstructionData { instruction: SET, mode: Direct },
+  SmpInstructionData { instruction: BBS, mode: DirectRelativeBit(0) },
   SmpInstructionData { instruction: OR, mode: AccDirect},
   SmpInstructionData { instruction: OR, mode: AccAbsolute },
   SmpInstructionData { instruction: OR, mode: AccIndirectX },
@@ -216,8 +213,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x10 - 0x1f
   SmpInstructionData { instruction: BPL, mode: PcRelative },
   SmpInstructionData { instruction: TCALL, mode: TVector(1) },
-  SmpInstructionData { instruction: CLR0, mode: Direct },
-  SmpInstructionData { instruction: BBC0, mode: DirectRelativeBit(0) },
+  SmpInstructionData { instruction: CLR, mode: Direct },
+  SmpInstructionData { instruction: BBC, mode: DirectRelativeBit(0) },
   SmpInstructionData { instruction: OR, mode: AccXIndexedDirect },
   SmpInstructionData { instruction: OR, mode: AccAbsoluteX },
   SmpInstructionData { instruction: OR, mode: AccAbsoluteY },
@@ -233,8 +230,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x20 - 0x2f
   SmpInstructionData { instruction: CLRP, mode: Implied },
   SmpInstructionData { instruction: TCALL, mode: TVector(2) },
-  SmpInstructionData { instruction: SET1, mode: Direct },
-  SmpInstructionData { instruction: BBS1, mode: DirectRelativeBit(1) },
+  SmpInstructionData { instruction: SET, mode: Direct },
+  SmpInstructionData { instruction: BBS, mode: DirectRelativeBit(1) },
   SmpInstructionData { instruction: AND, mode: AccDirect},
   SmpInstructionData { instruction: AND, mode: AccAbsolute },
   SmpInstructionData { instruction: AND, mode: AccIndirectX },
@@ -250,8 +247,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x30 - 0x3f
   SmpInstructionData { instruction: BMI, mode: PcRelative },
   SmpInstructionData { instruction: TCALL, mode: TVector(3) },
-  SmpInstructionData { instruction: CLR1, mode: Direct },
-  SmpInstructionData { instruction: BBC1, mode: DirectRelativeBit(1) },
+  SmpInstructionData { instruction: CLR, mode: Direct },
+  SmpInstructionData { instruction: BBC, mode: DirectRelativeBit(1) },
   SmpInstructionData { instruction: AND, mode: AccXIndexedDirect },
   SmpInstructionData { instruction: AND, mode: AccAbsoluteX },
   SmpInstructionData { instruction: AND, mode: AccAbsoluteY },
@@ -267,8 +264,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x40 - 0x4f
   SmpInstructionData { instruction: SETP, mode: Implied },
   SmpInstructionData { instruction: TCALL, mode: TVector(4) },
-  SmpInstructionData { instruction: SET2, mode: Direct },
-  SmpInstructionData { instruction: BBS2, mode: DirectRelativeBit(2) },
+  SmpInstructionData { instruction: SET, mode: Direct },
+  SmpInstructionData { instruction: BBS, mode: DirectRelativeBit(2) },
   SmpInstructionData { instruction: EOR, mode: AccDirect},
   SmpInstructionData { instruction: EOR, mode: AccAbsolute },
   SmpInstructionData { instruction: EOR, mode: AccIndirectX },
@@ -284,8 +281,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x50 - 0x5f
   SmpInstructionData { instruction: BVC, mode: PcRelative },
   SmpInstructionData { instruction: TCALL, mode: TVector(5) },
-  SmpInstructionData { instruction: CLR2, mode: Direct },
-  SmpInstructionData { instruction: BBC2, mode: DirectRelativeBit(2) },
+  SmpInstructionData { instruction: CLR, mode: Direct },
+  SmpInstructionData { instruction: BBC, mode: DirectRelativeBit(2) },
   SmpInstructionData { instruction: EOR, mode: AccXIndexedDirect },
   SmpInstructionData { instruction: EOR, mode: AccAbsoluteX },
   SmpInstructionData { instruction: EOR, mode: AccAbsoluteY },
@@ -301,8 +298,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x60 - 0x6f
   SmpInstructionData { instruction: CLRC, mode: Implied },
   SmpInstructionData { instruction: TCALL, mode: TVector(6) },
-  SmpInstructionData { instruction: SET3, mode: Direct },
-  SmpInstructionData { instruction: BBS3, mode: DirectRelativeBit(3) },
+  SmpInstructionData { instruction: SET, mode: Direct },
+  SmpInstructionData { instruction: BBS, mode: DirectRelativeBit(3) },
   SmpInstructionData { instruction: CMP, mode: AccDirect},
   SmpInstructionData { instruction: CMP, mode: AccAbsolute },
   SmpInstructionData { instruction: CMP, mode: AccIndirectX },
@@ -318,8 +315,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x70 - 0x7f
   SmpInstructionData { instruction: BVS, mode: PcRelative },
   SmpInstructionData { instruction: TCALL, mode: TVector(7) },
-  SmpInstructionData { instruction: CLR3, mode: Direct },
-  SmpInstructionData { instruction: BBC3, mode: DirectRelativeBit(3) },
+  SmpInstructionData { instruction: CLR, mode: Direct },
+  SmpInstructionData { instruction: BBC, mode: DirectRelativeBit(3) },
   SmpInstructionData { instruction: CMP, mode: AccXIndexedDirect },
   SmpInstructionData { instruction: CMP, mode: AccAbsoluteX },
   SmpInstructionData { instruction: CMP, mode: AccAbsoluteY },
@@ -335,8 +332,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x80 - 0x8f
   SmpInstructionData { instruction: SETC, mode: Implied },
   SmpInstructionData { instruction: TCALL, mode: TVector(8) },
-  SmpInstructionData { instruction: SET4, mode: Direct },
-  SmpInstructionData { instruction: BBS4, mode: DirectRelativeBit(4) },
+  SmpInstructionData { instruction: SET, mode: Direct },
+  SmpInstructionData { instruction: BBS, mode: DirectRelativeBit(4) },
   SmpInstructionData { instruction: ADC, mode: AccDirect},
   SmpInstructionData { instruction: ADC, mode: AccAbsolute },
   SmpInstructionData { instruction: ADC, mode: AccIndirectX },
@@ -352,8 +349,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0x90 - 0x9f
   SmpInstructionData { instruction: BCC, mode: PcRelative },
   SmpInstructionData { instruction: TCALL, mode: TVector(9) },
-  SmpInstructionData { instruction: CLR4, mode: Direct },
-  SmpInstructionData { instruction: BBC4, mode: DirectRelativeBit(4) },
+  SmpInstructionData { instruction: CLR, mode: Direct },
+  SmpInstructionData { instruction: BBC, mode: DirectRelativeBit(4) },
   SmpInstructionData { instruction: ADC, mode: AccXIndexedDirect },
   SmpInstructionData { instruction: ADC, mode: AccAbsoluteX },
   SmpInstructionData { instruction: ADC, mode: AccAbsoluteY },
@@ -369,8 +366,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0xa0 - 0xaf
   SmpInstructionData { instruction: EI, mode: Implied },
   SmpInstructionData { instruction: TCALL, mode: TVector(0xA) },
-  SmpInstructionData { instruction: SET5, mode: Direct },
-  SmpInstructionData { instruction: BBS5, mode: DirectRelativeBit(5) },
+  SmpInstructionData { instruction: SET, mode: Direct },
+  SmpInstructionData { instruction: BBS, mode: DirectRelativeBit(5) },
   SmpInstructionData { instruction: SBC, mode: AccDirect},
   SmpInstructionData { instruction: SBC, mode: AccAbsolute },
   SmpInstructionData { instruction: SBC, mode: AccIndirectX },
@@ -386,8 +383,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0xb0 - 0xbf
   SmpInstructionData { instruction: BCS, mode: PcRelative },
   SmpInstructionData { instruction: TCALL, mode: TVector(0xB) },
-  SmpInstructionData { instruction: CLR5, mode: Direct },
-  SmpInstructionData { instruction: BBC5, mode: DirectRelativeBit(5) },
+  SmpInstructionData { instruction: CLR, mode: Direct },
+  SmpInstructionData { instruction: BBC, mode: DirectRelativeBit(5) },
   SmpInstructionData { instruction: SBC, mode: AccXIndexedDirect },
   SmpInstructionData { instruction: SBC, mode: AccAbsoluteX },
   SmpInstructionData { instruction: SBC, mode: AccAbsoluteY },
@@ -403,8 +400,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0xc0 - 0xcf
   SmpInstructionData { instruction: DI, mode: Implied },
   SmpInstructionData { instruction: TCALL, mode: TVector(0xC) },
-  SmpInstructionData { instruction: SET6, mode: Direct },
-  SmpInstructionData { instruction: BBS6, mode: DirectRelativeBit(6) },
+  SmpInstructionData { instruction: SET, mode: Direct },
+  SmpInstructionData { instruction: BBS, mode: DirectRelativeBit(6) },
   SmpInstructionData { instruction: MOV, mode: DirectAcc },
   SmpInstructionData { instruction: MOV, mode: AbsoluteAcc },
   SmpInstructionData { instruction: MOV, mode: IndirectXAcc },
@@ -420,8 +417,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0xd0 - 0xdf
   SmpInstructionData { instruction: BNE, mode: PcRelative },
   SmpInstructionData { instruction: TCALL, mode: TVector(0xD) },
-  SmpInstructionData { instruction: CLR6, mode: PcRelative },
-  SmpInstructionData { instruction: BBC6, mode: DirectRelativeBit(6) },
+  SmpInstructionData { instruction: CLR, mode: PcRelative },
+  SmpInstructionData { instruction: BBC, mode: DirectRelativeBit(6) },
   SmpInstructionData { instruction: MOV, mode: XIndexedDirectAcc },
   SmpInstructionData { instruction: MOV, mode: AbsoluteXAcc },
   SmpInstructionData { instruction: MOV, mode: AbsoluteYAcc },
@@ -437,8 +434,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0xe0 - 0xef
   SmpInstructionData { instruction: CLRV, mode: Implied },
   SmpInstructionData { instruction: TCALL, mode: TVector(0xE) },
-  SmpInstructionData { instruction: SET7, mode: Direct },
-  SmpInstructionData { instruction: BBS7, mode: DirectRelativeBit(7) },
+  SmpInstructionData { instruction: SET, mode: Direct },
+  SmpInstructionData { instruction: BBS, mode: DirectRelativeBit(7) },
   SmpInstructionData { instruction: MOV, mode: AccDirect},
   SmpInstructionData { instruction: MOV, mode: AccAbsolute },
   SmpInstructionData { instruction: MOV, mode: AccIndirectX },
@@ -454,8 +451,8 @@ pub const SMP_INSTRUCTION_DATA: [SmpInstructionData; 256] = [
   // 0xf0 - 0xff
   SmpInstructionData { instruction: BEQ, mode: PcRelative },
   SmpInstructionData { instruction: TCALL, mode: TVector(0xF) },
-  SmpInstructionData { instruction: CLR7, mode: Direct },
-  SmpInstructionData { instruction: BBC7, mode: DirectRelativeBit(7) },
+  SmpInstructionData { instruction: CLR, mode: Direct },
+  SmpInstructionData { instruction: BBC, mode: DirectRelativeBit(7) },
   SmpInstructionData { instruction: MOV, mode: AccXIndexedDirect },
   SmpInstructionData { instruction: MOV, mode: AccAbsoluteX },
   SmpInstructionData { instruction: MOV, mode: AccAbsoluteY },
