@@ -1,7 +1,7 @@
 use crate::disassembler::CpuAnalysisState;
 
 #[derive(Debug, Clone, Copy)]
-pub enum AddressingMode {
+pub enum CpuAddressingMode {
     Implied,
     ImmediateMFlag,
     ImmediateXFlag,
@@ -29,7 +29,7 @@ pub enum AddressingMode {
     BlockMove,
 }
 
-impl AddressingMode {
+impl CpuAddressingMode {
     pub(in crate::disassembler) fn operand_bytes(
         &self,
         analysis_state: &CpuAnalysisState,
@@ -80,7 +80,7 @@ impl AddressingMode {
 
 #[rustfmt::skip]
 #[derive(Debug, Clone, Copy)]
-pub enum Instruction {
+pub enum CpuInstruction {
     ADC, AND, ASL, BCC, BCS, BEQ, BIT, BMI, BNE, BPL,
     BRA, BRK, BRL, BVC, BVS, CLC, CLD, CLI, CLV, CMP,
     COP, CPX, CPY, DEC, DEX, DEY, EOR, INC, INX, INY,
@@ -95,8 +95,8 @@ pub enum Instruction {
 
 #[derive(Debug, Clone, Copy)]
 pub struct CpuInstructionData {
-    pub instruction: Instruction,
-    pub mode: AddressingMode,
+    pub instruction: CpuInstruction,
+    pub mode: CpuAddressingMode,
 }
 
 impl CpuInstructionData {
@@ -111,8 +111,8 @@ impl crate::disassembler::InstructionData<CpuAnalysisState> for CpuInstructionDa
     }
 }
 
-use AddressingMode::*;
-use Instruction::*;
+use CpuAddressingMode::*;
+use CpuInstruction::*;
 #[rustfmt::skip]
 pub const CPU_INSTRUCTION_DATA: [CpuInstructionData; 256] = [
     //0x00 - 0x0f

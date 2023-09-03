@@ -2,7 +2,7 @@
 pub mod instruction_data;
 
 pub use instruction_data::cpu_instructions::{
-    AddressingMode, CpuInstructionData, Instruction, CPU_INSTRUCTION_DATA,
+    CpuAddressingMode, CpuInstruction, CpuInstructionData, CPU_INSTRUCTION_DATA,
 };
 
 use std::cell::RefCell;
@@ -76,12 +76,12 @@ pub struct CpuDisassembledInstruction {
 impl CpuDisassembledInstruction {
     pub(self) fn new(instruction_data: CpuInstructionData, operand: u32) -> Self {
         let (new_m_flag, new_x_flag) = match instruction_data.instruction {
-            Instruction::REP => {
+            CpuInstruction::REP => {
                 let resets_x = (operand >> 4) & 1 == 1;
                 let resets_m = (operand >> 5) & 1 == 1;
                 (resets_m.then_some(false), resets_x.then_some(false))
             }
-            Instruction::SEP => {
+            CpuInstruction::SEP => {
                 let sets_x = (operand >> 4) & 1 == 1;
                 let sets_m = (operand >> 5) & 1 == 1;
                 (sets_m.then_some(true), sets_x.then_some(true))
@@ -93,7 +93,7 @@ impl CpuDisassembledInstruction {
             operand,
             new_m_flag,
             new_x_flag,
-            assume_clears_e: matches!(instruction_data.instruction, Instruction::XCE),
+            assume_clears_e: matches!(instruction_data.instruction, CpuInstruction::XCE),
         }
     }
 
@@ -107,10 +107,10 @@ impl CpuDisassembledInstruction {
         if self.assume_clears_e {
             analysis_state.reg.e = false;
         }
-        if matches!(self.instruction_data.instruction, Instruction::PHP) {
+        if matches!(self.instruction_data.instruction, CpuInstruction::PHP) {
             analysis_state.p_stack.push(analysis_state.reg);
         }
-        if matches!(self.instruction_data.instruction, Instruction::PLP) {
+        if matches!(self.instruction_data.instruction, CpuInstruction::PLP) {
             if let Some(popped) = analysis_state.p_stack.pop() {
                 analysis_state.reg = popped;
             }
@@ -118,7 +118,7 @@ impl CpuDisassembledInstruction {
     }
 
     pub fn is_conditional_branch(&self) -> bool {
-        use Instruction::*;
+        use CpuInstruction::*;
         matches!(
             self.instruction_data.instruction,
             BCC | BCS | BEQ | BMI | BNE | BPL | BVC | BVS
@@ -126,17 +126,17 @@ impl CpuDisassembledInstruction {
     }
 
     pub fn is_unconditional_branch(&self) -> bool {
-        use Instruction::*;
+        use CpuInstruction::*;
         matches!(self.instruction_data.instruction, BRA | BRL | JMP | JML)
     }
 
     pub fn is_call(&self) -> bool {
-        use Instruction::*;
+        use CpuInstruction::*;
         matches!(self.instruction_data.instruction, JSR | JSL)
     }
 
     pub fn is_return(&self) -> bool {
-        use Instruction::*;
+        use CpuInstruction::*;
         matches!(self.instruction_data.instruction, RTI | RTL | RTS)
     }
 
@@ -145,7 +145,7 @@ impl CpuDisassembledInstruction {
     }
 
     pub fn halts(&self) -> bool {
-        use Instruction::*;
+        use CpuInstruction::*;
         matches!(self.instruction_data.instruction, BRK | STP)
     }
 }
@@ -247,8 +247,8 @@ impl DebugProcessor for DebugCpu {
         if disassembled.is_conditional_branch() {
             // TODO: More general solution to addressing modes in analyze()
             let offset = match disassembled.instruction_data.mode {
-                AddressingMode::PcRelative => operand as i8 as i32 + 2,
-                AddressingMode::PcRelativeLong => operand as i16 as i32 + 3,
+                CpuAddressingMode::PcRelative => operand as i8 as i32 + 2,
+                CpuAddressingMode::PcRelativeLong => operand as i16 as i32 + 3,
                 _ => panic!(
                     "Unexpected addressing mode for {:?}: {:?}",
                     disassembled.instruction_data.instruction, disassembled.instruction_data.mode
@@ -271,13 +271,13 @@ impl DebugProcessor for DebugCpu {
             // No need to recurse for an unconditional branch, as there's only one execution path.
             // TODO: More general solution to addressing modes in analyze()
             let dest_addr = match disassembled.instruction_data.mode {
-                AddressingMode::PcRelative => {
+                CpuAddressingMode::PcRelative => {
                     u24((addr.raw() as i32 + operand as i8 as i32 + 2) as u32)
                 }
-                AddressingMode::PcRelativeLong => {
+                CpuAddressingMode::PcRelativeLong => {
                     u24((addr.raw() as i32 + operand as i16 as i32 + 3) as u32)
                 }
-                AddressingMode::Absolute | AddressingMode::AbsoluteLong => u24(operand),
+                CpuAddressingMode::Absolute | CpuAddressingMode::AbsoluteLong => u24(operand),
                 _ => panic!(
                     "Unexpected addressing mode for {:?}: {:?}",
                     disassembled.instruction_data.instruction, disassembled.instruction_data.mode
