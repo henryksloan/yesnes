@@ -92,7 +92,6 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
     fn register_area(&mut self, ui: &mut egui::Ui, paused: bool) {
         if paused {
             let snes = self.snes.lock().unwrap();
-            // self.registers_mirror = *snes.cpu.borrow().registers();
             self.registers_mirror = D::registers(&snes);
         }
         ui.horizontal(|ui| {
@@ -114,9 +113,11 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             //     ));
             // }
         });
+        // DO NOT SUBMIT: I think it's possible that we unpause around here (or while locking snes), causing register corruption
+        // More simply, we're initially paused, so if we unpause in the CPU window, the SMP window will still see `paused` here
         if paused {
-            let snes = self.snes.lock().unwrap();
-            D::set_registers(&snes, &self.registers_mirror);
+            // let snes = self.snes.lock().unwrap();
+            // D::set_registers(&snes, &self.registers_mirror);
         }
     }
 
@@ -137,7 +138,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
                 let next_line = self.disassembler.lock().unwrap().get_line(pc_line + 1);
                 let _ = self
                     .emu_message_sender
-                    .send(EmuThreadMessage::RunToAddress(next_line.0));
+                    .send(EmuThreadMessage::RunToAddress(D::DEVICE, next_line.0));
             }
             self.button_with_shortcut(ui, DisassemblerShortcut::Reset, "Reset");
         });
@@ -164,7 +165,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
                 // Probably worth making that a message from emu thread to this thread.
                 let _ = self
                     .emu_message_sender
-                    .send(EmuThreadMessage::RunToAddress(addr as usize));
+                    .send(EmuThreadMessage::RunToAddress(D::DEVICE, addr as usize));
             }
         });
     }
@@ -282,16 +283,25 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                 }
             }
             Self::Shortcut::Continue => {
-                let _ = self.emu_message_sender.send(EmuThreadMessage::Continue);
+                let _ = self
+                    .emu_message_sender
+                    .send(EmuThreadMessage::Continue(D::DEVICE));
             }
             Self::Shortcut::Pause => {
+                log::info!("Pause A");
                 *self.emu_paused.lock().unwrap() = true;
+                log::info!("Pause B");
+                // log::info!("emu_paused {:?}", self.emu_paused.try_lock().is_err());
+                // log::info!("snes {:?}", self.snes.try_lock().is_err());
+                // log::info!("disassembler {:?}", self.disassembler.try_lock().is_err());
                 if let Ok(snes) = self.snes.lock() {
+                    log::info!("Pause C");
                     let pc = D::pc(&D::registers(&snes));
                     let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
                     self.scroll_to_row = Some((pc_line, egui::Align::Center));
                 }
             }
+            // TODO: We should probably eagerly sync processors when tracing/stepping, etc.
             Self::Shortcut::Trace => {
                 *self.emu_paused.lock().unwrap() = true;
                 if let Ok(mut snes) = self.snes.lock() {

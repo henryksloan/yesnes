@@ -96,8 +96,7 @@ impl DebugSmp {
     }
 }
 
-// TODO: Need to check if this is the right struct on which to implement this
-// unsafe impl Send for DebugCpu {}
+unsafe impl Send for DebugSmp {}
 
 impl DebugProcessor for DebugSmp {
     type Address = u16;
@@ -132,6 +131,7 @@ impl DebugProcessor for DebugSmp {
             let offset = match disassembled.instruction_data.mode {
                 // DO NOT SUBMIT: Check this
                 SmpAddressingMode::PcRelative => operand as i8 as i32 + 2,
+                SmpAddressingMode::DirectRelativeBit(_) => (operand >> 8) as i8 as i32 + 2,
                 _ => panic!(
                     "Unexpected addressing mode for {:?}: {:?}",
                     disassembled.instruction_data.instruction, disassembled.instruction_data.mode

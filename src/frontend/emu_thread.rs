@@ -1,4 +1,5 @@
-use crate::disassembler::{DebugCpu, DebugProcessor, Disassembler};
+use crate::disassembler::{DebugCpu, DebugProcessor, DebugSmp, Disassembler};
+use crate::scheduler::Device;
 use crate::snes::SNES;
 
 use crossbeam::channel;
@@ -23,14 +24,16 @@ pub fn run_instruction_and_disassemble<D: DebugProcessor>(
 }
 
 pub enum EmuThreadMessage {
-    Continue,
-    // TODO: Make this per-processor (?)
-    RunToAddress(usize),
+    Continue(Device),
+    RunToAddress(Device, usize),
 }
 
 pub fn run_emu_thread(
     snes: Arc<Mutex<SNES>>,
-    disassembler: Arc<Mutex<Disassembler<DebugCpu>>>,
+    // TODO: This could potentially be simplified by having the client sending dynamic Arcs (?) on-demand
+    // But for now Disassembler is not a trait, but a template...
+    cpu_disassembler: Arc<Mutex<Disassembler<DebugCpu>>>,
+    smp_disassembler: Arc<Mutex<Disassembler<DebugSmp>>>,
     receiver: channel::Receiver<EmuThreadMessage>,
     paused: Arc<Mutex<bool>>,
 ) -> thread::JoinHandle<()> {
@@ -40,30 +43,58 @@ pub fn run_emu_thread(
             return;
         };
         match message {
-            EmuThreadMessage::Continue => {
+            EmuThreadMessage::Continue(device) => {
                 *paused.lock().unwrap() = false;
+                // DO NOT SUBMIT: I *think* this deadlocks in an interesting way: another thread pauses
+                // and then tries to lock snes.
+                // But I think it might only happen from the SMP window? Maybe it's getting stuck indefinitely in the run_instruction_and_disassemble?
                 while !*paused.lock().unwrap() {
-                    let should_break =
-                        run_instruction_and_disassemble(&mut snes.lock().unwrap(), &disassembler);
+                    // if matches!(device, Device::CPU) {
+                    //     log::info!("Continue A");
+                    // }
+                    let snes = &mut snes.lock().unwrap();
+                    // if matches!(device, Device::CPU) {
+                    //     log::info!("Continue B");
+                    // }
+                    let should_break = match device {
+                        Device::CPU => run_instruction_and_disassemble(snes, &cpu_disassembler),
+                        Device::SMP => run_instruction_and_disassemble(snes, &smp_disassembler),
+                        _ => panic!(),
+                    };
                     if should_break {
                         *paused.lock().unwrap() = true;
                     }
                 }
+                log::debug!("Paused");
             }
             // TODO: This should correctly handle mirrored PC addresses
-            EmuThreadMessage::RunToAddress(addr) => {
+            EmuThreadMessage::RunToAddress(device, addr) => {
                 *paused.lock().unwrap() = false;
                 loop {
                     if *paused.lock().unwrap() {
                         break;
                     }
                     let mut snes = snes.lock().unwrap();
-                    if Into::<usize>::into(snes.cpu.borrow().registers().pc) == addr {
+                    // TODO: It would be best if 1) we could just use D::Registers, D::pc, and
+                    // 2) if D::Registers somehow returned a reference, not a clone
+                    let pc: usize = match device {
+                        Device::CPU => snes.cpu.borrow().registers().pc.into(),
+                        Device::SMP => snes.smp.borrow().registers().pc.into(),
+                        _ => panic!(),
+                    };
+                    if pc == addr {
                         *paused.lock().unwrap() = true;
                         break;
                     } else {
-                        let should_break =
-                            run_instruction_and_disassemble(&mut snes, &disassembler);
+                        let should_break = match device {
+                            Device::CPU => {
+                                run_instruction_and_disassemble(&mut snes, &cpu_disassembler)
+                            }
+                            Device::SMP => {
+                                run_instruction_and_disassemble(&mut snes, &smp_disassembler)
+                            }
+                            _ => panic!(),
+                        };
                         if should_break {
                             *paused.lock().unwrap() = true;
                         }

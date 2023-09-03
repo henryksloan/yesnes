@@ -45,9 +45,11 @@ impl MemoryViewWindow {
         if self.memory_stale && paused {
             self.memory_stale = false;
             let bus = &self.snes.lock().unwrap().bus;
-            for i in 0..0x100_0000 {
-                self.memory_mirror[i] = Bus::peak_u8(bus.clone(), u24(i as u32));
-            }
+            // TODO: This is very inefficient
+            // DO NOT SUBMIT: Commenting this to track down deadlocks
+            // for i in 0..0x100_0000 {
+            //     self.memory_mirror[i] = Bus::peak_u8(bus.clone(), u24(i as u32));
+            // }
         }
     }
 

@@ -524,6 +524,8 @@ impl CPU {
         // by avoiding the nesting? If so, it would be worth finding a middle-ground.
         move || {
             dummy_yield!();
+            // DO NOT SUBMIT: Seeing if this fixes deadlocking
+            yield YieldReason::Sync(Device::SMP);
             // TODO: Overscan mode
             if cpu.borrow().ppu_counter.borrow().scanline == 225 {
                 if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {

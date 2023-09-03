@@ -37,6 +37,7 @@ impl Default for YesnesApp {
         run_emu_thread(
             snes.clone(),
             cpu_disassembler.clone(),
+            smp_disassembler.clone(),
             receiver,
             emu_paused.clone(),
         );
