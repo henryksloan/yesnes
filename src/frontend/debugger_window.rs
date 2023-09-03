@@ -22,7 +22,7 @@ pub struct DebuggerWindow<D: DebugProcessor> {
     snes: Arc<Mutex<SNES>>,
     disassembler: Arc<Mutex<Disassembler<D>>>,
     emu_paused: Arc<Mutex<bool>>,
-    registers_mirror: Registers,
+    registers_mirror: D::Registers,
     scroll_to_row: Option<(usize, egui::Align)>,
     prev_top_row: Option<usize>,
     prev_bottom_row: Option<usize>,
@@ -31,7 +31,7 @@ pub struct DebuggerWindow<D: DebugProcessor> {
     emu_message_sender: channel::Sender<EmuThreadMessage>,
 }
 
-impl<D: DebugProcessor> DebuggerWindow<D> {
+impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
     pub fn new(
         title: String,
         snes: Arc<Mutex<SNES>>,
@@ -46,7 +46,7 @@ impl<D: DebugProcessor> DebuggerWindow<D> {
             snes,
             disassembler,
             emu_paused,
-            registers_mirror: Registers::new(),
+            registers_mirror: D::Registers::default(),
             scroll_to_row: None,
             prev_top_row: None,
             prev_bottom_row: None,
@@ -93,32 +93,12 @@ impl<D: DebugProcessor> DebuggerWindow<D> {
     fn register_area(&mut self, ui: &mut egui::Ui, paused: bool) {
         if paused {
             let snes = self.snes.lock().unwrap();
-            self.registers_mirror = *snes.cpu.borrow().registers();
+            // self.registers_mirror = *snes.cpu.borrow().registers();
+            self.registers_mirror = D::registers(&snes);
         }
         ui.horizontal(|ui| {
             ui.set_enabled(paused);
-            ui.vertical(|ui| {
-                egui::Frame::group(ui.style())
-                    .outer_margin(egui::Margin {
-                        right: 4.0,
-                        bottom: 6.0,
-                        ..Default::default()
-                    })
-                    .show(ui, |ui| {
-                        registers_panel(ui, &mut self.registers_mirror);
-                        ui.set_width(75.0);
-                    });
-            });
-            ui.vertical(|ui| {
-                egui::Frame::group(ui.style())
-                    .outer_margin(egui::Margin {
-                        bottom: 6.0,
-                        ..Default::default()
-                    })
-                    .show(ui, |ui| {
-                        status_register_panel(ui, &mut self.registers_mirror.p);
-                    });
-            });
+            D::registers_area(ui, &mut self.registers_mirror);
             // TODO: Better system to surface timing details
             // I like the idea of a dedicated window for scan timing, plus specifics (subcycle) in each chip's debugger window
             // if paused {
@@ -137,7 +117,7 @@ impl<D: DebugProcessor> DebuggerWindow<D> {
         });
         if paused {
             let snes = self.snes.lock().unwrap();
-            *snes.cpu.borrow_mut().registers_mut() = self.registers_mirror;
+            D::set_registers(&snes, &self.registers_mirror);
         }
     }
 
@@ -193,7 +173,7 @@ impl<D: DebugProcessor> DebuggerWindow<D> {
     fn disassembly_row(
         disassembler: &Disassembler<D>,
         paused: bool,
-        registers_mirror: &Registers,
+        registers_mirror: &D::Registers,
         prev_top_row: &mut Option<usize>,
         prev_bottom_row: &mut Option<usize>,
         row_index: usize,
@@ -206,7 +186,7 @@ impl<D: DebugProcessor> DebuggerWindow<D> {
         let disassembly_line = disassembler.get_line(row_index);
         let row_addr = disassembly_line.0;
         row.col(|ui| {
-            if paused && row_addr == registers_mirror.pc.into() {
+            if paused && row_addr == D::pc(&registers_mirror).into() {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }
             ui.label(format!("{:08X}", row_addr));
@@ -260,7 +240,7 @@ impl<D: DebugProcessor> DebuggerWindow<D> {
     }
 }
 
-impl<D: DebugProcessor> AppWindow for DebuggerWindow<D> {
+impl<D: DebugProcessor + RegisterArea> AppWindow for DebuggerWindow<D> {
     fn id(&self) -> egui::Id {
         self.id
     }
@@ -284,7 +264,7 @@ impl<D: DebugProcessor> AppWindow for DebuggerWindow<D> {
     }
 }
 
-impl<D: DebugProcessor> ShortcutWindow for DebuggerWindow<D> {
+impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
     type Shortcut = DisassemblerShortcut;
 
     const WINDOW_SHORTCUTS: &'static [Self::Shortcut] = DISASSEMBLER_SHORTCUTS;

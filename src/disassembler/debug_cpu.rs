@@ -266,7 +266,7 @@ impl DebugProcessor for DebugCpu {
         *snes.cpu.borrow().registers()
     }
 
-    fn set_registers(snes: &mut SNES, registers: &Self::Registers) {
+    fn set_registers(snes: &SNES, registers: &Self::Registers) {
         *snes.cpu.borrow_mut().registers_mut() = *registers;
     }
 

@@ -33,7 +33,7 @@ pub trait DebugProcessor {
     type AnalysisState: Default + Clone;
     type Decoded: InstructionData<Self::AnalysisState> + Copy;
     type Disassembled: DisassembledInstruction<Self::AnalysisState, Self::Decoded> + Clone + Copy;
-    type Registers;
+    type Registers: Default;
 
     const ADDR_SPACE_SIZE: usize;
     const INSTRUCTION_DATA: [Self::Decoded; 256];
@@ -45,7 +45,7 @@ pub trait DebugProcessor {
         disassembled: &Self::Disassembled,
     ) -> AnalysisStep<Self::Address>;
     fn registers(snes: &SNES) -> Self::Registers;
-    fn set_registers(snes: &mut SNES, registers: &Self::Registers);
+    fn set_registers(snes: &SNES, registers: &Self::Registers);
     fn pc(registers: &Self::Registers) -> Self::Address;
 }
 
