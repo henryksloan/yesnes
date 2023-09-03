@@ -5,6 +5,7 @@ pub use super::instruction_data::smp_instructions::{
 use super::{AnalysisStep, DebugProcessor, DisassembledInstruction};
 
 use crate::apu::smp::{self, SMP};
+use crate::scheduler::Device;
 use crate::snes::SNES;
 
 use std::cell::RefCell;
@@ -107,6 +108,7 @@ impl DebugProcessor for DebugSmp {
 
     const ADDR_SPACE_SIZE: usize = 1 << 24;
     const INSTRUCTION_DATA: [Self::Decoded; 256] = SMP_INSTRUCTION_DATA;
+    const DEVICE: Device = Device::SMP;
 
     fn entry_points(&self) -> Vec<u16> {
         // TODO: Also analyze other vectors
@@ -192,5 +194,9 @@ impl DebugProcessor for DebugSmp {
 
     fn pc(registers: &Self::Registers) -> u16 {
         registers.pc
+    }
+
+    fn to_analysis_state(registers: &Self::Registers) -> Self::AnalysisState {
+        SmpAnalysisState
     }
 }

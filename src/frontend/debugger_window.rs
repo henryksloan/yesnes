@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex};
 use crossbeam::channel;
 use egui_extras::{Column, TableBuilder};
 
-use crate::cpu::registers::Registers;
 use crate::disassembler::{DebugProcessor, DisassembledInstruction, Disassembler};
 use crate::snes::SNES;
 
@@ -296,8 +295,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
             Self::Shortcut::Trace => {
                 *self.emu_paused.lock().unwrap() = true;
                 if let Ok(mut snes) = self.snes.lock() {
-                    // DO NOT SUBMIT: Need machinery to run and disassemble for any processor
-                    // run_instruction_and_disassemble(&mut snes, &self.disassembler);
+                    run_instruction_and_disassemble(&mut snes, &self.disassembler);
                     let pc = D::pc(&D::registers(&snes));
                     let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
                     if let Some(prev_top_row) = self.prev_top_row {

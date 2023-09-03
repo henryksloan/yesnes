@@ -1,4 +1,4 @@
-use crate::disassembler::{DebugCpu, Disassembler};
+use crate::disassembler::{DebugCpu, DebugProcessor, Disassembler};
 use crate::snes::SNES;
 
 use crossbeam::channel;
@@ -9,17 +9,16 @@ use std::thread;
 // TODO: This should probably be done internally. It might be best if it
 // didn't require `impl Send for Disassembler`, i.e. if Disassembler didn't have an
 // Rc<RefCell<Bus>>; maybe that could be passed straight from cpu at the end of each instruction.
-pub fn run_instruction_and_disassemble(
+pub fn run_instruction_and_disassemble<D: DebugProcessor>(
     snes: &mut SNES,
-    disassembler: &Mutex<Disassembler<DebugCpu>>,
+    disassembler: &Mutex<Disassembler<D>>,
 ) -> bool {
-    let breakpoint = snes.run_instruction_debug();
-    let cpu = snes.cpu.borrow();
-    let registers = cpu.registers();
+    let breakpoint = snes.run_instruction_debug(D::DEVICE);
+    let registers = D::registers(snes);
     disassembler
         .lock()
         .unwrap()
-        .update_disassembly_at(registers.pc, &registers.p);
+        .update_disassembly_at(D::pc(&registers), D::to_analysis_state(&registers));
     breakpoint
 }
 

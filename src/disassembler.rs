@@ -6,7 +6,7 @@ pub mod instruction_data;
 pub use debug_cpu::{CpuAnalysisState, CpuDisassembledInstruction, DebugCpu};
 pub use debug_smp::{DebugSmp, SmpAnalysisState, SmpDisassembledInstruction};
 
-use crate::snes::SNES;
+use crate::{scheduler::Device, snes::SNES};
 
 pub enum AnalysisStep<Address> {
     Break,
@@ -37,6 +37,7 @@ pub trait DebugProcessor {
 
     const ADDR_SPACE_SIZE: usize;
     const INSTRUCTION_DATA: [Self::Decoded; 256];
+    const DEVICE: Device;
 
     fn entry_points(&self) -> Vec<Self::Address>;
     fn peak_u8(&self, addr: Self::Address) -> u8;
@@ -47,6 +48,7 @@ pub trait DebugProcessor {
     fn registers(snes: &SNES) -> Self::Registers;
     fn set_registers(snes: &SNES, registers: &Self::Registers);
     fn pc(registers: &Self::Registers) -> Self::Address;
+    fn to_analysis_state(registers: &Self::Registers) -> Self::AnalysisState;
 }
 
 pub struct Disassembler<D: DebugProcessor> {

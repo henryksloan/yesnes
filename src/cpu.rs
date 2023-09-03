@@ -514,7 +514,7 @@ impl CPU {
             // TODO: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
             // But I think it's good enough if we just attach ticks_run to whatever this function yield (like yield_all).
             // In fact, this is wrong, as we're returning from the device generator without flushing our cycles.
-            yield (YieldReason::FinishedInstruction, 0);
+            yield (YieldReason::FinishedInstruction(Device::CPU), 0);
         }
     }
 

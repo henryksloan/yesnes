@@ -133,7 +133,7 @@ impl Scheduler {
                         YieldReason::Sync(other_device) => {
                             self.curr_thread().waiting_for = Some(other_device);
                         }
-                        YieldReason::FinishedInstruction => {
+                        YieldReason::FinishedInstruction(_) => {
                             break;
                         }
                         YieldReason::Debug(debug_point) => {
@@ -152,7 +152,7 @@ impl Scheduler {
         }
     }
 
-    pub fn run_instruction_debug(&mut self) -> bool {
+    pub fn run_instruction_debug(&mut self, run_device: Device) -> bool {
         let mut hit_debug = false;
         loop {
             let yielded = self.resume();
@@ -163,7 +163,7 @@ impl Scheduler {
                         YieldReason::Sync(other_device) => {
                             self.curr_thread().waiting_for = Some(other_device);
                         }
-                        YieldReason::FinishedInstruction => {
+                        YieldReason::FinishedInstruction(device) if device == run_device => {
                             return hit_debug;
                         }
                         YieldReason::Debug(debug_point) => {
@@ -176,6 +176,7 @@ impl Scheduler {
                                 );
                             }
                         }
+                        _ => {}
                     }
                 }
                 _ => panic!("unexpected value from resume"),

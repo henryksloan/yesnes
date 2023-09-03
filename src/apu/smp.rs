@@ -569,6 +569,8 @@ impl SMP {
                 (set_flag_i; 0xA0=>implied)
                 (clear_flag_i; 0xC0=>implied)
             );
+
+            yield (YieldReason::FinishedInstruction(Device::SMP), 0);
         }
     }
 

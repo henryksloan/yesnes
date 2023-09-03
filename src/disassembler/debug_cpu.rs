@@ -6,6 +6,7 @@ use super::{AnalysisStep, DebugProcessor, DisassembledInstruction};
 
 use crate::bus::Bus;
 use crate::cpu::{self, StatusRegister};
+use crate::scheduler::Device;
 use crate::snes::SNES;
 use crate::u24::u24;
 
@@ -187,6 +188,7 @@ impl DebugProcessor for DebugCpu {
 
     const ADDR_SPACE_SIZE: usize = 1 << 24;
     const INSTRUCTION_DATA: [Self::Decoded; 256] = CPU_INSTRUCTION_DATA;
+    const DEVICE: Device = Device::CPU;
 
     fn entry_points(&self) -> Vec<u24> {
         // TODO: Also analyze other vectors. The 0xFFF* vectors are emu mode, the 0xFFE* vectors are not.
@@ -272,5 +274,9 @@ impl DebugProcessor for DebugCpu {
 
     fn pc(registers: &Self::Registers) -> u24 {
         registers.pc
+    }
+
+    fn to_analysis_state(registers: &Self::Registers) -> Self::AnalysisState {
+        Self::AnalysisState::from(&registers.p)
     }
 }

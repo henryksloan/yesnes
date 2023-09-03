@@ -1,3 +1,4 @@
+use crate::scheduler::Device;
 use crate::{apu::SMP, bus::Bus, cpu::CPU, ppu::PPU, scheduler::Scheduler};
 
 use std::cell::RefCell;
@@ -64,8 +65,8 @@ impl SNES {
         self.scheduler.run_instruction();
     }
 
-    pub fn run_instruction_debug(&mut self) -> bool {
-        self.scheduler.run_instruction_debug()
+    pub fn run_instruction_debug(&mut self, run_device: Device) -> bool {
+        self.scheduler.run_instruction_debug(run_device)
     }
 
     pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
