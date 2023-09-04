@@ -38,11 +38,6 @@ impl PPU {
         }
     }
 
-    pub fn io_peak(&self, addr: u16) -> u8 {
-        // TODO
-        0
-    }
-
     fn debug_get_frame_mode0(&self, frame: &mut [[[u8; 3]; 256]; 224]) {
         let bg_addr = (self.io_reg.bg_tilemap_addr_size[0].base() as usize) << 10;
         let chr_addr = (self.io_reg.bg_chr_addr.bg1_base() as usize) << 12;
@@ -114,6 +109,11 @@ impl PPU {
         frame
     }
 
+    pub fn io_peak(&self, addr: u16) -> u8 {
+        // TODO
+        0
+    }
+
     pub fn io_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x2139 => {
@@ -145,6 +145,9 @@ impl PPU {
     pub fn io_write(&mut self, addr: u16, data: u8) {
         match addr {
             0x2100 => self.io_reg.display_control_1.0 = data,
+            0x2102 => {} // TODO: OAM addr lo byte
+            0x2103 => {} // TODO: OAM addr upper bit and priority, rotation
+            0x2104 => {} // TODO: OAM data
             0x2105 => self.io_reg.bg_mode.0 = data,
             0x2106 => self.io_reg.mosaic.0 = data,
             0x2107..=0x210A => self.io_reg.bg_tilemap_addr_size[addr as usize - 0x2107].0 = data,
@@ -188,6 +191,7 @@ impl PPU {
                 }
                 self.cgram[cgram_addr].set_bit_range(write_bits.0, write_bits.1, data);
             }
+            0x2123..=0x212B | 0x212E..=0x212F => {} // TODO: Window
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
             _ => panic!("Invalid IO write of PPU at {addr:#04X}"),
         }

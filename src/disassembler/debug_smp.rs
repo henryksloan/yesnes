@@ -129,7 +129,6 @@ impl DebugProcessor for DebugSmp {
         if disassembled.is_conditional_branch() {
             // TODO: More general solution to addressing modes in analyze()
             let offset = match disassembled.instruction_data.mode {
-                // DO NOT SUBMIT: Check this
                 SmpAddressingMode::PcRelative => operand as i8 as i32 + 2,
                 SmpAddressingMode::DirectRelativeBit(_) => (operand >> 8) as i8 as i32 + 2,
                 _ => panic!(
@@ -143,7 +142,6 @@ impl DebugProcessor for DebugSmp {
             return AnalysisStep::BranchAndContinue(dest_addr);
         } else if disassembled.is_call() && !disassembled.is_indirect() {
             let dest_addr = match disassembled.instruction_data.mode {
-                // DO NOT SUBMIT: Check this
                 SmpAddressingMode::Absolute => operand as u16,
                 SmpAddressingMode::TVector(n) => 0xFFDE - n as u16 * 2,
                 SmpAddressingMode::PVector => 0xFF00 | (operand as u16),

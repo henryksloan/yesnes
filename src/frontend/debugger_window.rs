@@ -90,37 +90,22 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
     }
 
     fn register_area(&mut self, ui: &mut egui::Ui, paused: bool) {
+        // If `paused`, then lock the SNES, potentially update registers from the UI, and write them back.
+        // `paused` can be invalidated mid-frame, so it serves as a hint. We still have to exclude the lock
+        // for this whole critical section.
+        // TODO: Revise this if I come up with a better way to handle frontend pausing
+        let mut maybe_snes_guard = None;
         if paused {
             let snes = self.snes.lock().unwrap();
             self.registers_mirror = D::registers(&snes);
+            maybe_snes_guard = Some(snes);
         }
         ui.horizontal(|ui| {
             ui.set_enabled(paused);
             D::registers_area(ui, &mut self.registers_mirror);
-            // TODO: Better system to surface timing details
-            // I like the idea of a dedicated window for scan timing, plus specifics (subcycle) in each chip's debugger window
-            // if paused {
-            //     ui.label(format!(
-            //         "{}",
-            //         self.snes
-            //             .lock()
-            //             .unwrap()
-            //             .cpu
-            //             .borrow()
-            //             .ppu_counter
-            //             .borrow()
-            //             .h_ticks
-            //     ));
-            // }
         });
-        if paused {
-            // DO NOT SUBMIT: This fixes a bug where `paused` is invalidated mid-frame, but there should be a better way.
-            // DO NOT SUBMIT: Is this still wrong?
-            let emu_paused = *self.emu_paused.lock().unwrap();
-            if emu_paused {
-                // let snes = self.snes.lock().unwrap();
-                // D::set_registers(&snes, &self.registers_mirror);
-            }
+        if let Some(snes) = maybe_snes_guard {
+            D::set_registers(&snes, &self.registers_mirror);
         }
     }
 

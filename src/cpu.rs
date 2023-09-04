@@ -282,6 +282,8 @@ pub struct CPU {
     dmas_enqueued: Option<u8>,
     nmi_enqueued: bool,
     ticks_run: u64,
+    // TODO: Remove debug variable once there's a real way to alert frontend of frames
+    pub debug_frame_ready: bool,
 }
 
 impl CPU {
@@ -294,6 +296,7 @@ impl CPU {
             dmas_enqueued: None,
             nmi_enqueued: false,
             ticks_run: 0,
+            debug_frame_ready: false,
         }
     }
 
@@ -524,13 +527,14 @@ impl CPU {
         // by avoiding the nesting? If so, it would be worth finding a middle-ground.
         move || {
             dummy_yield!();
-            // DO NOT SUBMIT: Seeing if this fixes deadlocking
+            // TODO: This is required to prevent deadlocks on the frontend. Consider a more elegent way
+            // to resynchronize.
             yield YieldReason::Sync(Device::SMP);
             // TODO: Overscan mode
             if cpu.borrow().ppu_counter.borrow().scanline == 225 {
                 if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {
-                    log::debug!("vblank interrupt");
                     cpu.borrow_mut().nmi_enqueued = true;
+                    cpu.borrow_mut().debug_frame_ready = true;
                 }
             }
         }
@@ -586,9 +590,12 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
-            // DO NOT SUBMIT: Remove debugging value
-            // DO NOT SUBMIT: This has bit6 set to simulate some weird open bus behavior for testing
+            // TODO: Remove debugging value
+            // This has bit6 set to simulate some weird open bus behavior for testing
             0x4210 => 0xC0,
+            // TODO: Remove debugging value
+            0x4212 => 0xC0,
+            0x4218..=0x421F => 0, // TODO: Joypad
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
                 let channel_regs = self.io_reg.dma_channels[channel_index];
@@ -618,12 +625,8 @@ impl CPU {
 
     pub fn io_write(&mut self, addr: u24, data: u8) {
         match addr.lo16() {
-            0x4200 => {
-                log::debug!("Wrote {data:02X} to interrupt control");
-                self.io_reg.interrupt_control.0 = data
-            }
+            0x4200 => self.io_reg.interrupt_control.0 = data,
             0x420B => {
-                log::debug!("TODO: Start GP-DMA transfer: {addr} {data:02X}");
                 self.dmas_enqueued = Some(data);
             }
             0x420C => {
