@@ -577,8 +577,13 @@ impl SMP {
     fn step(&mut self, n_clocks: u64) {
         self.ticks_run += n_clocks;
         // TODO: This is a super simple dummy implementation, not remotely correct
-        for timer in self.io_reg.timers.iter_mut() {
-            *timer = timer.wrapping_add(1);
+        self.io_reg.debug_timer_divider =
+            self.io_reg.debug_timer_divider.wrapping_add(n_clocks as u8);
+        if self.io_reg.debug_timer_divider >= 128 {
+            self.io_reg.debug_timer_divider -= 128;
+            for timer in self.io_reg.timers.iter_mut() {
+                *timer = timer.wrapping_add(1);
+            }
         }
     }
 
@@ -891,11 +896,10 @@ impl SMP {
 
     fn indirect_to_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
         move || {
-            let src_addr = yield_all!(Self::direct(smp.clone()));
-            let dest_addr = {
-                let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-                direct_page_base + smp.borrow().reg.y as u16
-            };
+            dummy_yield!();
+            let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+            let src_addr = direct_page_base + smp.borrow().reg.y as u16;
+            let dest_addr = direct_page_base + smp.borrow().reg.x as u16;
             MemToMemAddresses {
                 src_addr,
                 dest_addr,
@@ -1006,7 +1010,7 @@ impl SMP {
             smp.borrow_mut().reg.psw.c = temp > 0xFF;
             smp.borrow_mut().reg.psw.h = ((dest_data & 0xF) + (src_data & 0xF) + carry as u8) > 0xF;
             smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
-            smp.borrow_mut().reg.psw.z = temp == 0;
+            smp.borrow_mut().reg.psw.z = (temp & 0xFF) == 0;
             temp as u8
         };
         // We overflowed iff the MSBs of src and dest were the same, and both differ from that of sum
@@ -1148,7 +1152,7 @@ impl SMP {
             smp.borrow_mut().reg.psw.h = ((old_ya & 0xFFF) + (data & 0xFFF)) > 0xFFF;
             // TODO: Is N based on bit15 or bit7 for these 16-bit instructions?
             smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
-            smp.borrow_mut().reg.psw.z = temp == 0;
+            smp.borrow_mut().reg.psw.z = (temp & 0xFFFF) == 0;
             temp as u16
         };
         // We overflowed iff the MSBs of src and dest were the same, and both differ from that of sum

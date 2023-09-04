@@ -106,6 +106,7 @@ pub struct IoRegisters {
     pub dsp_data: u8,
     pub timer_dividers: [u8; 3],
     pub timers: [u8; 3],
+    pub debug_timer_divider: u8,
 }
 
 impl IoRegisters {
