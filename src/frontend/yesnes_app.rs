@@ -4,7 +4,7 @@ use super::emu_thread::run_emu_thread;
 use super::memory_view_window::MemoryViewWindow;
 use super::screen_window::ScreenWindow;
 
-use crate::disassembler::Disassembler;
+use crate::disassembler::{DebugCpu, DebugSmp, Disassembler};
 use crate::snes::SNES;
 
 use crossbeam::channel;
@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 struct YesnesApp {
     emu_paused: Arc<Mutex<bool>>,
     active_window_id: Option<egui::Id>,
-    cpu_debugger_window: DebuggerWindow,
+    cpu_debugger_window: DebuggerWindow<DebugCpu>,
+    smp_debugger_window: DebuggerWindow<DebugSmp>,
     memory_view_window: MemoryViewWindow,
     screen_window: ScreenWindow,
 }
@@ -23,24 +24,36 @@ struct YesnesApp {
 impl Default for YesnesApp {
     fn default() -> Self {
         let snes = Arc::new(Mutex::new(SNES::new()));
-        let disassembler = Arc::new(Mutex::new(Disassembler::new(
+        let cpu_disassembler = Arc::new(Mutex::new(Disassembler::new(DebugCpu::new(
             snes.lock().unwrap().bus.clone(),
-        )));
-        disassembler.lock().unwrap().disassemble();
+        ))));
+        cpu_disassembler.lock().unwrap().disassemble();
+        let smp_disassembler = Arc::new(Mutex::new(Disassembler::new(DebugSmp::new(
+            snes.lock().unwrap().smp.clone(),
+        ))));
+        smp_disassembler.lock().unwrap().disassemble();
         let (sender, receiver) = channel::bounded(1024);
         let emu_paused = Arc::new(Mutex::new(true));
         run_emu_thread(
             snes.clone(),
-            disassembler.clone(),
+            cpu_disassembler.clone(),
+            smp_disassembler.clone(),
             receiver,
             emu_paused.clone(),
         );
         let cpu_debugger_window = DebuggerWindow::new(
             "CPU Debugger".to_string(),
             snes.clone(),
-            disassembler,
+            cpu_disassembler,
             emu_paused.clone(),
-            sender,
+            sender.clone(),
+        );
+        let smp_debugger_window = DebuggerWindow::new(
+            "SMP Debugger".to_string(),
+            snes.clone(),
+            smp_disassembler,
+            emu_paused.clone(),
+            sender.clone(),
         );
         let memory_view_window =
             MemoryViewWindow::new("CPU Memory Viewer".to_string(), snes.clone());
@@ -50,6 +63,7 @@ impl Default for YesnesApp {
             // TODO: Once I factor out the different windows to structs, get the window ID from there
             active_window_id: None,
             cpu_debugger_window,
+            smp_debugger_window,
             memory_view_window,
             screen_window,
         }
@@ -61,10 +75,13 @@ impl eframe::App for YesnesApp {
         // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
         let paused = *self.emu_paused.lock().unwrap();
         // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
+        // TODO: We also might want to handle panics from the emulator on the frontend thread (e.g. trace)
         egui::CentralPanel::default().show(ctx, |_ui| {});
 
         // TODO: Initially focus the CPU debugger
         self.cpu_debugger_window
+            .show_with_shortcuts(ctx, paused, self.active_window_id);
+        self.smp_debugger_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
         self.memory_view_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
@@ -79,6 +96,9 @@ impl eframe::App for YesnesApp {
                 .map(|layer_id| layer_id.id)
                 .last();
         });
+
+        // Effectively puts egui in "continuous mode", where we repaint as quickly as possible (up to refresh rate)
+        ctx.request_repaint();
     }
 }
 

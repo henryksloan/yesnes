@@ -26,7 +26,7 @@ impl Registers {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub struct StatusRegister {
     pub n: bool, // Negative flag
     pub v: bool, // Overflow flag
@@ -83,6 +83,18 @@ impl StatusRegister {
     }
 }
 
+impl Ord for StatusRegister {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.get().cmp(&other.get())
+    }
+}
+
+impl PartialOrd for StatusRegister {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct IoRegisters {
     // Ports written by SMP, read by CPU
@@ -94,6 +106,7 @@ pub struct IoRegisters {
     pub dsp_data: u8,
     pub timer_dividers: [u8; 3],
     pub timers: [u8; 3],
+    pub debug_timer_divider: u8,
 }
 
 impl IoRegisters {

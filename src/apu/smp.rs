@@ -346,11 +346,27 @@ macro_rules! fetch {
     }};
 }
 
+macro_rules! fetch_u16 {
+    ($smp_rc: ident) => {{
+        let lo = fetch!($smp_rc);
+        ((fetch!($smp_rc) as u16) << 8) | lo as u16
+    }};
+}
+
 /// Holds the source and destination addresses for memory-to-memory instructions (e.g. OR (X),(Y))
 #[derive(Copy, Clone)]
 struct MemToMemAddresses {
     pub src_addr: u16,
     pub dest_addr: u16,
+}
+
+/// Holds an address and a bit offset (0-7) for absolute-bit instructions (like NOT1 aaa.b or MOV1 aaa.b,C)
+/// `invert` is for absolute-not-bit instructions (like OR1 C,/aaa.b)
+#[derive(Copy, Clone)]
+struct AddressBit {
+    pub addr: u16,
+    pub bit: u8,
+    pub invert: bool,
 }
 
 /// The SMP, i.e. the SPC700 audio coprocessor
@@ -527,6 +543,12 @@ impl SMP {
                 (set_bit_5; 0xA2=>direct)
                 (set_bit_6; 0xC2=>direct)
                 (set_bit_7; 0xE2=>direct)
+                (not1; 0xEA=>absolute_bit)
+                (mov1_to_c; 0xAA=>absolute_bit)
+                (mov1_from_c; 0xCA=>absolute_bit)
+                (or1; 0x0A=>absolute_bit, 0x2A=>absolute_not_bit)
+                (and1; 0x4A=>absolute_bit, 0x6A=>absolute_not_bit)
+                (eor1; 0x8A=>absolute_bit)
                 (clear_flag_c; 0x60=>implied)
                 (set_flag_c; 0x80=>implied)
                 (flip_flag_c; 0xED=>implied)
@@ -569,14 +591,35 @@ impl SMP {
                 (set_flag_i; 0xA0=>implied)
                 (clear_flag_i; 0xC0=>implied)
             );
+
+            yield (YieldReason::FinishedInstruction(Device::SMP), 0);
         }
     }
 
     fn step(&mut self, n_clocks: u64) {
         self.ticks_run += n_clocks;
         // TODO: This is a super simple dummy implementation, not remotely correct
-        for timer in self.io_reg.timers.iter_mut() {
-            *timer = timer.wrapping_add(1);
+        self.io_reg.debug_timer_divider =
+            self.io_reg.debug_timer_divider.wrapping_add(n_clocks as u8);
+        if self.io_reg.debug_timer_divider >= 128 {
+            self.io_reg.debug_timer_divider -= 128;
+            for timer in self.io_reg.timers.iter_mut() {
+                *timer = timer.wrapping_add(1);
+            }
+        }
+    }
+
+    fn peak_io_reg(&self, addr: u16) -> u8 {
+        match addr {
+            0x00F0 => todo!("IO reg read {addr:#06X}"),
+            0x00F1 => self.io_reg.control.0,
+            0x00F2 => self.io_reg.dsp_addr,
+            0x00F3 => self.io_reg.dsp_data,
+            0x00F4..=0x00F7 => self.io_reg.external_ports[addr as usize - 0x00F4],
+            0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
+            0x00FA..=0x00FC => self.io_reg.timer_dividers[addr as usize - 0x00FA],
+            0x00FD..=0x00FF => self.io_reg.timers[addr as usize - 0x00FD],
+            _ => panic!("Address {:#02X} is not an SMP IO register", addr),
         }
     }
 
@@ -584,17 +627,7 @@ impl SMP {
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             dummy_yield!();
-            match addr {
-                0x00F0 => todo!("IO reg read {addr:#06X}"),
-                0x00F1 => smp.borrow().io_reg.control.0,
-                0x00F2 => smp.borrow().io_reg.dsp_addr,
-                0x00F3 => smp.borrow().io_reg.dsp_data,
-                0x00F4..=0x00F7 => smp.borrow().io_reg.external_ports[addr as usize - 0x00F4],
-                0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
-                0x00FA..=0x00FC => smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA],
-                0x00FD..=0x00FF => smp.borrow_mut().io_reg.timers[addr as usize - 0x00FD],
-                _ => panic!("Address {:#02X} is not an SMP IO register", addr),
-            }
+            smp.borrow().peak_io_reg(addr)
         }
     }
 
@@ -620,6 +653,27 @@ impl SMP {
         }
     }
 
+    pub fn peak_u8(&self, addr: u16) -> u8 {
+        let data = match addr {
+            0x0000..=0x00EF => self.ram[addr as usize],
+            0x00F0..=0x00FF => self.peak_io_reg(addr),
+            0x0100..=0xFFBF => self.ram[addr as usize],
+            0xFFC0..=0xFFFF => {
+                if self.io_reg.control.rom_at_high_addresses() {
+                    BOOT_ROM[addr as usize - 0xFFC0]
+                } else {
+                    self.ram[addr as usize]
+                }
+            }
+        };
+        data
+    }
+
+    pub fn peak_u16(&self, addr: u16) -> u16 {
+        let lo = self.peak_u8(addr);
+        ((self.peak_u8(addr.wrapping_add(1)) as u16) << 8) | lo as u16
+    }
+
     fn read_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
@@ -628,12 +682,11 @@ impl SMP {
                 0x0000..=0x00EF => smp.borrow().ram[addr as usize],
                 0x00F0..=0x00FF => yield_all!(SMP::read_io_reg(smp.clone(), addr)),
                 0x0100..=0xFFBF => smp.borrow_mut().ram[addr as usize],
-                // TODO: Use control register to determine RAM/ROM
                 0xFFC0..=0xFFFF => {
                     if smp.borrow().io_reg.control.rom_at_high_addresses() {
                         BOOT_ROM[addr as usize - 0xFFC0]
                     } else {
-                        smp.borrow_mut().ram[addr as usize]
+                        smp.borrow().ram[addr as usize]
                     }
                 }
             };
@@ -780,6 +833,28 @@ impl SMP {
         }
     }
 
+    fn absolute_bit<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<AddressBit> + 'a {
+        move || {
+            let operand = fetch_u16!(smp) as u16;
+            AddressBit {
+                addr: operand & 0xFFF,
+                bit: (operand >> 13) as u8,
+                invert: false,
+            }
+        }
+    }
+
+    fn absolute_not_bit<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<AddressBit> + 'a {
+        move || {
+            let operand = fetch_u16!(smp) as u16;
+            AddressBit {
+                addr: operand & 0xFFF,
+                bit: (operand >> 13) as u8,
+                invert: true,
+            }
+        }
+    }
+
     fn indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
         move || {
             dummy_yield!();
@@ -865,11 +940,10 @@ impl SMP {
 
     fn indirect_to_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
         move || {
-            let src_addr = yield_all!(Self::direct(smp.clone()));
-            let dest_addr = {
-                let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-                direct_page_base + smp.borrow().reg.y as u16
-            };
+            dummy_yield!();
+            let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
+            let src_addr = direct_page_base + smp.borrow().reg.y as u16;
+            let dest_addr = direct_page_base + smp.borrow().reg.x as u16;
             MemToMemAddresses {
                 src_addr,
                 dest_addr,
@@ -980,7 +1054,7 @@ impl SMP {
             smp.borrow_mut().reg.psw.c = temp > 0xFF;
             smp.borrow_mut().reg.psw.h = ((dest_data & 0xF) + (src_data & 0xF) + carry as u8) > 0xF;
             smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
-            smp.borrow_mut().reg.psw.z = temp == 0;
+            smp.borrow_mut().reg.psw.z = (temp & 0xFF) == 0;
             temp as u8
         };
         // We overflowed iff the MSBs of src and dest were the same, and both differ from that of sum
@@ -1122,7 +1196,7 @@ impl SMP {
             smp.borrow_mut().reg.psw.h = ((old_ya & 0xFFF) + (data & 0xFFF)) > 0xFFF;
             // TODO: Is N based on bit15 or bit7 for these 16-bit instructions?
             smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
-            smp.borrow_mut().reg.psw.z = temp == 0;
+            smp.borrow_mut().reg.psw.z = (temp & 0xFFFF) == 0;
             temp as u16
         };
         // We overflowed iff the MSBs of src and dest were the same, and both differ from that of sum
@@ -1140,9 +1214,10 @@ impl SMP {
 
     fn subw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
+            // TODO: This sets V and H incorrectly
             let data = yield_all!(SMP::read_u16(smp.clone(), addr));
-            let data_1s_complement = ((data as i16).wrapping_neg().wrapping_sub(1)) as u16;
-            let result = SMP::addw_algorithm(smp.clone(), data_1s_complement);
+            let data_2s_complement = ((data as i16).wrapping_neg()) as u16;
+            let result = SMP::addw_algorithm(smp.clone(), data_2s_complement);
             smp.borrow_mut().reg.set_ya(result);
         }
     }
@@ -1219,6 +1294,63 @@ impl SMP {
 
     // 1-bit instructions
     set_clear_bit_instrs!();
+
+    fn not1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
+            let result = data ^ (1 << addr_bit.bit);
+            yield_all!(SMP::write_u8(smp.clone(), addr_bit.addr, result));
+        }
+    }
+
+    fn mov1_to_c<'a>(
+        smp: Rc<RefCell<SMP>>,
+        addr_bit: AddressBit,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
+            smp.borrow_mut().reg.psw.c = (data >> addr_bit.bit) & 1 == 1;
+        }
+    }
+
+    fn mov1_from_c<'a>(
+        smp: Rc<RefCell<SMP>>,
+        addr_bit: AddressBit,
+    ) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
+            let carry = smp.borrow().reg.psw.c as u8;
+            let result = (data & !(1 << addr_bit.bit)) | (carry << addr_bit.bit);
+            yield_all!(SMP::write_u8(smp.clone(), addr_bit.addr, result));
+        }
+    }
+
+    fn or1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
+            smp.borrow_mut().reg.psw.c |= (data >> addr_bit.bit) & 1 == !addr_bit.invert as u8;
+        }
+    }
+
+    fn and1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
+            log::info!(
+                "and1 {:#06X} {} (invert: {})",
+                addr_bit.addr,
+                addr_bit.bit,
+                addr_bit.invert
+            );
+            smp.borrow_mut().reg.psw.c &= (data >> addr_bit.bit) & 1 == !addr_bit.invert as u8;
+        }
+    }
+
+    fn eor1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionGenerator + 'a {
+        move || {
+            let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
+            smp.borrow_mut().reg.psw.c ^= (data >> addr_bit.bit) & 1 == 1;
+        }
+    }
 
     // Generate branch instructions
     branch_instrs!();

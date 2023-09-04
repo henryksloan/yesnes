@@ -4,7 +4,7 @@ use crate::u24::u24;
 #[derive(Clone, Copy, Debug)]
 pub enum YieldReason {
     Sync(Device),
-    FinishedInstruction,
+    FinishedInstruction(Device),
     Debug(DebugPoint),
 }
 

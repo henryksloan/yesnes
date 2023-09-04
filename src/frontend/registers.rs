@@ -1,5 +1,7 @@
 //! GUI elements to display and edit processer registers.
-use crate::cpu::{Registers, StatusRegister};
+use crate::apu::smp;
+use crate::cpu;
+use crate::disassembler::{DebugCpu, DebugProcessor, DebugSmp};
 
 // TODO: It's not actually great to not show some of the nybbles; maybe just gray them out?
 /// Adds an editable view of the given CPU register, masked to its bottom `hex_digits` nybbles.
@@ -29,8 +31,12 @@ pub fn register_drag_value<T: eframe::emath::Numeric>(
     *register = T::from_f64(reg_val as f64);
 }
 
+pub trait RegisterArea: DebugProcessor {
+    fn registers_area(ui: &mut egui::Ui, registers: &mut <Self as DebugProcessor>::Registers);
+}
+
 /// Adds editable view of all CPU registers.
-pub fn registers_panel(ui: &mut egui::Ui, registers: &mut Registers) {
+fn cpu_registers_panel(ui: &mut egui::Ui, registers: &mut cpu::Registers) {
     let x_y_16_bits = registers.index_reg_16_bits();
     let x_y_width = if x_y_16_bits { 4 } else { 2 };
     let a_16_bits = registers.accumulator_16_bits();
@@ -47,8 +53,8 @@ pub fn registers_panel(ui: &mut egui::Ui, registers: &mut Registers) {
     register_drag_value(ui, &mut registers.b, "B=", 2);
 }
 
-/// Adds checkboxes for the bits of the status register.
-pub fn status_register_panel(ui: &mut egui::Ui, status_register: &mut StatusRegister) {
+/// Adds checkboxes for the bits of the CPU status register.
+fn cpu_status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::StatusRegister) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.checkbox(&mut status_register.n, "N");
@@ -64,4 +70,82 @@ pub fn status_register_panel(ui: &mut egui::Ui, status_register: &mut StatusRegi
             ui.checkbox(&mut status_register.e, "E");
         });
     });
+}
+
+impl RegisterArea for DebugCpu {
+    fn registers_area(ui: &mut egui::Ui, registers: &mut cpu::Registers) {
+        ui.vertical(|ui| {
+            egui::Frame::group(ui.style())
+                .outer_margin(egui::Margin {
+                    right: 4.0,
+                    bottom: 6.0,
+                    ..Default::default()
+                })
+                .show(ui, |ui| {
+                    cpu_registers_panel(ui, registers);
+                    ui.set_width(75.0);
+                });
+        });
+        ui.vertical(|ui| {
+            egui::Frame::group(ui.style())
+                .outer_margin(egui::Margin {
+                    bottom: 6.0,
+                    ..Default::default()
+                })
+                .show(ui, |ui| {
+                    cpu_status_register_panel(ui, &mut registers.p);
+                });
+        });
+    }
+}
+
+/// Adds editable view of all SMP registers.
+fn smp_registers_panel(ui: &mut egui::Ui, registers: &mut smp::Registers) {
+    register_drag_value(ui, &mut registers.a, "A=", 2);
+    register_drag_value(ui, &mut registers.x, "X=", 2);
+    register_drag_value(ui, &mut registers.y, "Y=", 2);
+    register_drag_value(ui, &mut registers.pc, "PC=", 4);
+    register_drag_value(ui, &mut registers.sp, "SP=", 2);
+    register_drag_value(ui, &mut registers.psw, "PSW=", 2);
+}
+
+/// Adds checkboxes for the bits of the SMP status register.
+fn smp_status_register_panel(ui: &mut egui::Ui, status_register: &mut smp::StatusRegister) {
+    ui.vertical(|ui| {
+        ui.checkbox(&mut status_register.n, "N");
+        ui.checkbox(&mut status_register.v, "V");
+        ui.checkbox(&mut status_register.p, "P");
+        ui.checkbox(&mut status_register.b, "B");
+        ui.checkbox(&mut status_register.h, "H");
+        ui.checkbox(&mut status_register.i, "I");
+        ui.checkbox(&mut status_register.z, "Z");
+        ui.checkbox(&mut status_register.c, "C");
+    });
+}
+
+impl RegisterArea for DebugSmp {
+    fn registers_area(ui: &mut egui::Ui, registers: &mut smp::Registers) {
+        ui.vertical(|ui| {
+            egui::Frame::group(ui.style())
+                .outer_margin(egui::Margin {
+                    right: 4.0,
+                    bottom: 6.0,
+                    ..Default::default()
+                })
+                .show(ui, |ui| {
+                    smp_registers_panel(ui, registers);
+                    ui.set_width(75.0);
+                });
+        });
+        ui.vertical(|ui| {
+            egui::Frame::group(ui.style())
+                .outer_margin(egui::Margin {
+                    bottom: 6.0,
+                    ..Default::default()
+                })
+                .show(ui, |ui| {
+                    smp_status_register_panel(ui, &mut registers.psw);
+                });
+        });
+    }
 }

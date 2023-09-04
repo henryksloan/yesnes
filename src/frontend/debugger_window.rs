@@ -12,18 +12,16 @@ use std::sync::{Arc, Mutex};
 use crossbeam::channel;
 use egui_extras::{Column, TableBuilder};
 
-use crate::cpu::registers::Registers;
-use crate::disassembler::Disassembler;
+use crate::disassembler::{DebugProcessor, DisassembledInstruction, Disassembler};
 use crate::snes::SNES;
-use crate::u24::u24;
 
-pub struct DebuggerWindow {
+pub struct DebuggerWindow<D: DebugProcessor> {
     id: egui::Id,
     title: String,
     snes: Arc<Mutex<SNES>>,
-    disassembler: Arc<Mutex<Disassembler>>,
+    disassembler: Arc<Mutex<Disassembler<D>>>,
     emu_paused: Arc<Mutex<bool>>,
-    registers_mirror: Registers,
+    registers_mirror: D::Registers,
     scroll_to_row: Option<(usize, egui::Align)>,
     prev_top_row: Option<usize>,
     prev_bottom_row: Option<usize>,
@@ -32,11 +30,11 @@ pub struct DebuggerWindow {
     emu_message_sender: channel::Sender<EmuThreadMessage>,
 }
 
-impl DebuggerWindow {
+impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
     pub fn new(
         title: String,
         snes: Arc<Mutex<SNES>>,
-        disassembler: Arc<Mutex<Disassembler>>,
+        disassembler: Arc<Mutex<Disassembler<D>>>,
         emu_paused: Arc<Mutex<bool>>,
         emu_message_sender: channel::Sender<EmuThreadMessage>,
     ) -> Self {
@@ -47,7 +45,7 @@ impl DebuggerWindow {
             snes,
             disassembler,
             emu_paused,
-            registers_mirror: Registers::new(),
+            registers_mirror: D::Registers::default(),
             scroll_to_row: None,
             prev_top_row: None,
             prev_bottom_row: None,
@@ -61,14 +59,14 @@ impl DebuggerWindow {
 
     fn scroll_pc_near_top(&mut self) {
         if let Ok(snes) = self.snes.lock() {
-            let pc = snes.cpu.borrow().registers().pc;
-            let cpu_pc_line = self
+            let pc = D::pc(&D::registers(&snes));
+            let pc_line = self
                 .disassembler
                 .lock()
                 .unwrap()
                 .get_line_index(pc)
                 .saturating_sub(1);
-            self.scroll_to_row = Some((cpu_pc_line, egui::Align::TOP));
+            self.scroll_to_row = Some((pc_line, egui::Align::TOP));
         }
     }
 
@@ -92,38 +90,22 @@ impl DebuggerWindow {
     }
 
     fn register_area(&mut self, ui: &mut egui::Ui, paused: bool) {
+        // If `paused`, then lock the SNES, potentially update registers from the UI, and write them back.
+        // `paused` can be invalidated mid-frame, so it serves as a hint. We still have to exclude the lock
+        // for this whole critical section.
+        // TODO: Revise this if I come up with a better way to handle frontend pausing
+        let mut maybe_snes_guard = None;
         if paused {
             let snes = self.snes.lock().unwrap();
-            self.registers_mirror = *snes.cpu.borrow().registers();
+            self.registers_mirror = D::registers(&snes);
+            maybe_snes_guard = Some(snes);
         }
         ui.horizontal(|ui| {
             ui.set_enabled(paused);
-            ui.vertical(|ui| {
-                egui::Frame::group(ui.style())
-                    .outer_margin(egui::Margin {
-                        right: 4.0,
-                        bottom: 6.0,
-                        ..Default::default()
-                    })
-                    .show(ui, |ui| {
-                        registers_panel(ui, &mut self.registers_mirror);
-                        ui.set_width(75.0);
-                    });
-            });
-            ui.vertical(|ui| {
-                egui::Frame::group(ui.style())
-                    .outer_margin(egui::Margin {
-                        bottom: 6.0,
-                        ..Default::default()
-                    })
-                    .show(ui, |ui| {
-                        status_register_panel(ui, &mut self.registers_mirror.p);
-                    });
-            });
+            D::registers_area(ui, &mut self.registers_mirror);
         });
-        if paused {
-            let snes = self.snes.lock().unwrap();
-            *snes.cpu.borrow_mut().registers_mut() = self.registers_mirror;
+        if let Some(snes) = maybe_snes_guard {
+            D::set_registers(&snes, &self.registers_mirror);
         }
     }
 
@@ -139,12 +121,12 @@ impl DebuggerWindow {
                 .clicked()
             {
                 let snes = self.snes.lock().unwrap();
-                let cpu_pc = snes.cpu.borrow().registers().pc;
-                let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
-                let next_line = self.disassembler.lock().unwrap().get_line(cpu_pc_line + 1);
+                let pc = D::pc(&D::registers(&snes));
+                let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
+                let next_line = self.disassembler.lock().unwrap().get_line(pc_line + 1);
                 let _ = self
                     .emu_message_sender
-                    .send(EmuThreadMessage::RunToAddress(next_line.addr));
+                    .send(EmuThreadMessage::RunToAddress(D::DEVICE, next_line.0));
             }
             self.button_with_shortcut(ui, DisassemblerShortcut::Reset, "Reset");
         });
@@ -156,7 +138,8 @@ impl DebuggerWindow {
             let trimmed_input = lower_input.trim().trim_start_matches("0x");
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
-                let addr_line = self.disassembler.lock().unwrap().get_line_index(u24(addr));
+                let addr = D::Address::try_from(addr as usize).unwrap_or_default();
+                let addr_line = self.disassembler.lock().unwrap().get_line_index(addr);
                 self.scroll_to_row = Some((addr_line, egui::Align::Center));
             }
         });
@@ -170,15 +153,15 @@ impl DebuggerWindow {
                 // Probably worth making that a message from emu thread to this thread.
                 let _ = self
                     .emu_message_sender
-                    .send(EmuThreadMessage::RunToAddress(u24(addr)));
+                    .send(EmuThreadMessage::RunToAddress(D::DEVICE, addr as usize));
             }
         });
     }
 
     fn disassembly_row(
-        disassembler: &Disassembler,
+        disassembler: &Disassembler<D>,
         paused: bool,
-        registers_mirror: &Registers,
+        registers_mirror: &D::Registers,
         prev_top_row: &mut Option<usize>,
         prev_bottom_row: &mut Option<usize>,
         row_index: usize,
@@ -189,19 +172,18 @@ impl DebuggerWindow {
         }
         *prev_bottom_row = Some(row_index);
         let disassembly_line = disassembler.get_line(row_index);
-        let row_addr = disassembly_line.addr;
+        let row_addr = disassembly_line.0;
         row.col(|ui| {
-            if paused && row_addr == registers_mirror.pc {
+            if paused && row_addr == D::pc(&registers_mirror).into() {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }
             ui.label(format!("{:08X}", row_addr));
         });
         row.col(|ui| {
             ui.label(format!(
-                "{} {:?}({:08X})",
-                disassembly_line.instruction.instruction_data.mnemonic(),
-                disassembly_line.instruction.instruction_data.mode,
-                disassembly_line.instruction.operand,
+                "{} {}",
+                disassembly_line.1.mnemonic(),
+                disassembly_line.1.mode_str(),
             ));
         });
     }
@@ -225,6 +207,7 @@ impl DebuggerWindow {
                 header.col(|ui| {
                     ui.strong("Address");
                 });
+                // TODO: I'd like these lines to include the hex data of the opcode and operand
                 header.col(|ui| {
                     ui.strong("Instruction");
                 });
@@ -246,7 +229,7 @@ impl DebuggerWindow {
     }
 }
 
-impl AppWindow for DebuggerWindow {
+impl<D: DebugProcessor + RegisterArea> AppWindow for DebuggerWindow<D> {
     fn id(&self) -> egui::Id {
         self.id
     }
@@ -255,7 +238,7 @@ impl AppWindow for DebuggerWindow {
         self.show_windows(ctx);
 
         egui::Window::new(&self.title)
-            .default_width(480.0)
+            .default_width(320.0)
             .default_height(640.0)
             .show(ctx, |ui| {
                 if !focused {
@@ -270,7 +253,7 @@ impl AppWindow for DebuggerWindow {
     }
 }
 
-impl ShortcutWindow for DebuggerWindow {
+impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
     type Shortcut = DisassemblerShortcut;
 
     const WINDOW_SHORTCUTS: &'static [Self::Shortcut] = DISASSEMBLER_SHORTCUTS;
@@ -283,36 +266,39 @@ impl ShortcutWindow for DebuggerWindow {
             Self::Shortcut::GoToProgramCounter => {
                 if *self.emu_paused.lock().unwrap() {
                     let snes = self.snes.lock().unwrap();
-                    let cpu_pc = snes.cpu.borrow().registers().pc;
-                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
-                    self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                    let pc = D::pc(&D::registers(&snes));
+                    let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
+                    self.scroll_to_row = Some((pc_line, egui::Align::Center));
                 }
             }
             Self::Shortcut::Continue => {
-                let _ = self.emu_message_sender.send(EmuThreadMessage::Continue);
+                let _ = self
+                    .emu_message_sender
+                    .send(EmuThreadMessage::Continue(D::DEVICE));
             }
             Self::Shortcut::Pause => {
                 *self.emu_paused.lock().unwrap() = true;
                 if let Ok(snes) = self.snes.lock() {
-                    let cpu_pc = snes.cpu.borrow().registers().pc;
-                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
-                    self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
+                    let pc = D::pc(&D::registers(&snes));
+                    let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
+                    self.scroll_to_row = Some((pc_line, egui::Align::Center));
                 }
             }
+            // TODO: We should probably eagerly sync processors when tracing/stepping, etc.
             Self::Shortcut::Trace => {
                 *self.emu_paused.lock().unwrap() = true;
                 if let Ok(mut snes) = self.snes.lock() {
                     run_instruction_and_disassemble(&mut snes, &self.disassembler);
-                    let cpu_pc = snes.cpu.borrow().registers().pc;
-                    let cpu_pc_line = self.disassembler.lock().unwrap().get_line_index(cpu_pc);
+                    let pc = D::pc(&D::registers(&snes));
+                    let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
                     if let Some(prev_top_row) = self.prev_top_row {
                         if let Some(prev_bottom_row) = self.prev_bottom_row {
-                            if (cpu_pc_line < prev_top_row) || (cpu_pc_line > prev_bottom_row) {
+                            if (pc_line < prev_top_row) || (pc_line > prev_bottom_row) {
                                 // Recenter PC if it jumped off-screen
-                                self.scroll_to_row = Some((cpu_pc_line, egui::Align::Center));
-                            } else if cpu_pc_line >= (prev_bottom_row - 1) {
+                                self.scroll_to_row = Some((pc_line, egui::Align::Center));
+                            } else if pc_line >= (prev_bottom_row - 1) {
                                 // Keep the PC just above the bottom of the disassembly output
-                                let new_bottom_line = cpu_pc_line + 1;
+                                let new_bottom_line = pc_line + 1;
                                 self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
                             }
                         }
