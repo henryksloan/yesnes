@@ -95,6 +95,9 @@ impl eframe::App for YesnesApp {
                 .map(|layer_id| layer_id.id)
                 .last();
         });
+
+        // Effectively puts egui in "continuous mode", where we repaint as quickly as possible (up to refresh rate)
+        ctx.request_repaint();
     }
 }
 
