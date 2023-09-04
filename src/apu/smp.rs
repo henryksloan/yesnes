@@ -1214,9 +1214,10 @@ impl SMP {
 
     fn subw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
         move || {
+            // TODO: This sets V and H incorrectly
             let data = yield_all!(SMP::read_u16(smp.clone(), addr));
-            let data_1s_complement = ((data as i16).wrapping_neg().wrapping_sub(1)) as u16;
-            let result = SMP::addw_algorithm(smp.clone(), data_1s_complement);
+            let data_2s_complement = ((data as i16).wrapping_neg()) as u16;
+            let result = SMP::addw_algorithm(smp.clone(), data_2s_complement);
             smp.borrow_mut().reg.set_ya(result);
         }
     }

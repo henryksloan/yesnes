@@ -43,8 +43,7 @@ impl PPU {
         0
     }
 
-    pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
-        let mut frame = [[[0; 3]; 256]; 224];
+    fn debug_get_frame_mode0(&self, frame: &mut [[[u8; 3]; 256]; 224]) {
         let bg_addr = (self.io_reg.bg_tilemap_addr_size[0].base() as usize) << 10;
         let chr_addr = (self.io_reg.bg_chr_addr.bg1_base() as usize) << 12;
         for row in 0..28 {
@@ -68,6 +67,49 @@ impl PPU {
                     }
                 }
             }
+        }
+    }
+
+    fn debug_get_frame_mode1(&self, frame: &mut [[[u8; 3]; 256]; 224]) {
+        let bg_addr = (self.io_reg.bg_tilemap_addr_size[0].base() as usize) << 10;
+        let chr_addr = (self.io_reg.bg_chr_addr.bg1_base() as usize) << 12;
+        for row in 0..28 {
+            for col in 0..32 {
+                // TODO: Would be nice to use a bitfield for these
+                let tile = self.vram[bg_addr + (row * 32) + col];
+                let chr_n = tile & 0x3FF;
+                let tile_chr_base = chr_addr + 16 * chr_n as usize;
+                let palette_n = (tile >> 10) & 0x7;
+                for line in 0..8 {
+                    let tile_data_lo = self.vram[tile_chr_base + line];
+                    let tile_data_hi = self.vram[8 + tile_chr_base + line];
+                    for bit in 0..8 {
+                        let palette_i = {
+                            let lo = (((tile_data_lo >> (15 - bit)) & 1) << 1)
+                                | ((tile_data_lo >> (7 - bit)) & 1);
+                            let hi = (((tile_data_hi >> (15 - bit)) & 1) << 1)
+                                | ((tile_data_hi >> (7 - bit)) & 1);
+                            (hi << 2) | lo
+                        };
+                        let palette_entry =
+                            self.cgram[16 * (palette_n as usize) + palette_i as usize];
+                        let pixel = &mut frame[row * 8 + line][col * 8 + bit];
+                        pixel[0] = ((palette_entry & 0x1F) as u8) << 3;
+                        pixel[1] = (((palette_entry >> 5) & 0x1F) as u8) << 3;
+                        pixel[2] = (((palette_entry >> 10) & 0x1F) as u8) << 3;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
+        let mut frame = [[[0; 3]; 256]; 224];
+        match self.io_reg.bg_mode.bg_mode() {
+            0 => self.debug_get_frame_mode0(&mut frame),
+            1 => self.debug_get_frame_mode1(&mut frame),
+            // TODO
+            _ => {}
         }
         frame
     }
