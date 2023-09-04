@@ -75,6 +75,7 @@ impl eframe::App for YesnesApp {
         // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
         let paused = *self.emu_paused.lock().unwrap();
         // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
+        // TODO: We also might want to handle panics from the emulator on the frontend thread (e.g. trace)
         egui::CentralPanel::default().show(ctx, |_ui| {});
 
         // TODO: Initially focus the CPU debugger

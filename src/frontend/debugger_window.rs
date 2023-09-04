@@ -113,11 +113,14 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             //     ));
             // }
         });
-        // DO NOT SUBMIT: I think it's possible that we unpause around here (or while locking snes), causing register corruption
-        // More simply, we're initially paused, so if we unpause in the CPU window, the SMP window will still see `paused` here
         if paused {
-            // let snes = self.snes.lock().unwrap();
-            // D::set_registers(&snes, &self.registers_mirror);
+            // DO NOT SUBMIT: This fixes a bug where `paused` is invalidated mid-frame, but there should be a better way.
+            // DO NOT SUBMIT: Is this still wrong?
+            let emu_paused = *self.emu_paused.lock().unwrap();
+            if emu_paused {
+                // let snes = self.snes.lock().unwrap();
+                // D::set_registers(&snes, &self.registers_mirror);
+            }
         }
     }
 
@@ -219,6 +222,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
                 header.col(|ui| {
                     ui.strong("Address");
                 });
+                // TODO: I'd like these lines to include the hex data of the opcode and operand
                 header.col(|ui| {
                     ui.strong("Instruction");
                 });
@@ -288,14 +292,8 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                     .send(EmuThreadMessage::Continue(D::DEVICE));
             }
             Self::Shortcut::Pause => {
-                log::info!("Pause A");
                 *self.emu_paused.lock().unwrap() = true;
-                log::info!("Pause B");
-                // log::info!("emu_paused {:?}", self.emu_paused.try_lock().is_err());
-                // log::info!("snes {:?}", self.snes.try_lock().is_err());
-                // log::info!("disassembler {:?}", self.disassembler.try_lock().is_err());
                 if let Ok(snes) = self.snes.lock() {
-                    log::info!("Pause C");
                     let pc = D::pc(&D::registers(&snes));
                     let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
                     self.scroll_to_row = Some((pc_line, egui::Align::Center));

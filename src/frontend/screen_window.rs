@@ -34,15 +34,16 @@ impl AppWindow for ScreenWindow {
     }
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
-        if paused {
-            let frame = self.snes.lock().unwrap().debug_get_frame();
-            for y in 0..224 {
-                for x in 0..256 {
-                    let color = frame[y][x];
-                    self.image[(x, y)] = Color32::from_rgb(color[0], color[1], color[2]);
-                }
+        // TODO: This should only happen if we have a new frame
+        // if paused {
+        let frame = self.snes.lock().unwrap().debug_get_frame();
+        for y in 0..224 {
+            for x in 0..256 {
+                let color = frame[y][x];
+                self.image[(x, y)] = Color32::from_rgb(color[0], color[1], color[2]);
             }
         }
+        // }
         match &mut self.texture {
             Some(t) => t.set(self.image.clone(), egui::TextureOptions::NEAREST),
             None => {

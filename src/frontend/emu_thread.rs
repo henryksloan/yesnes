@@ -45,17 +45,8 @@ pub fn run_emu_thread(
         match message {
             EmuThreadMessage::Continue(device) => {
                 *paused.lock().unwrap() = false;
-                // DO NOT SUBMIT: I *think* this deadlocks in an interesting way: another thread pauses
-                // and then tries to lock snes.
-                // But I think it might only happen from the SMP window? Maybe it's getting stuck indefinitely in the run_instruction_and_disassemble?
                 while !*paused.lock().unwrap() {
-                    // if matches!(device, Device::CPU) {
-                    //     log::info!("Continue A");
-                    // }
                     let snes = &mut snes.lock().unwrap();
-                    // if matches!(device, Device::CPU) {
-                    //     log::info!("Continue B");
-                    // }
                     let should_break = match device {
                         Device::CPU => run_instruction_and_disassemble(snes, &cpu_disassembler),
                         Device::SMP => run_instruction_and_disassemble(snes, &smp_disassembler),
@@ -65,7 +56,6 @@ pub fn run_emu_thread(
                         *paused.lock().unwrap() = true;
                     }
                 }
-                log::debug!("Paused");
             }
             // TODO: This should correctly handle mirrored PC addresses
             EmuThreadMessage::RunToAddress(device, addr) => {
