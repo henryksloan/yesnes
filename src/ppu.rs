@@ -69,75 +69,21 @@ impl PPU {
             return;
         }
         let draw_line = scanline - 1;
-        self.debug_render_scanline_mode0(draw_line);
         match self.io_reg.bg_mode.bg_mode() {
             // TODO: These are currently just the first layers
-            0 => self.debug_render_scanline_mode0(draw_line),
-            1 => self.debug_render_scanline_mode1(draw_line),
-            2 => self.debug_render_scanline_mode1(draw_line),
-            3 => self.debug_render_scanline_mode3(draw_line),
-            5 => self.debug_render_scanline_mode1(draw_line),
-            6 => self.debug_render_scanline_mode1(draw_line),
+            0 => self.debug_render_scanline_bpp(draw_line, 2),
+            1 => self.debug_render_scanline_bpp(draw_line, 4),
+            2 => self.debug_render_scanline_bpp(draw_line, 4),
+            3 => self.debug_render_scanline_bpp(draw_line, 8),
+            5 => self.debug_render_scanline_bpp(draw_line, 4),
+            6 => self.debug_render_scanline_bpp(draw_line, 4),
             // TODO
             _ => {}
         }
     }
 
-    fn debug_render_scanline_mode0(&mut self, scanline: u16) {
-        let bg_addr = (self.io_reg.bg_tilemap_addr_size[0].base() as usize) << 10;
-        let chr_addr = (self.io_reg.bg_chr_addr.bg1_base() as usize) << 12;
-        let row = (scanline / 8) as usize;
-        let line = (scanline % 8) as usize;
-        for col in 0..32 {
-            // TODO: Would be nice to use a bitfield for these
-            let tile = self.vram[bg_addr + (row * 32) + col];
-            let chr_n = tile & 0x3FF;
-            let tile_chr_base = chr_addr + 8 * chr_n as usize;
-            let palette_n = (tile >> 10) & 0x7;
-            let tile_data = self.vram[tile_chr_base + line];
-            for bit in 0..8 {
-                let palette_i =
-                    (((tile_data >> (15 - bit)) & 1) << 1) | ((tile_data >> (7 - bit)) & 1);
-                let palette_entry = self.cgram[4 * (palette_n as usize) + palette_i as usize];
-                let pixel = &mut self.frame[row * 8 + line][col * 8 + bit];
-                pixel[0] = ((palette_entry & 0x1F) as u8) << 3;
-                pixel[1] = (((palette_entry >> 5) & 0x1F) as u8) << 3;
-                pixel[2] = (((palette_entry >> 10) & 0x1F) as u8) << 3;
-            }
-        }
-    }
-
-    fn debug_render_scanline_mode1(&mut self, scanline: u16) {
-        let bg_addr = (self.io_reg.bg_tilemap_addr_size[0].base() as usize) << 10;
-        let chr_addr = (self.io_reg.bg_chr_addr.bg1_base() as usize) << 12;
-        let row = (scanline / 8) as usize;
-        let line = (scanline % 8) as usize;
-        for col in 0..32 {
-            // TODO: Would be nice to use a bitfield for these
-            let tile = self.vram[bg_addr + (row * 32) + col];
-            let chr_n = tile & 0x3FF;
-            let tile_chr_base = chr_addr + 16 * chr_n as usize;
-            let palette_n = (tile >> 10) & 0x7;
-            let tile_data_lo = self.vram[tile_chr_base + line];
-            let tile_data_hi = self.vram[8 + tile_chr_base + line];
-            for bit in 0..8 {
-                let palette_i = {
-                    let lo = (((tile_data_lo >> (15 - bit)) & 1) << 1)
-                        | ((tile_data_lo >> (7 - bit)) & 1);
-                    let hi = (((tile_data_hi >> (15 - bit)) & 1) << 1)
-                        | ((tile_data_hi >> (7 - bit)) & 1);
-                    (hi << 2) | lo
-                };
-                let palette_entry = self.cgram[16 * (palette_n as usize) + palette_i as usize];
-                let pixel = &mut self.frame[row * 8 + line][col * 8 + bit];
-                pixel[0] = ((palette_entry & 0x1F) as u8) << 3;
-                pixel[1] = (((palette_entry >> 5) & 0x1F) as u8) << 3;
-                pixel[2] = (((palette_entry >> 10) & 0x1F) as u8) << 3;
-            }
-        }
-    }
-
-    fn debug_render_scanline_mode3(&mut self, scanline: u16) {
+    fn debug_render_scanline_bpp(&mut self, scanline: u16, bits_per_pixel: usize) {
+        assert_eq!(bits_per_pixel % 2, 0);
         // TODO: Doesn't support direct color mode
         let bg_addr = (self.io_reg.bg_tilemap_addr_size[0].base() as usize) << 10;
         let chr_addr = (self.io_reg.bg_chr_addr.bg1_base() as usize) << 12;
@@ -147,25 +93,20 @@ impl PPU {
             // TODO: Would be nice to use a bitfield for these
             let tile = self.vram[bg_addr + (row * 32) + col];
             let chr_n = tile & 0x3FF;
-            let tile_chr_base = chr_addr + 32 * chr_n as usize;
-            let tile_plane0 = self.vram[tile_chr_base + line];
-            let tile_plane1 = self.vram[8 + tile_chr_base + line];
-            let tile_plane2 = self.vram[16 + tile_chr_base + line];
-            let tile_plane3 = self.vram[24 + tile_chr_base + line];
+            let tile_chr_base = chr_addr + (bits_per_pixel * 4) * chr_n as usize;
+            let palette_n = (tile >> 10) & 0x7;
+            let tile_plane_pairs: Vec<u16> = (0..(bits_per_pixel / 2))
+                .map(|i| self.vram[i * 8 + tile_chr_base + line])
+                .collect();
             for bit in 0..8 {
-                let palette_i = {
-                    let pair0 =
-                        (((tile_plane0 >> (15 - bit)) & 1) << 1) | ((tile_plane0 >> (7 - bit)) & 1);
-                    let pair1 =
-                        (((tile_plane1 >> (15 - bit)) & 1) << 1) | ((tile_plane1 >> (7 - bit)) & 1);
-                    let pair2 =
-                        (((tile_plane2 >> (15 - bit)) & 1) << 1) | ((tile_plane2 >> (7 - bit)) & 1);
-                    let pair3 =
-                        (((tile_plane3 >> (15 - bit)) & 1) << 1) | ((tile_plane3 >> (7 - bit)) & 1);
-                    (pair3 << 6) | (pair2 << 4) | (pair1 << 2) | pair0
-                };
-                let palette_entry = self.cgram[palette_i as usize];
-                let pixel = &mut self.frame[row * 8 + line][col * 8 + bit];
+                let palette_i = tile_plane_pairs.iter().rev().fold(0, |acc, word| {
+                    let pair = (((word >> (15 - bit)) & 1) << 1) | ((word >> (7 - bit)) & 1);
+                    (acc << 2) | pair
+                });
+                let palette_entry =
+                    self.cgram[(1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize];
+                let pixel_x = ((col * 8 + bit) + self.io_reg.bg_scroll[0].h.val as usize) % 256;
+                let pixel = &mut self.frame[row * 8 + line][pixel_x];
                 pixel[0] = ((palette_entry & 0x1F) as u8) << 3;
                 pixel[1] = (((palette_entry >> 5) & 0x1F) as u8) << 3;
                 pixel[2] = (((palette_entry >> 10) & 0x1F) as u8) << 3;
