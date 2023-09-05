@@ -1,6 +1,7 @@
 use super::app_window::{AppWindow, ShortcutWindow};
 use super::debugger_window::DebuggerWindow;
 use super::emu_thread::run_emu_thread;
+use super::frame_history::FrameHistory;
 use super::memory_view_window::MemoryViewWindow;
 use super::screen_window::ScreenWindow;
 
@@ -19,6 +20,7 @@ struct YesnesApp {
     smp_debugger_window: DebuggerWindow<DebugSmp>,
     memory_view_window: MemoryViewWindow,
     screen_window: ScreenWindow,
+    frame_history: FrameHistory,
 }
 
 impl Default for YesnesApp {
@@ -66,17 +68,26 @@ impl Default for YesnesApp {
             smp_debugger_window,
             memory_view_window,
             screen_window,
+            frame_history: FrameHistory::new(),
         }
     }
 }
 
 impl eframe::App for YesnesApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.frame_history
+            .on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
+
         // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
         let paused = *self.emu_paused.lock().unwrap();
         // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
         // TODO: We also might want to handle panics from the emulator on the frontend thread (e.g. trace)
-        egui::CentralPanel::default().show(ctx, |_ui| {});
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.label(format!(
+                "Mean frame time: {:.2}ms",
+                1e3 * self.frame_history.mean_frame_time()
+            ));
+        });
 
         // TODO: Initially focus the CPU debugger
         self.cpu_debugger_window

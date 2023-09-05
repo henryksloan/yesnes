@@ -1,4 +1,6 @@
 use super::app_window::AppWindow;
+use super::frame_history::FrameHistory;
+use std::time::Instant;
 
 use crate::snes::SNES;
 
@@ -12,6 +14,8 @@ pub struct ScreenWindow {
     snes: Arc<Mutex<SNES>>,
     image: ColorImage,
     texture: Option<TextureHandle>,
+    frame_history: FrameHistory,
+    previous_frame_instant: Option<Instant>,
 }
 
 impl ScreenWindow {
@@ -24,6 +28,8 @@ impl ScreenWindow {
             snes,
             image,
             texture: None,
+            frame_history: FrameHistory::new(),
+            previous_frame_instant: None,
         }
     }
 }
@@ -36,6 +42,13 @@ impl AppWindow for ScreenWindow {
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
         if let Ok(snes) = self.snes.lock() {
             if let Some(frame) = snes.cpu.borrow_mut().debug_frame.take() {
+                let now = Instant::now();
+                let delta = self
+                    .previous_frame_instant
+                    .map(|previous| (now - previous).as_secs_f32());
+                self.previous_frame_instant = Some(now);
+                self.frame_history
+                    .on_new_frame(ctx.input(|i| i.time), delta);
                 for y in 0..224 {
                     for x in 0..256 {
                         let color = frame[y][x];
@@ -67,7 +80,10 @@ impl AppWindow for ScreenWindow {
                 // let egui_image = egui::Image::new(self.texture.as_ref().unwrap(), [256., 224.]);
                 // let rect = ctx.available_rect();
                 // egui_image.paint_at(ui, rect);
-
+                ui.label(format!(
+                    "Mean frame time: {:.2}ms",
+                    1e3 * self.frame_history.mean_frame_time()
+                ));
                 ui.image(self.texture.as_ref().unwrap(), [256., 224.]);
             });
     }
