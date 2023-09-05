@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::mpsc::channel;
 
 use paste::paste;
 
@@ -280,6 +281,13 @@ pub struct CPU {
     bus: Rc<RefCell<Bus>>,
     pub ppu_counter: Rc<RefCell<PpuCounter>>,
     dmas_enqueued: Option<u8>,
+    hdmas_enqueued: Option<u8>,
+    hdmas_ongoing: Option<u8>,
+    hdma_triggered_this_line: bool,
+    hdma_setup_triggered_this_line: bool,
+    hdma_pending_this_line: bool,
+    hdmas_complete_this_frame: [bool; 8],
+    do_hdmas_this_line: [bool; 8],
     nmi_enqueued: bool,
     ticks_run: u64,
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
@@ -294,6 +302,13 @@ impl CPU {
             bus,
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
             dmas_enqueued: None,
+            hdmas_enqueued: None,
+            hdmas_ongoing: None,
+            hdma_triggered_this_line: false,
+            hdma_setup_triggered_this_line: false,
+            hdma_pending_this_line: false,
+            hdmas_complete_this_frame: [false; 8],
+            do_hdmas_this_line: [false; 8],
             nmi_enqueued: false,
             ticks_run: 0,
             debug_frame_ready: false,
@@ -324,7 +339,7 @@ impl CPU {
             channel_regs.addr.0 = u24(0xFFFFFF);
             channel_regs.indirect_addr_or_byte_count.0 = u24(0xFFFFFF);
             channel_regs.hdma_table_curr_addr.0 = 0xFF;
-            channel_regs.hda_line_counter.0 = 0xFF;
+            channel_regs.hdma_line_counter.0 = 0xFF;
             channel_regs.unused_byte = 0xFF;
         }
     }
@@ -504,6 +519,22 @@ impl CPU {
                 yield_ticks!(cpu, CPU::run_dma(cpu.clone(), dmas_enqueued));
             }
 
+            if !cpu.borrow().hdma_setup_triggered_this_line {
+                let hdmas_ongoing = cpu.borrow_mut().hdmas_ongoing;
+                if let Some(hdmas_ongoing) = hdmas_ongoing {
+                    cpu.borrow_mut().hdma_setup_triggered_this_line = true;
+                    yield_ticks!(cpu, CPU::setup_hdma(cpu.clone(), hdmas_ongoing));
+                }
+            }
+
+            if cpu.borrow().hdma_pending_this_line {
+                cpu.borrow_mut().hdma_pending_this_line = false;
+                let hdmas_ongoing = cpu.borrow_mut().hdmas_ongoing;
+                if let Some(hdmas_ongoing) = hdmas_ongoing {
+                    yield_ticks!(cpu, CPU::run_hdma(cpu.clone(), hdmas_ongoing));
+                }
+            }
+
             if cpu.borrow().nmi_enqueued {
                 cpu.borrow_mut().nmi_enqueued = false;
                 let vector = if cpu.borrow().reg.p.e {
@@ -531,7 +562,41 @@ impl CPU {
             // to resynchronize.
             yield YieldReason::Sync(Device::SMP);
             // TODO: Overscan mode
-            if cpu.borrow().ppu_counter.borrow().scanline == 225 {
+            if cpu.borrow().ppu_counter.borrow().scanline < 225 {
+                cpu.borrow_mut().hdma_setup_triggered_this_line = false;
+                cpu.borrow_mut().hdma_triggered_this_line = false;
+            }
+            if cpu.borrow().ppu_counter.borrow().scanline == 0 {
+                let hdmas_enqueued = cpu.borrow_mut().hdmas_enqueued.take();
+                if let Some(hdmas_enqueued) = hdmas_enqueued {
+                    cpu.borrow_mut().hdmas_ongoing = Some(hdmas_enqueued);
+                }
+                let hdmas_ongoing = cpu.borrow().hdmas_ongoing;
+                if let Some(hdmas_ongoing) = hdmas_ongoing {
+                    for channel_i in 0..=7 {
+                        if (hdmas_ongoing >> channel_i) & 1 != 1 {
+                            continue;
+                        }
+                        let table_base_addr =
+                            cpu.borrow().io_reg.dma_channels[channel_i].addr.0.lo16();
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 = table_base_addr;
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .hdma_line_counter
+                            .0 = 0;
+                        // log::debug!(
+                        //     "Reset to {:04X}",
+                        //     cpu.borrow().io_reg.dma_channels[channel_i]
+                        //         .hdma_table_curr_addr
+                        //         .0
+                        // );
+                    }
+                }
+                cpu.borrow_mut().hdmas_complete_this_frame.fill(false);
+                cpu.borrow_mut().do_hdmas_this_line.fill(true);
+            } else if cpu.borrow().ppu_counter.borrow().scanline == 225 {
+                // TODO: Overscan mode
                 if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {
                     cpu.borrow_mut().nmi_enqueued = true;
                     cpu.borrow_mut().debug_frame_ready = true;
@@ -549,6 +614,12 @@ impl CPU {
             ));
             if scanline {
                 yield_all!(CPU::on_scanline_start(cpu.clone()));
+            }
+            if cpu.borrow().ppu_counter.borrow().h_ticks >= 1104
+                && !cpu.borrow().hdma_triggered_this_line
+            {
+                cpu.borrow_mut().hdma_triggered_this_line = true;
+                cpu.borrow_mut().hdma_pending_this_line = true;
             }
         }
     }
@@ -610,7 +681,7 @@ impl CPU {
                     0x7 => channel_regs.indirect_addr_or_byte_count.bank_byte(),
                     0x8 => channel_regs.hdma_table_curr_addr.lo_byte(),
                     0x9 => channel_regs.hdma_table_curr_addr.hi_byte(),
-                    0xA => channel_regs.hda_line_counter.0,
+                    0xA => channel_regs.hdma_line_counter.0,
                     0xB | 0xF => channel_regs.unused_byte,
                     _ => 0, // TODO: Open bus (maybe handle this in Bus)
                 }
@@ -631,6 +702,7 @@ impl CPU {
             }
             0x420C => {
                 log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
+                self.hdmas_enqueued = Some(data);
             }
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
@@ -646,7 +718,7 @@ impl CPU {
                     0x7 => channel_regs.indirect_addr_or_byte_count.set_bank_byte(data),
                     0x8 => channel_regs.hdma_table_curr_addr.set_lo_byte(data),
                     0x9 => channel_regs.hdma_table_curr_addr.set_hi_byte(data),
-                    0xA => channel_regs.hda_line_counter.0 = data,
+                    0xA => channel_regs.hdma_line_counter.0 = data,
                     0xB | 0xF => channel_regs.unused_byte = data,
                     _ => {}
                 }
@@ -684,6 +756,126 @@ impl CPU {
                     }
                     cpu_addr = cpu_addr.wrapping_add_signed(cpu_addr_step);
                 }
+            }
+        }
+    }
+
+    fn setup_hdma<'a>(cpu: Rc<RefCell<CPU>>, channel_mask: u8) -> impl Yieldable<()> + 'a {
+        move || {
+            for channel_i in 0..=7 {
+                if (channel_mask >> channel_i) & 1 != 1 {
+                    continue;
+                }
+                let channel_regs = cpu.borrow().io_reg.dma_channels[channel_i];
+                let table_base_addr = channel_regs.addr.0;
+                let indirect = channel_regs.setup.hdma_addr_mode();
+                if channel_regs.hdma_line_counter.line_count() == 0 {
+                    cpu.borrow_mut().do_hdmas_this_line[channel_i] = true;
+                    let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 as u32;
+                    let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(1);
+                    let new_line_count = yield_all!(CPU::read_u8(cpu.clone(), addr));
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .hdma_line_counter
+                        .set_line_count(new_line_count);
+                    // Reached terminating 0x00 in HDMA table
+                    if new_line_count == 0x00 {
+                        cpu.borrow_mut().hdmas_complete_this_frame[channel_i] = true;
+                    }
+                }
+                if indirect {
+                    let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 as u32;
+                    let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(1);
+                    let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .indirect_addr_or_byte_count
+                        .set_hi_byte(data);
+                    // TODO: Data might be shifted into the lo16 of this register, so this low byte might be the old high byte
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .indirect_addr_or_byte_count
+                        .set_lo_byte(0);
+                    let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 as u32;
+                    let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(1);
+                    let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .indirect_addr_or_byte_count
+                        .set_hi_byte(data);
+                }
+            }
+        }
+    }
+
+    fn run_hdma<'a>(cpu: Rc<RefCell<CPU>>, channel_mask: u8) -> impl Yieldable<()> + 'a {
+        move || {
+            for channel_i in 0..=7 {
+                if (channel_mask >> channel_i) & 1 != 1
+                    || cpu.borrow().hdmas_complete_this_frame[channel_i]
+                {
+                    continue;
+                }
+                let line_counter = cpu.borrow().io_reg.dma_channels[channel_i]
+                    .hdma_line_counter
+                    .line_count();
+                cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                    .hdma_line_counter
+                    .set_line_count(line_counter.wrapping_sub(1));
+                if !cpu.borrow_mut().do_hdmas_this_line[channel_i] {
+                    continue;
+                }
+                // TODO: Ban wram-to-wram
+                let channel_regs = cpu.borrow().io_reg.dma_channels[channel_i];
+                let table_base_addr = channel_regs.addr.0;
+                let indirect = channel_regs.setup.hdma_addr_mode();
+                let indirect_addr = channel_regs.indirect_addr_or_byte_count.0;
+                let io_to_cpu = channel_regs.setup.transfer_direction();
+                let io_reg_base = channel_regs.io_reg;
+                let io_reg_offsets = channel_regs.setup.hdma_io_reg_offsets();
+                for io_reg_offset in io_reg_offsets {
+                    let io_reg = io_reg_base.wrapping_add(*io_reg_offset);
+                    let io_reg_addr = u24(0x2100 | io_reg as u32);
+                    let cpu_addr = if indirect {
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .indirect_addr_or_byte_count
+                            .0 = indirect_addr.wrapping_add_signed(1);
+                        indirect_addr
+                    } else {
+                        let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 as u32;
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 = (table_off as u16).wrapping_add(1);
+                        u24(((table_base_addr.bank() as u32) << 16) | table_off)
+                    };
+                    if io_to_cpu {
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), io_reg_addr));
+                        yield_all!(CPU::write_u8(cpu.clone(), cpu_addr, data));
+                    } else {
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), cpu_addr));
+                        yield_all!(CPU::write_u8(cpu.clone(), io_reg_addr, data));
+                    }
+                }
+                let repeat = (cpu.borrow().io_reg.dma_channels[channel_i]
+                    .hdma_line_counter
+                    .line_count()
+                    >> 7)
+                    & 1
+                    == 1;
+                cpu.borrow_mut().do_hdmas_this_line[channel_i] = repeat;
             }
         }
     }
