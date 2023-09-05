@@ -43,7 +43,7 @@ impl SNES {
         smp: Rc<RefCell<SMP>>,
     ) -> Scheduler {
         let cpu_thread = Box::from(CPU::run(cpu.clone()));
-        let ppu_thread = Box::from(ppu.borrow_mut().run());
+        let ppu_thread = Box::from(PPU::run(ppu.clone()));
         let smp_thread = Box::from(SMP::run(smp.clone()));
         Scheduler::new(cpu_thread, ppu_thread, smp_thread)
     }

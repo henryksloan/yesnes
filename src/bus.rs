@@ -306,4 +306,9 @@ impl Bus {
             }
         }
     }
+
+    // TODO: Remove debug function
+    pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
+        self.ppu.borrow().debug_get_frame()
+    }
 }

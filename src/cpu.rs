@@ -8,7 +8,6 @@ use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::mpsc::channel;
 
 use paste::paste;
 
@@ -291,7 +290,7 @@ pub struct CPU {
     nmi_enqueued: bool,
     ticks_run: u64,
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
-    pub debug_frame_ready: bool,
+    pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
 }
 
 impl CPU {
@@ -311,7 +310,7 @@ impl CPU {
             do_hdmas_this_line: [false; 8],
             nmi_enqueued: false,
             ticks_run: 0,
-            debug_frame_ready: false,
+            debug_frame: None,
         }
     }
 
@@ -561,6 +560,7 @@ impl CPU {
             // TODO: This is required to prevent deadlocks on the frontend. Consider a more elegent way
             // to resynchronize.
             yield YieldReason::Sync(Device::SMP);
+            yield YieldReason::Sync(Device::PPU);
             // TODO: Overscan mode
             if cpu.borrow().ppu_counter.borrow().scanline < 225 {
                 cpu.borrow_mut().hdma_setup_triggered_this_line = false;
@@ -599,8 +599,9 @@ impl CPU {
                 // TODO: Overscan mode
                 if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {
                     cpu.borrow_mut().nmi_enqueued = true;
-                    cpu.borrow_mut().debug_frame_ready = true;
                 }
+                let frame = cpu.borrow().bus.borrow().debug_get_frame();
+                cpu.borrow_mut().debug_frame = Some(frame);
             }
         }
     }
@@ -701,7 +702,7 @@ impl CPU {
                 self.dmas_enqueued = Some(data);
             }
             0x420C => {
-                log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
+                // log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
                 self.hdmas_enqueued = Some(data);
             }
             0x4300..=0x437A => {
