@@ -291,6 +291,7 @@ pub struct CPU {
     ticks_run: u64,
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
     pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
+    pub controller_states: [u16; 4],
 }
 
 impl CPU {
@@ -311,6 +312,7 @@ impl CPU {
             nmi_enqueued: false,
             ticks_run: 0,
             debug_frame: None,
+            controller_states: [0; 4],
         }
     }
 
@@ -667,7 +669,11 @@ impl CPU {
             0x4210 => 0xC0,
             // TODO: Remove debugging value
             0x4212 => 0xC0,
-            0x4218..=0x421F => 0, // TODO: Joypad
+            0x4218..=0x421F => {
+                let reg_off = addr.lo16() as usize - 0x4218;
+                let controller_state = self.controller_states[reg_off / 4];
+                (controller_state >> ((reg_off % 2) * 8)) as u8
+            }
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
                 let channel_regs = self.io_reg.dma_channels[channel_index];

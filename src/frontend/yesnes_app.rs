@@ -78,7 +78,6 @@ impl eframe::App for YesnesApp {
         self.frame_history
             .on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
 
-        // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
         let paused = *self.emu_paused.lock().unwrap();
         // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
         // TODO: We also might want to handle panics from the emulator on the frontend thread (e.g. trace)

@@ -41,7 +41,8 @@ impl AppWindow for ScreenWindow {
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
         if let Ok(snes) = self.snes.lock() {
-            if let Some(frame) = snes.cpu.borrow_mut().debug_frame.take() {
+            let frame = snes.cpu.borrow_mut().debug_frame.take();
+            if let Some(frame) = frame {
                 let now = Instant::now();
                 let delta = self
                     .previous_frame_instant
@@ -54,6 +55,31 @@ impl AppWindow for ScreenWindow {
                         let color = frame[y][x];
                         self.image[(x, y)] = Color32::from_rgb(color[0], color[1], color[2]);
                     }
+                }
+
+                if focused && !paused {
+                    let controller_state = ctx.input(|input_state| {
+                        const KEYS: &[egui::Key] = &[
+                            egui::Key::C,          // B
+                            egui::Key::X,          // Y
+                            egui::Key::Enter,      // Select
+                            egui::Key::Space,      // Start
+                            egui::Key::ArrowUp,    // Up
+                            egui::Key::ArrowDown,  // Down
+                            egui::Key::ArrowLeft,  // Left
+                            egui::Key::ArrowRight, // Right
+                            egui::Key::V,          // A
+                            egui::Key::D,          // X
+                            egui::Key::A,          // L
+                            egui::Key::S,          // R
+                        ];
+                        let mut controller_state = 0;
+                        for (i, key) in KEYS.iter().enumerate() {
+                            controller_state |= (input_state.key_down(*key) as u16) << (15 - i);
+                        }
+                        controller_state
+                    });
+                    snes.cpu.borrow_mut().controller_states[0] = controller_state;
                 }
             }
         }
