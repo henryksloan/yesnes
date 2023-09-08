@@ -165,10 +165,10 @@ macro_rules! branch_instrs {
                     let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
                     if cpu.borrow_mut().reg.p.$flag == $val {
                         cpu.borrow_mut().reg.pc = dest_pc;
-                        yield_all!(CPU::step(cpu.clone(), 1));
+                        yield_all!(CPU::idle(cpu.clone()));
                         // TODO: Is this right? Maybe only for emulation mode...
                         if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
-                            yield_all!(CPU::step(cpu.clone(), 1));
+                            yield_all!(CPU::idle(cpu.clone()));
                         }
                     }
                 }
@@ -288,7 +288,13 @@ pub struct CPU {
     hdmas_complete_this_frame: [bool; 8],
     do_hdmas_this_line: [bool; 8],
     nmi_enqueued: bool,
+    irq_enqueued: bool,
+    // TODO: Should change most instances of "tick" to "clock"
     ticks_run: u64,
+    // Some events like interrupt polling happen every 4 ticks. This tracks the
+    // remainder ticks from `step()`, e.g. if `2` or `5` ticks elapse.
+    // DO NOT SUBMIT: Consider encapsulating this (and much else) into some interrupt controller abstraction.
+    ticks_mod_4: u8,
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
     pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
     pub controller_states: [u16; 4],
@@ -310,7 +316,9 @@ impl CPU {
             hdmas_complete_this_frame: [false; 8],
             do_hdmas_this_line: [false; 8],
             nmi_enqueued: false,
+            irq_enqueued: false,
             ticks_run: 0,
+            ticks_mod_4: 0,
             debug_frame: None,
             controller_states: [0; 4],
         }
@@ -546,6 +554,16 @@ impl CPU {
                 yield_ticks!(cpu, CPU::interrupt(cpu.clone(), vector));
             }
 
+            if cpu.borrow().irq_enqueued {
+                cpu.borrow_mut().irq_enqueued = false;
+                let vector = if cpu.borrow().reg.p.e {
+                    IRQ_VECTOR_E
+                } else {
+                    IRQ_VECTOR
+                };
+                yield_ticks!(cpu, CPU::interrupt(cpu.clone(), vector));
+            }
+
             // TODO: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
             // But I think it's good enough if we just attach ticks_run to whatever this function yield (like yield_all).
             // In fact, this is wrong, as we're returning from the device generator without flushing our cycles.
@@ -587,12 +605,6 @@ impl CPU {
                         cpu.borrow_mut().io_reg.dma_channels[channel_i]
                             .hdma_line_counter
                             .0 = 0;
-                        // log::debug!(
-                        //     "Reset to {:04X}",
-                        //     cpu.borrow().io_reg.dma_channels[channel_i]
-                        //         .hdma_table_curr_addr
-                        //         .0
-                        // );
                     }
                 }
                 cpu.borrow_mut().hdmas_complete_this_frame.fill(false);
@@ -611,12 +623,31 @@ impl CPU {
     fn step<'a>(cpu: Rc<RefCell<CPU>>, n_clocks: u64) -> impl Yieldable<()> + 'a {
         move || {
             cpu.borrow_mut().ticks_run += n_clocks;
-            let scanline = yield_all!(PpuCounter::tick(
-                cpu.borrow().ppu_counter.clone(),
-                n_clocks as u16
-            ));
-            if scanline {
-                yield_all!(CPU::on_scanline_start(cpu.clone()));
+            let ticks_mod_4 = cpu.borrow().ticks_mod_4;
+            cpu.borrow_mut().ticks_mod_4 = ticks_mod_4.wrapping_add(n_clocks as u8) % 4;
+            let aligned_clocks = n_clocks.saturating_sub((4 - ticks_mod_4 as u64) % 2);
+            // If the first of two PPU ticks for this poll cycle has already happened
+            // (i.e. on clocks 1 and 2 of the poll cycle) then the next PPU tick should not trigger a poll.
+            let poll_offset = (ticks_mod_4 == 1 || ticks_mod_4 == 2) as u64;
+            // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
+            for ppu_tick in 0..((aligned_clocks + 1) / 2) {
+                let scanline = yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                if scanline {
+                    yield_all!(CPU::on_scanline_start(cpu.clone()));
+                }
+                if ppu_tick % 2 == poll_offset {
+                    let irq_mode = cpu.borrow().io_reg.interrupt_control.h_v_irq();
+                    let v_scan_count = cpu.borrow().io_reg.v_scan_count.timer_value();
+                    let h_scan_count = cpu.borrow().io_reg.h_scan_count.timer_value();
+                    let h_dot = cpu.borrow().ppu_counter.borrow().h_ticks / 4;
+                    let scanline = cpu.borrow().ppu_counter.borrow().scanline;
+                    cpu.borrow_mut().irq_enqueued |= match irq_mode {
+                        0 => false,
+                        1 => h_dot == h_scan_count,
+                        2 => scanline == v_scan_count && h_dot == 0,
+                        3 | _ => scanline == v_scan_count && h_dot == h_scan_count,
+                    };
+                }
             }
             if cpu.borrow().ppu_counter.borrow().h_ticks >= 1104
                 && !cpu.borrow().hdma_triggered_this_line
@@ -1975,10 +2006,10 @@ impl CPU {
             let source_pc = cpu.borrow().reg.pc + 1u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
             cpu.borrow_mut().reg.pc = dest_pc;
-            yield_all!(CPU::step(cpu.clone(), 1));
+            yield_all!(CPU::idle(cpu.clone()));
             // TODO: Is this right? Maybe only for emulation mode...
             if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
-                yield_all!(CPU::step(cpu.clone(), 1));
+                yield_all!(CPU::idle(cpu.clone()));
             }
         }
     }
@@ -1988,7 +2019,7 @@ impl CPU {
             let source_pc = cpu.borrow().reg.pc + 2u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
             cpu.borrow_mut().reg.pc = dest_pc;
-            yield_all!(CPU::step(cpu.clone(), 1));
+            yield_all!(CPU::idle(cpu.clone()));
             // TODO: Maybe some bank cross cycles? Maybe only for emulation mode...
         }
     }

@@ -233,6 +233,8 @@ pub struct IoRegisters {
     pub interrupt_control: InterruptControl,
     pub waitstate_control: WaitstateControl,
     pub dma_channels: [DmaChannelRegisters; 8],
+    pub h_scan_count: PpuScanCount,
+    pub v_scan_count: PpuScanCount,
 }
 
 impl IoRegisters {
@@ -250,6 +252,19 @@ bitfield! {
   pub joypad_enable, _: 0;
   pub h_v_irq, _: 5, 4;
   pub vblank_nmi_enable, _: 7;
+}
+
+bitfield! {
+  /// 4207h/4208h - HTIMEL/HTIMEH - H-Count Timer Setting (W)
+  /// 4209h/420Ah - VTIMEL/VTIMEH - V-Count Timer Setting (W)
+  /// Holds the configuration for the H- or V-count IRQ
+  #[derive(Clone, Copy, Default)]
+  pub struct PpuScanCount(u16);
+  impl Debug;
+  pub timer_value, _: 8, 0;
+
+  pub u8, lo_byte, set_lo_byte: 7, 0;
+  pub u8, hi_byte, set_hi_byte: 15, 8;
 }
 
 bitfield! {
