@@ -698,6 +698,7 @@ impl CPU {
             // TODO: Remove debugging value
             // This has bit6 set to simulate some weird open bus behavior for testing
             0x4210 => 0xC0,
+            0x4211 => 0, // TODO: IRQ stuff
             // TODO: Remove debugging value
             0x4212 => 0xC0,
             0x4218..=0x421F => {

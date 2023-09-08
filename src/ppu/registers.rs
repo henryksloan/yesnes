@@ -10,6 +10,7 @@ pub struct IoRegisters {
     pub bg_tilemap_addr_size: [TilemapAddrSize; 4],
     pub bg_chr_addr: BackgroundChrAddr,
     pub bg_scroll: [BackgroundScroll; 4],
+    pub bg_scroll_access_latch: bool,
     pub vram_addr_incr_mode: VramAddrIncrMode,
     // 2116h - VMADDL - VRAM Address (lower 8bit) (W)
     // 2117h - VMADDH - VRAM Address (upper 8bit) (W)
@@ -147,9 +148,9 @@ pub struct BackgroundScrollComponent {
 impl BackgroundScrollComponent {
     pub fn write_next(&mut self, data: u8) {
         self.val = if self.access_latch {
-            (self.val & 0xFF00) | data as u16
-        } else {
             (self.val & 0x00FF) | ((data as u16) << 8)
+        } else {
+            (self.val & 0xFF00) | data as u16
         };
         self.access_latch = !self.access_latch;
     }
