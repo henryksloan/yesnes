@@ -45,6 +45,8 @@ pub fn run_emu_thread(
         match message {
             EmuThreadMessage::Continue(device) => {
                 *paused.lock().unwrap() = false;
+                // TODO: These two locks have a significant cost (at least 20%).
+                // Running frame-by-frame or line-by-line would be a better default.
                 while !*paused.lock().unwrap() {
                     let snes = &mut snes.lock().unwrap();
                     let should_break = match device {

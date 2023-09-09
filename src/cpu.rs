@@ -3,11 +3,14 @@ pub mod registers;
 pub use registers::{IoRegisters, Registers, StatusRegister};
 
 use crate::{bus::Bus, ppu::PpuCounter, scheduler::*, u24::u24};
+// DO NOT SUBMIT
+use crate::frontend::frame_history::FrameHistory;
 
 use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 use std::rc::Rc;
+use std::time::Instant;
 
 use paste::paste;
 
@@ -83,6 +86,8 @@ macro_rules! pull_instrs {
             $(
             fn [<pull_ $reg>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
                 move || {
+                    yield_all!(CPU::idle(cpu.clone()));
+                    yield_all!(CPU::idle(cpu.clone()));
                     let data = yield_all!(CPU::[<stack_pull_ $kind>](cpu.clone()));
                     cpu.borrow_mut().reg.[<set_ $reg>](data);
                     cpu.borrow_mut().reg.p.n = ((data >> (n_bits!(cpu, $kind) - 1)) == 1);
@@ -106,6 +111,7 @@ macro_rules! push_instrs {
             $(
             fn [<push_ $reg>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
                 move || {
+                    yield_all!(CPU::idle(cpu.clone()));
                     let data = cpu.borrow_mut().reg.[<get_ $reg>]();
                     yield_all!(CPU::[<stack_push_ $kind>](cpu.clone(), data));
                 }
@@ -126,7 +132,7 @@ macro_rules! transfer_instrs {
         paste! {
             fn [<transfer_ $from _ $to>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
                 move || {
-                    dummy_yield!();
+                    yield_all!(CPU::idle(cpu.clone()));
                     let data = cpu.borrow().reg.$from & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
                     cpu.borrow_mut().reg.[<set_ $to>](data);
                     if n_bits!(cpu, $kind) == 16 {
@@ -298,6 +304,10 @@ pub struct CPU {
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
     pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
     pub controller_states: [u16; 4],
+    // DO NOT SUBMIT
+    frame_history: FrameHistory,
+    previous_frame_instant: Option<Instant>,
+    print_timer: u64,
 }
 
 impl CPU {
@@ -321,6 +331,9 @@ impl CPU {
             ticks_mod_4: 0,
             debug_frame: None,
             controller_states: [0; 4],
+            frame_history: FrameHistory::new(),
+            previous_frame_instant: None,
+            print_timer: 0,
         }
     }
 
@@ -616,6 +629,25 @@ impl CPU {
                 }
                 let frame = cpu.borrow().bus.borrow().debug_get_frame();
                 cpu.borrow_mut().debug_frame = Some(frame);
+                // DO NOT SUBMIT
+                let now = Instant::now();
+                let delta = cpu
+                    .borrow()
+                    .previous_frame_instant
+                    .map(|previous| (now - previous).as_secs_f32());
+                let prev = cpu.borrow().previous_frame_instant;
+                if let Some(previous_frame_instant) = prev {
+                    let elapsed = previous_frame_instant.elapsed();
+                    cpu.borrow_mut()
+                        .frame_history
+                        .on_new_frame(elapsed.as_secs_f64(), delta);
+                }
+                cpu.borrow_mut().previous_frame_instant = Some(now);
+                let print_timer = cpu.borrow().print_timer;
+                cpu.borrow_mut().print_timer = (print_timer + 1) % 120;
+                if print_timer == 0 {
+                    log::debug!("{}", cpu.borrow().frame_history.mean_frame_time());
+                }
             }
         }
     }
@@ -1399,49 +1431,49 @@ impl CPU {
     // TODO: Make a macro for these flag instructions?
     fn clc<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.c = false;
         }
     }
 
     fn cli<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.i = false;
         }
     }
 
     fn cld<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.d = false;
         }
     }
 
     fn clv<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.v = false;
         }
     }
 
     fn sec<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.c = true;
         }
     }
 
     fn sei<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.i = true;
         }
     }
 
     fn sed<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.d = true;
         }
     }
@@ -1464,7 +1496,8 @@ impl CPU {
 
     fn xba<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
+            yield_all!(CPU::idle(cpu.clone()));
             let a = cpu.borrow().reg.a;
             let (hi, lo) = (a >> 8, a & 0xFF);
             let result = (lo << 8) | hi;
@@ -1546,7 +1579,7 @@ impl CPU {
 
     fn transfer_a_sp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             let a = cpu.borrow().reg.a;
             if cpu.borrow().reg.p.e {
                 cpu.borrow_mut().reg.sp = (1 << 8) | (a & 0xFF);
@@ -1558,7 +1591,7 @@ impl CPU {
 
     fn transfer_x_sp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             let x = cpu.borrow().reg.x;
             if cpu.borrow().reg.p.e {
                 cpu.borrow_mut().reg.sp &= 0xFF00;
@@ -1581,6 +1614,7 @@ impl CPU {
             let dst_addr = u24(((dst_bank as u32) << 16) | cpu.borrow().reg.y as u32);
             let data = yield_all!(CPU::read_u8(cpu.clone(), src_addr));
             yield_all!(CPU::write_u8(cpu.clone(), dst_addr, data));
+            yield_all!(CPU::idle(cpu.clone()));
             if increment {
                 let x = cpu.borrow().reg.get_x();
                 cpu.borrow_mut().reg.set_x(x.wrapping_add(1));
@@ -1592,6 +1626,7 @@ impl CPU {
                 let y = cpu.borrow().reg.get_y();
                 cpu.borrow_mut().reg.set_y(y.wrapping_sub(1));
             }
+            yield_all!(CPU::idle(cpu.clone()));
             // The entire 16 bits of A is decremented, regardless of the M and E flags
             let a = cpu.borrow().reg.a;
             cpu.borrow_mut().reg.a = a.wrapping_sub(1);
@@ -2062,6 +2097,8 @@ impl CPU {
 
     fn pull_p<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
+            yield_all!(CPU::idle(cpu.clone()));
+            yield_all!(CPU::idle(cpu.clone()));
             let data = yield_all!(CPU::stack_pull_u8(cpu.clone()));
             cpu.borrow_mut().reg.set_p(data);
         }
@@ -2069,6 +2106,7 @@ impl CPU {
 
     fn push_pb<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
+            yield_all!(CPU::idle(cpu.clone()));
             let data = cpu.borrow_mut().reg.pc.bank();
             yield_all!(CPU::stack_push_u8(cpu.clone(), data));
         }
