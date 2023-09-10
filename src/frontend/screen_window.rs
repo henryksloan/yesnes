@@ -6,6 +6,7 @@ use crate::snes::SNES;
 
 use eframe::egui::{Color32, ColorImage, TextureHandle};
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub struct ScreenWindow {
@@ -14,12 +15,13 @@ pub struct ScreenWindow {
     snes: Arc<Mutex<SNES>>,
     image: ColorImage,
     texture: Option<TextureHandle>,
+    frame_ready: Arc<AtomicBool>,
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
 }
 
 impl ScreenWindow {
-    pub fn new(title: String, snes: Arc<Mutex<SNES>>) -> Self {
+    pub fn new(title: String, snes: Arc<Mutex<SNES>>, frame_ready: Arc<AtomicBool>) -> Self {
         let id = egui::Id::new(&title);
         let image = ColorImage::new([256, 224], Color32::BLACK);
         Self {
@@ -28,6 +30,7 @@ impl ScreenWindow {
             snes,
             image,
             texture: None,
+            frame_ready,
             frame_history: FrameHistory::new(),
             previous_frame_instant: None,
         }
@@ -40,23 +43,14 @@ impl AppWindow for ScreenWindow {
     }
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
-        if let Ok(snes) = self.snes.lock() {
-            let frame = snes.cpu.borrow_mut().debug_frame.take();
-            if let Some(frame) = frame {
-                let now = Instant::now();
-                let delta = self
-                    .previous_frame_instant
-                    .map(|previous| (now - previous).as_secs_f32());
-                self.previous_frame_instant = Some(now);
-                self.frame_history
-                    .on_new_frame(ctx.input(|i| i.time), delta);
-                for y in 0..224 {
-                    for x in 0..256 {
-                        let color = frame[y][x];
-                        self.image[(x, y)] = Color32::from_rgb(color[0], color[1], color[2]);
-                    }
-                }
-
+        if let Ok(true) =
+            self.frame_ready
+                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+        {
+            // TODO: Much of this need not happen under the lock
+            let mut frame = None;
+            if let Ok(snes) = self.snes.lock() {
+                frame = snes.cpu.borrow_mut().debug_frame.take();
                 if focused && !paused {
                     let controller_state = ctx.input(|input_state| {
                         const KEYS: &[egui::Key] = &[
@@ -82,6 +76,21 @@ impl AppWindow for ScreenWindow {
                     snes.cpu.borrow_mut().controller_states[0] = controller_state;
                 }
             }
+            if let Some(frame) = frame {
+                let now = Instant::now();
+                let delta = self
+                    .previous_frame_instant
+                    .map(|previous| (now - previous).as_secs_f32());
+                self.previous_frame_instant = Some(now);
+                self.frame_history
+                    .on_new_frame(ctx.input(|i| i.time), delta);
+                for y in 0..224 {
+                    for x in 0..256 {
+                        let color = frame[y][x];
+                        self.image[(x, y)] = Color32::from_rgb(color[0], color[1], color[2]);
+                    }
+                }
+            }
         }
         match &mut self.texture {
             Some(t) => t.set(self.image.clone(), egui::TextureOptions::NEAREST),
@@ -100,19 +109,15 @@ impl AppWindow for ScreenWindow {
                 if !focused {
                     ui.set_enabled(false);
                 }
-                // egui::TopBottomPanel::top(self.id.with("menu_bar"))
-                //     .show_inside(ui, |ui| self.menu_bar(ui));
-
-                // let egui_image = egui::Image::new(self.texture.as_ref().unwrap(), [256., 224.]);
-                // let rect = ctx.available_rect();
-                // egui_image.paint_at(ui, rect);
                 ui.label(format!(
                     "Mean frame time: {:.2}ms",
                     1e3 * self.frame_history.mean_frame_time()
                 ));
                 let rect_size = ui.available_rect_before_wrap().size();
-                // ui.image(self.texture.as_ref().unwrap(), [512., 448.]);
-                ui.image(self.texture.as_ref().unwrap(), [rect_size.x, rect_size.x]);
+                ui.image(
+                    self.texture.as_ref().unwrap(),
+                    [rect_size.x, rect_size.x * (224. / 255.)],
+                );
             });
     }
 }

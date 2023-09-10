@@ -7,6 +7,7 @@ use super::emu_thread::{run_instruction_and_disassemble, EmuThreadMessage};
 use super::line_input_window::*;
 use super::registers::*;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crossbeam::channel;
@@ -20,7 +21,7 @@ pub struct DebuggerWindow<D: DebugProcessor> {
     title: String,
     snes: Arc<Mutex<SNES>>,
     disassembler: Arc<Mutex<Disassembler<D>>>,
-    emu_paused: Arc<Mutex<bool>>,
+    emu_paused: Arc<AtomicBool>,
     registers_mirror: D::Registers,
     scroll_to_row: Option<(usize, egui::Align)>,
     prev_top_row: Option<usize>,
@@ -35,7 +36,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         title: String,
         snes: Arc<Mutex<SNES>>,
         disassembler: Arc<Mutex<Disassembler<D>>>,
-        emu_paused: Arc<Mutex<bool>>,
+        emu_paused: Arc<AtomicBool>,
         emu_message_sender: channel::Sender<EmuThreadMessage>,
     ) -> Self {
         let id = egui::Id::new(&title);
@@ -117,7 +118,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             // TODO: Implement step over more completely
             let button = egui::Button::new("Step over");
             if ui
-                .add_enabled(*self.emu_paused.lock().unwrap(), button)
+                .add_enabled(self.emu_paused.load(Ordering::Acquire), button)
                 .clicked()
             {
                 let snes = self.snes.lock().unwrap();
@@ -264,7 +265,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                 self.go_to_address_window.open();
             }
             Self::Shortcut::GoToProgramCounter => {
-                if *self.emu_paused.lock().unwrap() {
+                if self.emu_paused.load(Ordering::Acquire) {
                     let snes = self.snes.lock().unwrap();
                     let pc = D::pc(&D::registers(&snes));
                     let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
@@ -277,7 +278,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                     .send(EmuThreadMessage::Continue(D::DEVICE));
             }
             Self::Shortcut::Pause => {
-                *self.emu_paused.lock().unwrap() = true;
+                self.emu_paused.store(true, Ordering::SeqCst);
                 if let Ok(snes) = self.snes.lock() {
                     let pc = D::pc(&D::registers(&snes));
                     let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
@@ -286,7 +287,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
             }
             // TODO: We should probably eagerly sync processors when tracing/stepping, etc.
             Self::Shortcut::Trace => {
-                *self.emu_paused.lock().unwrap() = true;
+                self.emu_paused.store(true, Ordering::SeqCst);
                 if let Ok(mut snes) = self.snes.lock() {
                     run_instruction_and_disassemble(&mut snes, &self.disassembler);
                     let pc = D::pc(&D::registers(&snes));
@@ -309,7 +310,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                 self.run_to_address_window.open();
             }
             Self::Shortcut::Reset => {
-                *self.emu_paused.lock().unwrap() = true;
+                self.emu_paused.store(true, Ordering::SeqCst);
                 if let Ok(mut snes) = self.snes.lock() {
                     snes.reset();
                 }
@@ -319,9 +320,10 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
     }
 
     fn shortcut_enabled(&mut self, shortcut: &Self::Shortcut) -> bool {
+        let paused = self.emu_paused.load(Ordering::Acquire);
         match *shortcut {
-            Self::Shortcut::Continue => *self.emu_paused.lock().unwrap(),
-            Self::Shortcut::Pause => !(*self.emu_paused.lock().unwrap()),
+            Self::Shortcut::Continue => paused,
+            Self::Shortcut::Pause => !paused,
             _ => true,
         }
     }

@@ -65,7 +65,7 @@ impl SNES {
         self.scheduler.run_instruction();
     }
 
-    pub fn run_instruction_debug(&mut self, run_device: Device) -> bool {
+    pub fn run_instruction_debug(&mut self, run_device: Device) -> (bool, bool) {
         self.scheduler.run_instruction_debug(run_device)
     }
 

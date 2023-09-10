@@ -648,6 +648,7 @@ impl CPU {
                 if print_timer == 0 {
                     log::debug!("{}", cpu.borrow().frame_history.mean_frame_time());
                 }
+                yield YieldReason::FrameReady;
             }
         }
     }
