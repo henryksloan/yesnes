@@ -207,7 +207,13 @@ impl PPU {
         // in this grid. These X and Y values both wrap without carry.
         let vram_row = ((first_chr_n as u16) >> 4).wrapping_add(line / 8) & 0xF;
         let palette_n = attr.palette_n();
-        for col in 0..(width / 8) {
+        let n_cols = width / 8;
+        for col_i in 0..n_cols {
+            let col = if attr.flip_x() {
+                (n_cols - 1) - col_i
+            } else {
+                col_i
+            };
             let chr_n = {
                 let vram_col = (first_chr_n as u16 & 0xF).wrapping_add(col) & 0xF;
                 (vram_row << 4) | vram_col
@@ -219,14 +225,15 @@ impl PPU {
             let tile_line = line % 8;
             let planes_0_1 = self.vram[(tile_chr_base + tile_line) as usize];
             let planes_2_3 = self.vram[(8 + tile_chr_base + tile_line) as usize];
-            for bit in 0..8 {
+            for bit_i in 0..8 {
                 let pixel_x = {
-                    let x = (x_lo8 as u16 + col * 8 + bit) as i16 - (x_hi1 as i16 * 256);
+                    let x = (x_lo8 as u16 + col_i * 8 + bit_i) as i16 - (x_hi1 as i16 * 256);
                     if x >= 255 || x < 0 {
                         continue;
                     }
                     x as usize
                 };
+                let bit = if attr.flip_x() { 7 - bit_i } else { bit_i };
                 let palette_i = {
                     let pair_lo =
                         (((planes_0_1 >> (15 - bit)) & 1) << 1) | ((planes_0_1 >> (7 - bit)) & 1);
