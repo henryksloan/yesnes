@@ -106,7 +106,6 @@ impl PPU {
     fn debug_render_scanline_bpp(&mut self, scanline: u16, bits_per_pixel: usize) {
         assert_eq!(bits_per_pixel % 2, 0);
         // TODO: Doesn't support direct color mode
-        // TODO: Doesn't support tile flipping
         // TODO: Doesn't support large tiles
         // TODO: Doesn't support priority
         // TODO: Reading from VRAM takes cycles...
@@ -121,7 +120,7 @@ impl PPU {
         let render_line = scanline as usize + self.io_reg.bg_scroll[0].v.val as usize;
         let row = (render_line / 8) % screen_rows;
         let v_screen = row / 32;
-        let line = render_line % 8;
+        let line_offset = render_line % 8;
         let start_col = (self.io_reg.bg_scroll[0].h.val / 8) as usize;
         let start_pixel_x = (self.io_reg.bg_scroll[0].h.val % 8) as usize;
         let n_cols = 32 + (start_pixel_x > 0) as usize;
@@ -140,19 +139,22 @@ impl PPU {
             let chr_n = tile & 0x3FF;
             let tile_chr_base = chr_addr + (bits_per_pixel * 4) * chr_n as usize;
             let palette_n = (tile >> 10) & 0x7;
+            let (flip_x, flip_y) = ((tile >> 14) & 1 == 1, (tile >> 15) & 1 == 1);
+            let line = if flip_y { 7 - line_offset } else { line_offset };
             let tile_plane_pairs: Vec<u16> = (0..(bits_per_pixel / 2))
                 .map(|i| self.vram[i * 8 + tile_chr_base + line])
                 .collect();
             let start_bit = if col_i == 0 { start_pixel_x } else { 0 };
             let end_bit = if col_i == 32 { start_pixel_x } else { 8 };
-            for bit in start_bit..end_bit {
+            for bit_i in start_bit..end_bit {
+                let bit = if flip_x { 7 - bit_i } else { bit_i };
                 let palette_i = tile_plane_pairs.iter().rev().fold(0, |acc, word| {
                     let pair = (((word >> (15 - bit)) & 1) << 1) | ((word >> (7 - bit)) & 1);
                     (acc << 2) | pair
                 });
                 let palette_entry =
                     self.cgram[(1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize];
-                let pixel = &mut self.frame[scanline as usize][(col_i * 8 + bit) - start_pixel_x];
+                let pixel = &mut self.frame[scanline as usize][(col_i * 8 + bit_i) - start_pixel_x];
                 pixel[0] = ((palette_entry & 0x1F) as u8) << 3;
                 pixel[1] = (((palette_entry >> 5) & 0x1F) as u8) << 3;
                 pixel[2] = (((palette_entry >> 10) & 0x1F) as u8) << 3;
@@ -185,7 +187,7 @@ impl PPU {
             let x_lo8 = oam_lo_entry.x_lo8();
             let chr_n = oam_lo_entry.chr_n();
             let attr = oam_lo_entry.attr();
-            self.debug_render_sprite(scanline, x_hi1, x_lo8, y, width, chr_n, attr);
+            self.debug_render_sprite(scanline, x_hi1, x_lo8, y, width, height, chr_n, attr);
         }
     }
 
@@ -196,12 +198,20 @@ impl PPU {
         x_lo8: u8,
         y: u16,
         width: u16,
+        height: u16,
         first_chr_n: u8,
         attr: ObjAttributes,
     ) {
         // The rendering of sprites is offset by +1 from backgrounds, but since scanline 0 is invisible,
         // it cancels out. i.e. a sprite at y=0 will be drawn starting on the first visible scanline.
-        let line = scanline - y;
+        let line = {
+            let line_offset = scanline - y;
+            if attr.flip_y() {
+                (height - 1) - line_offset
+            } else {
+                line_offset
+            }
+        };
         // Each of the two sprite nametables is laid out in VRAM as a 2D 16x16 grid of 8x8 tiles.
         // The sprite's 8-bit tile number can be seen as two nybbles representing Y (row) and X (col)
         // in this grid. These X and Y values both wrap without carry.
