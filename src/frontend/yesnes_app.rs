@@ -35,6 +35,7 @@ impl Default for YesnesApp {
         ))));
         smp_disassembler.lock().unwrap().disassemble();
         let (sender, receiver) = channel::bounded(1024);
+        // TODO: This should be a smarter cancellation mechanism. As a start, could use an atomic bool.
         let emu_paused = Arc::new(Mutex::new(true));
         run_emu_thread(
             snes.clone(),

@@ -1,8 +1,11 @@
 pub mod counter;
+mod obj;
 mod registers;
 
-use bitfield::{BitRange, BitRangeMut};
 pub use counter::PpuCounter;
+
+use bitfield::{BitRange, BitRangeMut};
+use obj::{OamLoEntry, ObjAttributes};
 use registers::IoRegisters;
 
 use crate::cpu::yield_ticks;
@@ -16,6 +19,10 @@ use std::rc::Rc;
 pub struct PPU {
     vram: Vec<u16>,
     cgram: Vec<u16>,
+    // OAM can be seen as a 512-byte low table and a 32-byte upper table.
+    // The two tables have different data formats and different write behavior.
+    oam_lo: Vec<u8>,
+    oam_hi: Vec<u8>,
     io_reg: IoRegisters,
     ppu_counter: Rc<RefCell<PpuCounter>>,
     frame: [[[u8; 3]; 256]; 224],
@@ -28,6 +35,8 @@ impl PPU {
             io_reg: IoRegisters::new(),
             vram: vec![0; 0x8000],
             cgram: vec![0; 0x100],
+            oam_lo: vec![0; 0x200],
+            oam_hi: vec![0; 0x20],
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
             frame: [[[0; 3]; 256]; 224],
             ticks_run: 0,
@@ -43,6 +52,7 @@ impl PPU {
 
     pub fn run<'a>(ppu: Rc<RefCell<PPU>>) -> impl DeviceGenerator + 'a {
         move || loop {
+            // TODO: This is scanline-granularity, and does no synchronization below that granularity.
             yield_ticks!(ppu, PPU::step(ppu.clone(), 1364));
         }
     }
@@ -56,10 +66,16 @@ impl PPU {
             ));
             if new_scanline {
                 let scanline = ppu.borrow().ppu_counter.borrow().scanline;
+                // TODO: Overscan
                 if scanline < 225 {
                     ppu.borrow_mut().debug_render_scanline(scanline);
                 }
+                if scanline == 225 && !ppu.borrow().io_reg.display_control_1.forced_blank() {
+                    ppu.borrow_mut().reload_oam_addr();
+                }
             }
+            // TODO: Once this has accurate timing, consider loosening the syncing events
+            // (though the PPU is so dependent on the CPU that we'll probably want this anyway)
             yield YieldReason::Sync(Device::CPU);
         }
     }
@@ -69,6 +85,10 @@ impl PPU {
             return;
         }
         let draw_line = scanline - 1;
+        if self.io_reg.display_control_1.forced_blank() {
+            self.frame[draw_line as usize].fill([0, 0, 0]);
+            return;
+        }
         match self.io_reg.bg_mode.bg_mode() {
             // TODO: These are currently just the first layers
             0 => self.debug_render_scanline_bpp(draw_line, 2),
@@ -80,11 +100,16 @@ impl PPU {
             // TODO
             _ => {}
         }
+        self.debug_render_sprites(draw_line);
     }
 
     fn debug_render_scanline_bpp(&mut self, scanline: u16, bits_per_pixel: usize) {
         assert_eq!(bits_per_pixel % 2, 0);
         // TODO: Doesn't support direct color mode
+        // TODO: Doesn't support tile flipping
+        // TODO: Doesn't support large tiles
+        // TODO: Doesn't support priority
+        // TODO: Reading from VRAM takes cycles...
         let bg_addr = (self.io_reg.bg_tilemap_addr_size[0].base() as usize) << 10;
         let chr_addr = (self.io_reg.bg_chr_addr.bg1_base() as usize) << 12;
         let (screen_cols, screen_rows) = match self.io_reg.bg_tilemap_addr_size[0].size() {
@@ -135,6 +160,93 @@ impl PPU {
         }
     }
 
+    fn debug_render_sprites(&mut self, scanline: u16) {
+        // TODO: Doesn't support priority of any kind
+        for sprite_i in 0..128 {
+            let oam_lo_entry = {
+                let oam_off = sprite_i * 4;
+                OamLoEntry(u32::from_le_bytes(
+                    self.oam_lo[oam_off..oam_off + 4].try_into().unwrap(),
+                ))
+            };
+            let (x_hi1, large) = {
+                let oam_hi_entry = self.oam_hi[sprite_i / 4];
+                let offset = 2 * (sprite_i % 4);
+                (
+                    (oam_hi_entry >> offset) & 1,
+                    (oam_hi_entry >> (offset + 1)) & 1 == 1,
+                )
+            };
+            let (width, height) = self.io_reg.obj_size_base.obj_width_height(large);
+            let y = oam_lo_entry.y() as u16;
+            if scanline < y || scanline >= (y + height) {
+                continue;
+            }
+            let x_lo8 = oam_lo_entry.x_lo8();
+            let chr_n = oam_lo_entry.chr_n();
+            let attr = oam_lo_entry.attr();
+            self.debug_render_sprite(scanline, x_hi1, x_lo8, y, width, chr_n, attr);
+        }
+    }
+
+    fn debug_render_sprite(
+        &mut self,
+        scanline: u16,
+        x_hi1: u8,
+        x_lo8: u8,
+        y: u16,
+        width: u16,
+        first_chr_n: u8,
+        attr: ObjAttributes,
+    ) {
+        // The rendering of sprites is offset by +1 from backgrounds, but since scanline 0 is invisible,
+        // it cancels out. i.e. a sprite at y=0 will be drawn starting on the first visible scanline.
+        let line = scanline - y;
+        // Each of the two sprite nametables is laid out in VRAM as a 2D 16x16 grid of 8x8 tiles.
+        // The sprite's 8-bit tile number can be seen as two nybbles representing Y (row) and X (col)
+        // in this grid. These X and Y values both wrap without carry.
+        let vram_row = ((first_chr_n as u16) >> 4).wrapping_add(line / 8) & 0xF;
+        let palette_n = attr.palette_n();
+        for col in 0..(width / 8) {
+            let chr_n = {
+                let vram_col = (first_chr_n as u16 & 0xF).wrapping_add(col) & 0xF;
+                (vram_row << 4) | vram_col
+            };
+            let tile_chr_base = self
+                .io_reg
+                .obj_size_base
+                .calculate_vram_addr(attr.nametable_select(), chr_n as u8);
+            let tile_line = line % 8;
+            let planes_0_1 = self.vram[(tile_chr_base + tile_line) as usize];
+            let planes_2_3 = self.vram[(8 + tile_chr_base + tile_line) as usize];
+            for bit in 0..8 {
+                let pixel_x = {
+                    let x = (x_lo8 as u16 + col * 8 + bit) as i16 - (x_hi1 as i16 * 256);
+                    if x >= 255 || x < 0 {
+                        continue;
+                    }
+                    x as usize
+                };
+                let palette_i = {
+                    let pair_lo =
+                        (((planes_0_1 >> (15 - bit)) & 1) << 1) | ((planes_0_1 >> (7 - bit)) & 1);
+                    let pair_hi =
+                        (((planes_2_3 >> (15 - bit)) & 1) << 1) | ((planes_2_3 >> (7 - bit)) & 1);
+                    (pair_hi << 2) | pair_lo
+                };
+                if palette_i == 0 {
+                    continue;
+                }
+                let palette_entry =
+                    self.cgram[0x80 + 16 * (palette_n as usize) + palette_i as usize];
+                let pixel = &mut self.frame[scanline as usize][pixel_x];
+                pixel[0] = ((palette_entry & 0x1F) as u8) << 3;
+                pixel[1] = (((palette_entry >> 5) & 0x1F) as u8) << 3;
+                pixel[2] = (((palette_entry >> 10) & 0x1F) as u8) << 3;
+            }
+        }
+    }
+
     pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
         self.frame
     }
@@ -146,6 +258,15 @@ impl PPU {
 
     pub fn io_read(&mut self, addr: u16) -> u8 {
         match addr {
+            0x2138 => {
+                let oam_addr = self.io_reg.curr_oam_addr as usize;
+                self.io_reg.curr_oam_addr = self.io_reg.curr_oam_addr.wrapping_add(1);
+                if oam_addr < 0x200 {
+                    self.oam_lo[oam_addr]
+                } else {
+                    self.oam_hi[oam_addr - 0x200]
+                }
+            }
             0x2139 => {
                 let vram_addr = self.io_reg.vram_addr as usize;
                 self.io_reg.update_vram_addr(false);
@@ -175,9 +296,32 @@ impl PPU {
     pub fn io_write(&mut self, addr: u16, data: u8) {
         match addr {
             0x2100 => self.io_reg.display_control_1.0 = data,
-            0x2102 => {} // TODO: OAM addr lo byte
-            0x2103 => {} // TODO: OAM addr upper bit and priority, rotation
-            0x2104 => {} // TODO: OAM data
+            0x2101 => self.io_reg.obj_size_base.0 = data,
+            0x2102 => {
+                self.io_reg.oam_addr_priority.set_lo_byte(data);
+                self.reload_oam_addr();
+            }
+            0x2103 => {
+                self.io_reg.oam_addr_priority.set_hi_byte(data);
+                self.reload_oam_addr();
+            }
+            0x2104 => {
+                let oam_addr = self.io_reg.curr_oam_addr as usize;
+                self.io_reg.curr_oam_addr = self.io_reg.curr_oam_addr.wrapping_add(1);
+                let even_byte = (oam_addr & 1) == 0;
+                // Writes to even bytes are latched, even if they're to the upper 32 bytes of OAM
+                if even_byte {
+                    self.io_reg.oam_even_latch = data;
+                }
+                if oam_addr >= 0x200 {
+                    // Writes to the high 32 bytes of OAM are committed directly
+                    self.oam_hi[oam_addr as usize & 0x1F] = data;
+                } else if !even_byte {
+                    // Writes to the lower 512 bytes of OAM are committed in pairs when an odd address is written
+                    self.oam_lo[oam_addr - 1] = self.io_reg.oam_even_latch;
+                    self.oam_lo[oam_addr] = data;
+                }
+            }
             0x2105 => self.io_reg.bg_mode.0 = data,
             0x2106 => self.io_reg.mosaic.0 = data,
             0x2107..=0x210A => self.io_reg.bg_tilemap_addr_size[addr as usize - 0x2107].0 = data,
@@ -225,5 +369,9 @@ impl PPU {
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
             _ => panic!("Invalid IO write of PPU at {addr:#04X}"),
         }
+    }
+
+    pub fn reload_oam_addr(&mut self) {
+        self.io_reg.curr_oam_addr = self.io_reg.oam_addr_priority.addr() << 1;
     }
 }

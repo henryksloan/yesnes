@@ -5,6 +5,12 @@ pub struct IoRegisters {
     pub display_control_1: DisplayControl1,
     pub layer_enable: LayerEnable,
     pub display_control_2: DisplayControl2,
+    pub obj_size_base: ObjSizeBase,
+    pub oam_addr_priority: OamAddrPriority,
+    pub curr_oam_addr: u16,
+    // When writing to the first 512 bytes of OAM, writes to even addresses
+    // are not committed until an odd address is written.
+    pub oam_even_latch: u8,
     pub bg_mode: BackgroundMode,
     pub mosaic: Mosaic,
     pub bg_tilemap_addr_size: [TilemapAddrSize; 4],
@@ -80,6 +86,60 @@ bitfield! {
   pub overscan, _: 2;
   pub extbg, _: 6;
   pub external_sync, _: 7;
+}
+
+bitfield! {
+  /// 2101h - OBSEL - Object Size and Object Base (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct ObjSizeBase(u8);
+  impl Debug;
+  pub chr_base, _: 2, 0; // In 8192-word steps
+  pub table_2_gap, _: 4, 3; // in 4096-word steps
+  pub obj_size, _: 7, 5;
+}
+
+impl ObjSizeBase {
+    // Returns the width and height of the large and small sprite sizes selected by obj_size
+    pub fn obj_size_large_small(&self) -> [(u16, u16); 2] {
+        match self.obj_size() {
+            0 => [(8, 8), (16, 16)],
+            1 => [(8, 8), (32, 32)],
+            2 => [(8, 8), (64, 64)],
+            3 => [(16, 16), (32, 32)],
+            4 => [(16, 16), (64, 64)],
+            5 => [(32, 32), (64, 64)],
+            // These two are undocumented.
+            6 => [(16, 32), (32, 64)],
+            7 | _ => [(16, 32), (32, 32)],
+        }
+    }
+
+    pub fn obj_width_height(&self, large: bool) -> (u16, u16) {
+        self.obj_size_large_small()[large as usize]
+    }
+
+    pub fn calculate_vram_addr(&self, table_2: bool, chr_n: u8) -> u16 {
+        let base = (self.chr_base() as u16) << 13;
+        let table_off = if table_2 {
+            (self.table_2_gap() as u16 + 1) << 12
+        } else {
+            0
+        };
+        (base + table_off + ((chr_n as u16) << 4)) & 0x7FFF
+    }
+}
+
+bitfield! {
+  /// 2102h/2103h - OAMADDL/OAMADDH - OAM Address and Priority Rotation (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct OamAddrPriority(u16);
+  impl Debug;
+  pub addr, _: 8, 0;
+  pub priority_obj_n, _: 7, 1;
+  pub priority_rotation, _: 15;
+
+  pub u8, lo_byte, set_lo_byte: 7, 0;
+  pub u8, hi_byte, set_hi_byte: 15, 8;
 }
 
 bitfield! {

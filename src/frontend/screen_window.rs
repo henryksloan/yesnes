@@ -95,11 +95,11 @@ impl AppWindow for ScreenWindow {
         };
 
         egui::Window::new(&self.title)
-            // .default_height(640.0)
+            .default_width(512.0)
             .show(ctx, |ui| {
-                // if !focused {
-                //     ui.set_enabled(false);
-                // }
+                if !focused {
+                    ui.set_enabled(false);
+                }
                 // egui::TopBottomPanel::top(self.id.with("menu_bar"))
                 //     .show_inside(ui, |ui| self.menu_bar(ui));
 
@@ -110,7 +110,9 @@ impl AppWindow for ScreenWindow {
                     "Mean frame time: {:.2}ms",
                     1e3 * self.frame_history.mean_frame_time()
                 ));
-                ui.image(self.texture.as_ref().unwrap(), [256., 224.]);
+                let rect_size = ui.available_rect_before_wrap().size();
+                // ui.image(self.texture.as_ref().unwrap(), [512., 448.]);
+                ui.image(self.texture.as_ref().unwrap(), [rect_size.x, rect_size.x]);
             });
     }
 }
