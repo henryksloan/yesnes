@@ -16,6 +16,44 @@ use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 use std::rc::Rc;
 
+/// Holds the pixels of each layer on this scanline, that they may be combined according to priority
+struct ScanlineBuffers {
+    // For each bg layer, buffers of high- and low-priority pixels (0=Lower, 1=Higher)
+    bg_buff: [[[Option<[u8; 3]>; 256]; 2]; 4],
+    // A buffer of pixels at each object priority (0-3)
+    obj_buff: [[Option<[u8; 3]>; 256]; 4],
+}
+
+impl Default for ScanlineBuffers {
+    fn default() -> Self {
+        Self {
+            bg_buff: [[[None; 256]; 2]; 4],
+            obj_buff: [[None; 256]; 4],
+        }
+    }
+}
+
+enum SubLayer {
+    Obj(usize),       // Objects with the given priority
+    Bg(usize, usize), // .0: BG index, .1: Priority
+}
+
+#[rustfmt::skip]
+fn layer_priority_order(bg_mode: u8, mode1_bg3_priority: bool) -> &'static [SubLayer] {
+    use SubLayer::*;
+    match bg_mode {
+        0 => &[Obj(3), Bg(1, 1), Bg(2, 1), Obj(2), Bg(1, 0), Bg(2, 0), Obj(1), Bg(3, 1), Bg(4, 1), Obj(0), Bg(3, 0), Bg(4, 0)],
+        1 => if mode1_bg3_priority {
+            &[Bg(3, 1), Obj(3), Bg(1, 1), Bg(2, 1), Obj(2), Bg(1, 0), Bg(2, 0), Obj(1), Obj(0), Bg(3, 0)]
+        } else {
+            &[Obj(3), Bg(1, 1), Bg(2, 1), Obj(2), Bg(1, 0), Bg(2, 0), Obj(1), Bg(3, 1), Obj(0), Bg(3, 0)]
+        }
+        2 | 3 | 4 | 5 => &[Obj(3), Bg(1, 1), Obj(2), Bg(2, 1), Obj(1), Bg(1, 0), Obj(0), Bg(2, 0)],
+        6 => &[Obj(3), Bg(1, 1), Obj(2), Obj(1), Bg(1, 0), Obj(0)],
+        7 | _ => &[Obj(3), Obj(2), Bg(2, 1), Obj(1), Bg(1, 0), Obj(0), Bg(2, 0)],
+    }
+}
+
 pub struct PPU {
     vram: Vec<u16>,
     cgram: Vec<u16>,
@@ -26,6 +64,7 @@ pub struct PPU {
     io_reg: IoRegisters,
     ppu_counter: Rc<RefCell<PpuCounter>>,
     frame: [[[u8; 3]; 256]; 224],
+    scanline_buffs: ScanlineBuffers,
     ticks_run: u64,
 }
 
@@ -39,6 +78,7 @@ impl PPU {
             oam_hi: vec![0; 0x20],
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
             frame: [[[0; 3]; 256]; 224],
+            scanline_buffs: ScanlineBuffers::default(),
             ticks_run: 0,
         }
     }
@@ -80,6 +120,14 @@ impl PPU {
         }
     }
 
+    fn palette_entry_to_rgb(&self, palette_entry: u16) -> [u8; 3] {
+        [
+            ((palette_entry & 0x1F) as u8) << 3,
+            (((palette_entry >> 5) & 0x1F) as u8) << 3,
+            (((palette_entry >> 10) & 0x1F) as u8) << 3,
+        ]
+    }
+
     fn debug_render_scanline(&mut self, scanline: u16) {
         if scanline == 0 {
             return;
@@ -89,35 +137,61 @@ impl PPU {
             self.frame[draw_line as usize].fill([0, 0, 0]);
             return;
         }
-        match self.io_reg.bg_mode.bg_mode() {
-            // TODO: These are currently just the first layers
-            0 => self.debug_render_scanline_bpp(draw_line, 2),
-            1 => self.debug_render_scanline_bpp(draw_line, 4),
-            2 => self.debug_render_scanline_bpp(draw_line, 4),
-            3 => self.debug_render_scanline_bpp(draw_line, 8),
-            5 => self.debug_render_scanline_bpp(draw_line, 4),
-            6 => self.debug_render_scanline_bpp(draw_line, 4),
-            // TODO
-            _ => {}
+        // The color at CGRAM[0] is drawn if all other layers are transparent; we fill it in first
+        // to be overdrawn by any non-transparent pixels.
+        let backdrop_color = self.palette_entry_to_rgb(self.cgram[0]);
+        self.frame[draw_line as usize].fill(backdrop_color);
+        // TODO: Support layer disablement (in which case, no need to draw some layers)
+        let layer_bpps: &[usize] = match self.io_reg.bg_mode.bg_mode() {
+            0 => &[2, 2, 2, 2],
+            1 => &[4, 4, 2],
+            2 => &[4, 4], // TODO: Offset-per-pixel
+            3 => &[8, 4],
+            4 => &[8, 2],  // TODO: Offset-per-pixel
+            5 => &[4, 2],  // TODO: Hi-res
+            6 => &[4],     // TODO: Hi-res and Offset-per-pixel
+            7 | _ => &[8], // TODO: Rotation/scaling
+        };
+        for (bg_i, layer_bpp) in layer_bpps.iter().enumerate() {
+            self.debug_render_scanline_bpp(bg_i, draw_line, *layer_bpp);
         }
         self.debug_render_sprites(draw_line);
+        for sublayer in layer_priority_order(
+            self.io_reg.bg_mode.bg_mode(),
+            self.io_reg.bg_mode.bg3_priority(),
+        )
+        .iter()
+        .rev()
+        {
+            let line = match *sublayer {
+                SubLayer::Obj(priority) => &self.scanline_buffs.obj_buff[priority],
+                SubLayer::Bg(bg_n, priority) => &self.scanline_buffs.bg_buff[bg_n - 1][priority],
+            };
+            for x in 0..256 {
+                if let Some(color) = line[x] {
+                    self.frame[draw_line as usize][x] = color;
+                }
+            }
+        }
     }
 
-    fn debug_render_scanline_bpp(&mut self, scanline: u16, bits_per_pixel: usize) {
+    fn debug_render_scanline_bpp(&mut self, bg_i: usize, scanline: u16, bits_per_pixel: usize) {
         assert_eq!(bits_per_pixel % 2, 0);
+        let line_buffs = &mut self.scanline_buffs.bg_buff[bg_i];
+        line_buffs[0].fill(None);
+        line_buffs[1].fill(None);
         // TODO: Doesn't support direct color mode
         // TODO: Doesn't support large tiles
-        // TODO: Doesn't support priority
         // TODO: Reading from VRAM takes cycles...
-        let bg_addr = (self.io_reg.bg_tilemap_addr_size[0].base() as usize) << 10;
-        let chr_addr = (self.io_reg.bg_chr_addr.bg1_base() as usize) << 12;
-        let (screen_cols, screen_rows) = match self.io_reg.bg_tilemap_addr_size[0].size() {
+        let bg_addr = (self.io_reg.bg_tilemap_addr_size[bg_i].base() as usize) << 10;
+        let chr_addr = (self.io_reg.bg_chr_addr.bg_base(bg_i + 1) as usize) << 12;
+        let (screen_cols, screen_rows) = match self.io_reg.bg_tilemap_addr_size[bg_i].size() {
             0 => (32, 32),
             1 => (64, 32),
             2 => (32, 64),
             3 | _ => (64, 64),
         };
-        let render_line = scanline as usize + self.io_reg.bg_scroll[0].v.val as usize;
+        let render_line = scanline as usize + self.io_reg.bg_scroll[bg_i].v.val as usize;
         let row = (render_line / 8) % screen_rows;
         let v_screen = row / 32;
         let line_offset = render_line % 8;
@@ -128,7 +202,7 @@ impl PPU {
             // TODO: Would be nice to use a bitfield for these
             let col = (start_col + col_i) % screen_cols;
             let h_screen = col / 32;
-            let screen_i = match self.io_reg.bg_tilemap_addr_size[0].size() {
+            let screen_i = match self.io_reg.bg_tilemap_addr_size[bg_i].size() {
                 0 => 0,
                 1 => h_screen,
                 2 => v_screen,
@@ -139,6 +213,7 @@ impl PPU {
             let chr_n = tile & 0x3FF;
             let tile_chr_base = chr_addr + (bits_per_pixel * 4) * chr_n as usize;
             let palette_n = (tile >> 10) & 0x7;
+            let priority = (tile >> 13) & 0x1;
             let (flip_x, flip_y) = ((tile >> 14) & 1 == 1, (tile >> 15) & 1 == 1);
             let line = if flip_y { 7 - line_offset } else { line_offset };
             let tile_plane_pairs: Vec<u16> = (0..(bits_per_pixel / 2))
@@ -152,19 +227,28 @@ impl PPU {
                     let pair = (((word >> (15 - bit)) & 1) << 1) | ((word >> (7 - bit)) & 1);
                     (acc << 2) | pair
                 });
+                // Entry 0 in each BG palette is transparent.
+                if palette_i == 0 {
+                    continue;
+                }
                 let palette_entry =
                     self.cgram[(1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize];
-                let pixel = &mut self.frame[scanline as usize][(col_i * 8 + bit_i) - start_pixel_x];
-                pixel[0] = ((palette_entry & 0x1F) as u8) << 3;
-                pixel[1] = (((palette_entry >> 5) & 0x1F) as u8) << 3;
-                pixel[2] = (((palette_entry >> 10) & 0x1F) as u8) << 3;
+                let pixel = [
+                    ((palette_entry & 0x1F) as u8) << 3,
+                    (((palette_entry >> 5) & 0x1F) as u8) << 3,
+                    (((palette_entry >> 10) & 0x1F) as u8) << 3,
+                ];
+                line_buffs[priority as usize][(col_i * 8 + bit_i) - start_pixel_x] = Some(pixel);
             }
         }
     }
 
     fn debug_render_sprites(&mut self, scanline: u16) {
-        // TODO: Doesn't support priority of any kind
-        for sprite_i in 0..128 {
+        self.scanline_buffs.obj_buff[0].fill(None);
+        self.scanline_buffs.obj_buff[1].fill(None);
+        self.scanline_buffs.obj_buff[2].fill(None);
+        self.scanline_buffs.obj_buff[3].fill(None);
+        for sprite_i in (0..128).rev() {
             let oam_lo_entry = {
                 let oam_off = sprite_i * 4;
                 OamLoEntry(u32::from_le_bytes(
@@ -251,15 +335,18 @@ impl PPU {
                         (((planes_2_3 >> (15 - bit)) & 1) << 1) | ((planes_2_3 >> (7 - bit)) & 1);
                     (pair_hi << 2) | pair_lo
                 };
+                // Entry 0 in each OBJ palette is transparent.
                 if palette_i == 0 {
                     continue;
                 }
                 let palette_entry =
                     self.cgram[0x80 + 16 * (palette_n as usize) + palette_i as usize];
-                let pixel = &mut self.frame[scanline as usize][pixel_x];
-                pixel[0] = ((palette_entry & 0x1F) as u8) << 3;
-                pixel[1] = (((palette_entry >> 5) & 0x1F) as u8) << 3;
-                pixel[2] = (((palette_entry >> 10) & 0x1F) as u8) << 3;
+                let pixel = [
+                    ((palette_entry & 0x1F) as u8) << 3,
+                    (((palette_entry >> 5) & 0x1F) as u8) << 3,
+                    (((palette_entry >> 10) & 0x1F) as u8) << 3,
+                ];
+                self.scanline_buffs.obj_buff[attr.priority() as usize][pixel_x] = Some(pixel);
             }
         }
     }

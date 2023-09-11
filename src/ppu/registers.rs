@@ -199,6 +199,18 @@ bitfield! {
   pub u8, hi_byte, set_hi_byte: 15, 8;
 }
 
+impl BackgroundChrAddr {
+    pub fn bg_base(&self, bg_n: usize) -> u16 {
+        assert!((1..=4).contains(&bg_n));
+        match bg_n {
+            1 => self.bg1_base(),
+            2 => self.bg2_base(),
+            3 => self.bg3_base(),
+            4 | _ => self.bg4_base(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default, Debug)]
 pub struct BackgroundScrollComponent {
     pub val: u16,
