@@ -233,6 +233,8 @@ pub struct IoRegisters {
     pub interrupt_control: InterruptControl,
     pub waitstate_control: WaitstateControl,
     pub dma_channels: [DmaChannelRegisters; 8],
+    pub h_scan_count: PpuScanCount,
+    pub v_scan_count: PpuScanCount,
 }
 
 impl IoRegisters {
@@ -250,6 +252,19 @@ bitfield! {
   pub joypad_enable, _: 0;
   pub h_v_irq, _: 5, 4;
   pub vblank_nmi_enable, _: 7;
+}
+
+bitfield! {
+  /// 4207h/4208h - HTIMEL/HTIMEH - H-Count Timer Setting (W)
+  /// 4209h/420Ah - VTIMEL/VTIMEH - V-Count Timer Setting (W)
+  /// Holds the configuration for the H- or V-count IRQ
+  #[derive(Clone, Copy, Default)]
+  pub struct PpuScanCount(u16);
+  impl Debug;
+  pub timer_value, _: 8, 0;
+
+  pub u8, lo_byte, set_lo_byte: 7, 0;
+  pub u8, hi_byte, set_hi_byte: 15, 8;
 }
 
 bitfield! {
@@ -281,7 +296,7 @@ pub struct DmaChannelRegisters {
     // Either holds HDMA indirect address or remaining GP-DMA byte count
     pub indirect_addr_or_byte_count: IndirectAddrOrByteCount,
     pub hdma_table_curr_addr: HdmaTableCurrAddr,
-    pub hda_line_counter: HdmaLineCounter,
+    pub hdma_line_counter: HdmaLineCounter,
     // 43xBh - UNUSEDx - Unused Byte (R/W)
     pub unused_byte: u8,
 }
@@ -310,6 +325,16 @@ impl DmaSetup {
     pub fn gpdma_io_reg_offsets(&self) -> &'static [u8] {
         match self.transfer_unit_select() {
             0b000 | 0b010 | 0b110 => &[0],
+            0b001 | 0b101 => &[0, 1],
+            0b011 | 0b111 => &[0, 0, 1, 1],
+            0b100 | _ => &[0, 1, 2, 3],
+        }
+    }
+
+    pub fn hdma_io_reg_offsets(&self) -> &'static [u8] {
+        match self.transfer_unit_select() {
+            0b000 | 0b110 => &[0],
+            0b010 => &[0, 0],
             0b001 | 0b101 => &[0, 1],
             0b011 | 0b111 => &[0, 0, 1, 1],
             0b100 | _ => &[0, 1, 2, 3],
@@ -362,6 +387,6 @@ bitfield! {
   #[derive(Clone, Copy, Default)]
   pub struct HdmaLineCounter(u8);
   impl Debug;
-  pub line_count, _: 6, 0;
+  pub line_count, set_line_count: 6, 0;
   pub repeat, _: 7;
 }

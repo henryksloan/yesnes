@@ -6,6 +6,7 @@ pub enum YieldReason {
     Sync(Device),
     FinishedInstruction(Device),
     Debug(DebugPoint),
+    FrameReady,
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -1,6 +1,7 @@
 use super::app_window::{AppWindow, ShortcutWindow};
 use super::debugger_window::DebuggerWindow;
 use super::emu_thread::run_emu_thread;
+use super::frame_history::FrameHistory;
 use super::memory_view_window::MemoryViewWindow;
 use super::screen_window::ScreenWindow;
 
@@ -10,15 +11,17 @@ use crate::snes::SNES;
 use crossbeam::channel;
 use eframe::egui;
 
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 struct YesnesApp {
-    emu_paused: Arc<Mutex<bool>>,
+    emu_paused: Arc<AtomicBool>,
     active_window_id: Option<egui::Id>,
     cpu_debugger_window: DebuggerWindow<DebugCpu>,
     smp_debugger_window: DebuggerWindow<DebugSmp>,
     memory_view_window: MemoryViewWindow,
     screen_window: ScreenWindow,
+    frame_history: FrameHistory,
 }
 
 impl Default for YesnesApp {
@@ -33,13 +36,16 @@ impl Default for YesnesApp {
         ))));
         smp_disassembler.lock().unwrap().disassemble();
         let (sender, receiver) = channel::bounded(1024);
-        let emu_paused = Arc::new(Mutex::new(true));
+        // TODO: This should be a smarter cancellation mechanism. As a start, could use an atomic bool.
+        let emu_paused = Arc::new(AtomicBool::new(true));
+        let frame_ready = Arc::new(AtomicBool::new(true));
         run_emu_thread(
             snes.clone(),
             cpu_disassembler.clone(),
             smp_disassembler.clone(),
             receiver,
             emu_paused.clone(),
+            frame_ready.clone(),
         );
         let cpu_debugger_window = DebuggerWindow::new(
             "CPU Debugger".to_string(),
@@ -57,7 +63,8 @@ impl Default for YesnesApp {
         );
         let memory_view_window =
             MemoryViewWindow::new("CPU Memory Viewer".to_string(), snes.clone());
-        let screen_window = ScreenWindow::new("Screen".to_string(), snes.clone());
+        let screen_window =
+            ScreenWindow::new("Screen".to_string(), snes.clone(), frame_ready.clone());
         Self {
             emu_paused: emu_paused.clone(),
             // TODO: Once I factor out the different windows to structs, get the window ID from there
@@ -66,17 +73,25 @@ impl Default for YesnesApp {
             smp_debugger_window,
             memory_view_window,
             screen_window,
+            frame_history: FrameHistory::new(),
         }
     }
 }
 
 impl eframe::App for YesnesApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // TODO: When does `update` get called? We might not immediately get an `update` when paused changes.
-        let paused = *self.emu_paused.lock().unwrap();
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.frame_history
+            .on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
+
+        let paused = self.emu_paused.load(std::sync::atomic::Ordering::Acquire);
         // TODO: It might be reasonable to handle mutex poisoning here (e.g. other thread panics)
         // TODO: We also might want to handle panics from the emulator on the frontend thread (e.g. trace)
-        egui::CentralPanel::default().show(ctx, |_ui| {});
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.label(format!(
+                "Mean frame time: {:.2}ms",
+                1e3 * self.frame_history.mean_frame_time()
+            ));
+        });
 
         // TODO: Initially focus the CPU debugger
         self.cpu_debugger_window

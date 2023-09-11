@@ -3,11 +3,14 @@ pub mod registers;
 pub use registers::{IoRegisters, Registers, StatusRegister};
 
 use crate::{bus::Bus, ppu::PpuCounter, scheduler::*, u24::u24};
+// DO NOT SUBMIT
+use crate::frontend::frame_history::FrameHistory;
 
 use std::cell::RefCell;
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 use std::rc::Rc;
+use std::time::Instant;
 
 use paste::paste;
 
@@ -83,6 +86,8 @@ macro_rules! pull_instrs {
             $(
             fn [<pull_ $reg>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
                 move || {
+                    yield_all!(CPU::idle(cpu.clone()));
+                    yield_all!(CPU::idle(cpu.clone()));
                     let data = yield_all!(CPU::[<stack_pull_ $kind>](cpu.clone()));
                     cpu.borrow_mut().reg.[<set_ $reg>](data);
                     cpu.borrow_mut().reg.p.n = ((data >> (n_bits!(cpu, $kind) - 1)) == 1);
@@ -106,6 +111,7 @@ macro_rules! push_instrs {
             $(
             fn [<push_ $reg>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
                 move || {
+                    yield_all!(CPU::idle(cpu.clone()));
                     let data = cpu.borrow_mut().reg.[<get_ $reg>]();
                     yield_all!(CPU::[<stack_push_ $kind>](cpu.clone(), data));
                 }
@@ -126,7 +132,7 @@ macro_rules! transfer_instrs {
         paste! {
             fn [<transfer_ $from _ $to>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
                 move || {
-                    dummy_yield!();
+                    yield_all!(CPU::idle(cpu.clone()));
                     let data = cpu.borrow().reg.$from & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
                     cpu.borrow_mut().reg.[<set_ $to>](data);
                     if n_bits!(cpu, $kind) == 16 {
@@ -165,10 +171,10 @@ macro_rules! branch_instrs {
                     let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
                     if cpu.borrow_mut().reg.p.$flag == $val {
                         cpu.borrow_mut().reg.pc = dest_pc;
-                        yield_all!(CPU::step(cpu.clone(), 1));
+                        yield_all!(CPU::idle(cpu.clone()));
                         // TODO: Is this right? Maybe only for emulation mode...
                         if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
-                            yield_all!(CPU::step(cpu.clone(), 1));
+                            yield_all!(CPU::idle(cpu.clone()));
                         }
                     }
                 }
@@ -280,10 +286,28 @@ pub struct CPU {
     bus: Rc<RefCell<Bus>>,
     pub ppu_counter: Rc<RefCell<PpuCounter>>,
     dmas_enqueued: Option<u8>,
+    hdmas_enqueued: Option<u8>,
+    hdmas_ongoing: Option<u8>,
+    hdma_triggered_this_line: bool,
+    hdma_setup_triggered_this_line: bool,
+    hdma_pending_this_line: bool,
+    hdmas_complete_this_frame: [bool; 8],
+    do_hdmas_this_line: [bool; 8],
     nmi_enqueued: bool,
+    irq_enqueued: bool,
+    // TODO: Should change most instances of "tick" to "clock"
     ticks_run: u64,
+    // Some events like interrupt polling happen every 4 ticks. This tracks the
+    // remainder ticks from `step()`, e.g. if `2` or `5` ticks elapse.
+    // DO NOT SUBMIT: Consider encapsulating this (and much else) into some interrupt controller abstraction.
+    ticks_mod_4: u8,
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
-    pub debug_frame_ready: bool,
+    pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
+    pub controller_states: [u16; 4],
+    // DO NOT SUBMIT
+    frame_history: FrameHistory,
+    previous_frame_instant: Option<Instant>,
+    print_timer: u64,
 }
 
 impl CPU {
@@ -294,9 +318,22 @@ impl CPU {
             bus,
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
             dmas_enqueued: None,
+            hdmas_enqueued: None,
+            hdmas_ongoing: None,
+            hdma_triggered_this_line: false,
+            hdma_setup_triggered_this_line: false,
+            hdma_pending_this_line: false,
+            hdmas_complete_this_frame: [false; 8],
+            do_hdmas_this_line: [false; 8],
             nmi_enqueued: false,
+            irq_enqueued: false,
             ticks_run: 0,
-            debug_frame_ready: false,
+            ticks_mod_4: 0,
+            debug_frame: None,
+            controller_states: [0; 4],
+            frame_history: FrameHistory::new(),
+            previous_frame_instant: None,
+            print_timer: 0,
         }
     }
 
@@ -324,7 +361,7 @@ impl CPU {
             channel_regs.addr.0 = u24(0xFFFFFF);
             channel_regs.indirect_addr_or_byte_count.0 = u24(0xFFFFFF);
             channel_regs.hdma_table_curr_addr.0 = 0xFF;
-            channel_regs.hda_line_counter.0 = 0xFF;
+            channel_regs.hdma_line_counter.0 = 0xFF;
             channel_regs.unused_byte = 0xFF;
         }
     }
@@ -504,12 +541,38 @@ impl CPU {
                 yield_ticks!(cpu, CPU::run_dma(cpu.clone(), dmas_enqueued));
             }
 
+            if !cpu.borrow().hdma_setup_triggered_this_line {
+                let hdmas_ongoing = cpu.borrow_mut().hdmas_ongoing;
+                if let Some(hdmas_ongoing) = hdmas_ongoing {
+                    cpu.borrow_mut().hdma_setup_triggered_this_line = true;
+                    yield_ticks!(cpu, CPU::setup_hdma(cpu.clone(), hdmas_ongoing));
+                }
+            }
+
+            if cpu.borrow().hdma_pending_this_line {
+                cpu.borrow_mut().hdma_pending_this_line = false;
+                let hdmas_ongoing = cpu.borrow_mut().hdmas_ongoing;
+                if let Some(hdmas_ongoing) = hdmas_ongoing {
+                    yield_ticks!(cpu, CPU::run_hdma(cpu.clone(), hdmas_ongoing));
+                }
+            }
+
             if cpu.borrow().nmi_enqueued {
                 cpu.borrow_mut().nmi_enqueued = false;
                 let vector = if cpu.borrow().reg.p.e {
                     NMI_VECTOR_E
                 } else {
                     NMI_VECTOR
+                };
+                yield_ticks!(cpu, CPU::interrupt(cpu.clone(), vector));
+            }
+
+            if cpu.borrow().irq_enqueued {
+                cpu.borrow_mut().irq_enqueued = false;
+                let vector = if cpu.borrow().reg.p.e {
+                    IRQ_VECTOR_E
+                } else {
+                    IRQ_VECTOR
                 };
                 yield_ticks!(cpu, CPU::interrupt(cpu.clone(), vector));
             }
@@ -530,12 +593,62 @@ impl CPU {
             // TODO: This is required to prevent deadlocks on the frontend. Consider a more elegent way
             // to resynchronize.
             yield YieldReason::Sync(Device::SMP);
+            yield YieldReason::Sync(Device::PPU);
             // TODO: Overscan mode
-            if cpu.borrow().ppu_counter.borrow().scanline == 225 {
+            if cpu.borrow().ppu_counter.borrow().scanline < 225 {
+                cpu.borrow_mut().hdma_setup_triggered_this_line = false;
+                cpu.borrow_mut().hdma_triggered_this_line = false;
+            }
+            if cpu.borrow().ppu_counter.borrow().scanline == 0 {
+                let hdmas_enqueued = cpu.borrow_mut().hdmas_enqueued.take();
+                if let Some(hdmas_enqueued) = hdmas_enqueued {
+                    cpu.borrow_mut().hdmas_ongoing = Some(hdmas_enqueued);
+                }
+                let hdmas_ongoing = cpu.borrow().hdmas_ongoing;
+                if let Some(hdmas_ongoing) = hdmas_ongoing {
+                    for channel_i in 0..=7 {
+                        if (hdmas_ongoing >> channel_i) & 1 != 1 {
+                            continue;
+                        }
+                        let table_base_addr =
+                            cpu.borrow().io_reg.dma_channels[channel_i].addr.0.lo16();
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 = table_base_addr;
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .hdma_line_counter
+                            .0 = 0;
+                    }
+                }
+                cpu.borrow_mut().hdmas_complete_this_frame.fill(false);
+                cpu.borrow_mut().do_hdmas_this_line.fill(true);
+            } else if cpu.borrow().ppu_counter.borrow().scanline == 225 {
+                // TODO: Overscan mode
                 if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {
                     cpu.borrow_mut().nmi_enqueued = true;
-                    cpu.borrow_mut().debug_frame_ready = true;
                 }
+                let frame = cpu.borrow().bus.borrow().debug_get_frame();
+                cpu.borrow_mut().debug_frame = Some(frame);
+                // DO NOT SUBMIT
+                let now = Instant::now();
+                let delta = cpu
+                    .borrow()
+                    .previous_frame_instant
+                    .map(|previous| (now - previous).as_secs_f32());
+                let prev = cpu.borrow().previous_frame_instant;
+                if let Some(previous_frame_instant) = prev {
+                    let elapsed = previous_frame_instant.elapsed();
+                    cpu.borrow_mut()
+                        .frame_history
+                        .on_new_frame(elapsed.as_secs_f64(), delta);
+                }
+                cpu.borrow_mut().previous_frame_instant = Some(now);
+                let print_timer = cpu.borrow().print_timer;
+                cpu.borrow_mut().print_timer = (print_timer + 1) % 120;
+                if print_timer == 0 {
+                    log::debug!("{}", cpu.borrow().frame_history.mean_frame_time());
+                }
+                yield YieldReason::FrameReady;
             }
         }
     }
@@ -543,12 +656,37 @@ impl CPU {
     fn step<'a>(cpu: Rc<RefCell<CPU>>, n_clocks: u64) -> impl Yieldable<()> + 'a {
         move || {
             cpu.borrow_mut().ticks_run += n_clocks;
-            let scanline = yield_all!(PpuCounter::tick(
-                cpu.borrow().ppu_counter.clone(),
-                n_clocks as u16
-            ));
-            if scanline {
-                yield_all!(CPU::on_scanline_start(cpu.clone()));
+            let ticks_mod_4 = cpu.borrow().ticks_mod_4;
+            cpu.borrow_mut().ticks_mod_4 = ticks_mod_4.wrapping_add(n_clocks as u8) % 4;
+            let aligned_clocks = n_clocks.saturating_sub((4 - ticks_mod_4 as u64) % 2);
+            // If the first of two PPU ticks for this poll cycle has already happened
+            // (i.e. on clocks 1 and 2 of the poll cycle) then the next PPU tick should not trigger a poll.
+            let poll_offset = (ticks_mod_4 == 1 || ticks_mod_4 == 2) as u64;
+            // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
+            for ppu_tick in 0..((aligned_clocks + 1) / 2) {
+                let scanline = yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                if scanline {
+                    yield_all!(CPU::on_scanline_start(cpu.clone()));
+                }
+                if ppu_tick % 2 == poll_offset {
+                    let irq_mode = cpu.borrow().io_reg.interrupt_control.h_v_irq();
+                    let v_scan_count = cpu.borrow().io_reg.v_scan_count.timer_value();
+                    let h_scan_count = cpu.borrow().io_reg.h_scan_count.timer_value();
+                    let h_dot = cpu.borrow().ppu_counter.borrow().h_ticks / 4;
+                    let scanline = cpu.borrow().ppu_counter.borrow().scanline;
+                    cpu.borrow_mut().irq_enqueued |= match irq_mode {
+                        0 => false,
+                        1 => h_dot == h_scan_count,
+                        2 => scanline == v_scan_count && h_dot == 0,
+                        3 | _ => scanline == v_scan_count && h_dot == h_scan_count,
+                    };
+                }
+            }
+            if cpu.borrow().ppu_counter.borrow().h_ticks >= 1104
+                && !cpu.borrow().hdma_triggered_this_line
+            {
+                cpu.borrow_mut().hdma_triggered_this_line = true;
+                cpu.borrow_mut().hdma_pending_this_line = true;
             }
         }
     }
@@ -593,9 +731,14 @@ impl CPU {
             // TODO: Remove debugging value
             // This has bit6 set to simulate some weird open bus behavior for testing
             0x4210 => 0xC0,
+            0x4211 => 0, // TODO: IRQ stuff
             // TODO: Remove debugging value
             0x4212 => 0xC0,
-            0x4218..=0x421F => 0, // TODO: Joypad
+            0x4218..=0x421F => {
+                let reg_off = addr.lo16() as usize - 0x4218;
+                let controller_state = self.controller_states[reg_off / 4];
+                (controller_state >> ((reg_off % 2) * 8)) as u8
+            }
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
                 let channel_regs = self.io_reg.dma_channels[channel_index];
@@ -610,7 +753,7 @@ impl CPU {
                     0x7 => channel_regs.indirect_addr_or_byte_count.bank_byte(),
                     0x8 => channel_regs.hdma_table_curr_addr.lo_byte(),
                     0x9 => channel_regs.hdma_table_curr_addr.hi_byte(),
-                    0xA => channel_regs.hda_line_counter.0,
+                    0xA => channel_regs.hdma_line_counter.0,
                     0xB | 0xF => channel_regs.unused_byte,
                     _ => 0, // TODO: Open bus (maybe handle this in Bus)
                 }
@@ -630,7 +773,8 @@ impl CPU {
                 self.dmas_enqueued = Some(data);
             }
             0x420C => {
-                log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
+                // log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
+                self.hdmas_enqueued = Some(data);
             }
             0x4300..=0x437A => {
                 let channel_index = (addr.0 as usize >> 4) & 0xF;
@@ -646,7 +790,7 @@ impl CPU {
                     0x7 => channel_regs.indirect_addr_or_byte_count.set_bank_byte(data),
                     0x8 => channel_regs.hdma_table_curr_addr.set_lo_byte(data),
                     0x9 => channel_regs.hdma_table_curr_addr.set_hi_byte(data),
-                    0xA => channel_regs.hda_line_counter.0 = data,
+                    0xA => channel_regs.hdma_line_counter.0 = data,
                     0xB | 0xF => channel_regs.unused_byte = data,
                     _ => {}
                 }
@@ -684,6 +828,126 @@ impl CPU {
                     }
                     cpu_addr = cpu_addr.wrapping_add_signed(cpu_addr_step);
                 }
+            }
+        }
+    }
+
+    fn setup_hdma<'a>(cpu: Rc<RefCell<CPU>>, channel_mask: u8) -> impl Yieldable<()> + 'a {
+        move || {
+            for channel_i in 0..=7 {
+                if (channel_mask >> channel_i) & 1 != 1 {
+                    continue;
+                }
+                let channel_regs = cpu.borrow().io_reg.dma_channels[channel_i];
+                let table_base_addr = channel_regs.addr.0;
+                let indirect = channel_regs.setup.hdma_addr_mode();
+                if channel_regs.hdma_line_counter.line_count() == 0 {
+                    cpu.borrow_mut().do_hdmas_this_line[channel_i] = true;
+                    let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 as u32;
+                    let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(1);
+                    let new_line_count = yield_all!(CPU::read_u8(cpu.clone(), addr));
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .hdma_line_counter
+                        .set_line_count(new_line_count);
+                    // Reached terminating 0x00 in HDMA table
+                    if new_line_count == 0x00 {
+                        cpu.borrow_mut().hdmas_complete_this_frame[channel_i] = true;
+                    }
+                }
+                if indirect {
+                    let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 as u32;
+                    let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(1);
+                    let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .indirect_addr_or_byte_count
+                        .set_hi_byte(data);
+                    // TODO: Data might be shifted into the lo16 of this register, so this low byte might be the old high byte
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .indirect_addr_or_byte_count
+                        .set_lo_byte(0);
+                    let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 as u32;
+                    let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .hdma_table_curr_addr
+                        .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(1);
+                    let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
+                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                        .indirect_addr_or_byte_count
+                        .set_hi_byte(data);
+                }
+            }
+        }
+    }
+
+    fn run_hdma<'a>(cpu: Rc<RefCell<CPU>>, channel_mask: u8) -> impl Yieldable<()> + 'a {
+        move || {
+            for channel_i in 0..=7 {
+                if (channel_mask >> channel_i) & 1 != 1
+                    || cpu.borrow().hdmas_complete_this_frame[channel_i]
+                {
+                    continue;
+                }
+                let line_counter = cpu.borrow().io_reg.dma_channels[channel_i]
+                    .hdma_line_counter
+                    .line_count();
+                cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                    .hdma_line_counter
+                    .set_line_count(line_counter.wrapping_sub(1));
+                if !cpu.borrow_mut().do_hdmas_this_line[channel_i] {
+                    continue;
+                }
+                // TODO: Ban wram-to-wram
+                let channel_regs = cpu.borrow().io_reg.dma_channels[channel_i];
+                let table_base_addr = channel_regs.addr.0;
+                let indirect = channel_regs.setup.hdma_addr_mode();
+                let indirect_addr = channel_regs.indirect_addr_or_byte_count.0;
+                let io_to_cpu = channel_regs.setup.transfer_direction();
+                let io_reg_base = channel_regs.io_reg;
+                let io_reg_offsets = channel_regs.setup.hdma_io_reg_offsets();
+                for io_reg_offset in io_reg_offsets {
+                    let io_reg = io_reg_base.wrapping_add(*io_reg_offset);
+                    let io_reg_addr = u24(0x2100 | io_reg as u32);
+                    let cpu_addr = if indirect {
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .indirect_addr_or_byte_count
+                            .0 = indirect_addr.wrapping_add_signed(1);
+                        indirect_addr
+                    } else {
+                        let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 as u32;
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 = (table_off as u16).wrapping_add(1);
+                        u24(((table_base_addr.bank() as u32) << 16) | table_off)
+                    };
+                    if io_to_cpu {
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), io_reg_addr));
+                        yield_all!(CPU::write_u8(cpu.clone(), cpu_addr, data));
+                    } else {
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), cpu_addr));
+                        yield_all!(CPU::write_u8(cpu.clone(), io_reg_addr, data));
+                    }
+                }
+                let repeat = (cpu.borrow().io_reg.dma_channels[channel_i]
+                    .hdma_line_counter
+                    .line_count()
+                    >> 7)
+                    & 1
+                    == 1;
+                cpu.borrow_mut().do_hdmas_this_line[channel_i] = repeat;
             }
         }
     }
@@ -1168,49 +1432,49 @@ impl CPU {
     // TODO: Make a macro for these flag instructions?
     fn clc<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.c = false;
         }
     }
 
     fn cli<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.i = false;
         }
     }
 
     fn cld<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.d = false;
         }
     }
 
     fn clv<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.v = false;
         }
     }
 
     fn sec<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.c = true;
         }
     }
 
     fn sei<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.i = true;
         }
     }
 
     fn sed<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.d = true;
         }
     }
@@ -1233,7 +1497,8 @@ impl CPU {
 
     fn xba<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
+            yield_all!(CPU::idle(cpu.clone()));
             let a = cpu.borrow().reg.a;
             let (hi, lo) = (a >> 8, a & 0xFF);
             let result = (lo << 8) | hi;
@@ -1315,7 +1580,7 @@ impl CPU {
 
     fn transfer_a_sp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             let a = cpu.borrow().reg.a;
             if cpu.borrow().reg.p.e {
                 cpu.borrow_mut().reg.sp = (1 << 8) | (a & 0xFF);
@@ -1327,7 +1592,7 @@ impl CPU {
 
     fn transfer_x_sp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
-            dummy_yield!();
+            yield_all!(CPU::idle(cpu.clone()));
             let x = cpu.borrow().reg.x;
             if cpu.borrow().reg.p.e {
                 cpu.borrow_mut().reg.sp &= 0xFF00;
@@ -1350,6 +1615,7 @@ impl CPU {
             let dst_addr = u24(((dst_bank as u32) << 16) | cpu.borrow().reg.y as u32);
             let data = yield_all!(CPU::read_u8(cpu.clone(), src_addr));
             yield_all!(CPU::write_u8(cpu.clone(), dst_addr, data));
+            yield_all!(CPU::idle(cpu.clone()));
             if increment {
                 let x = cpu.borrow().reg.get_x();
                 cpu.borrow_mut().reg.set_x(x.wrapping_add(1));
@@ -1361,6 +1627,7 @@ impl CPU {
                 let y = cpu.borrow().reg.get_y();
                 cpu.borrow_mut().reg.set_y(y.wrapping_sub(1));
             }
+            yield_all!(CPU::idle(cpu.clone()));
             // The entire 16 bits of A is decremented, regardless of the M and E flags
             let a = cpu.borrow().reg.a;
             cpu.borrow_mut().reg.a = a.wrapping_sub(1);
@@ -1776,10 +2043,10 @@ impl CPU {
             let source_pc = cpu.borrow().reg.pc + 1u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
             cpu.borrow_mut().reg.pc = dest_pc;
-            yield_all!(CPU::step(cpu.clone(), 1));
+            yield_all!(CPU::idle(cpu.clone()));
             // TODO: Is this right? Maybe only for emulation mode...
             if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
-                yield_all!(CPU::step(cpu.clone(), 1));
+                yield_all!(CPU::idle(cpu.clone()));
             }
         }
     }
@@ -1789,7 +2056,7 @@ impl CPU {
             let source_pc = cpu.borrow().reg.pc + 2u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
             cpu.borrow_mut().reg.pc = dest_pc;
-            yield_all!(CPU::step(cpu.clone(), 1));
+            yield_all!(CPU::idle(cpu.clone()));
             // TODO: Maybe some bank cross cycles? Maybe only for emulation mode...
         }
     }
@@ -1831,6 +2098,8 @@ impl CPU {
 
     fn pull_p<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
+            yield_all!(CPU::idle(cpu.clone()));
+            yield_all!(CPU::idle(cpu.clone()));
             let data = yield_all!(CPU::stack_pull_u8(cpu.clone()));
             cpu.borrow_mut().reg.set_p(data);
         }
@@ -1838,6 +2107,7 @@ impl CPU {
 
     fn push_pb<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionGenerator + 'a {
         move || {
+            yield_all!(CPU::idle(cpu.clone()));
             let data = cpu.borrow_mut().reg.pc.bank();
             yield_all!(CPU::stack_push_u8(cpu.clone(), data));
         }

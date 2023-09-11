@@ -4,6 +4,7 @@ use crate::snes::SNES;
 
 use crossbeam::channel;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -14,12 +15,32 @@ pub fn run_instruction_and_disassemble<D: DebugProcessor>(
     snes: &mut SNES,
     disassembler: &Mutex<Disassembler<D>>,
 ) -> bool {
-    let breakpoint = snes.run_instruction_debug(D::DEVICE);
+    let (breakpoint, _) = snes.run_instruction_debug(D::DEVICE);
     let registers = D::registers(snes);
     disassembler
         .lock()
         .unwrap()
         .update_disassembly_at(D::pc(&registers), D::to_analysis_state(&registers));
+    breakpoint
+}
+
+pub fn run_frame_and_disassemble<D: DebugProcessor>(
+    snes: &mut SNES,
+    disassembler: &Mutex<Disassembler<D>>,
+) -> bool {
+    let mut breakpoint = false;
+    let mut frame_ready = false;
+    while !frame_ready {
+        (breakpoint, frame_ready) = snes.run_instruction_debug(D::DEVICE);
+        let registers = D::registers(snes);
+        disassembler
+            .lock()
+            .unwrap()
+            .update_disassembly_at(D::pc(&registers), D::to_analysis_state(&registers));
+        if breakpoint {
+            break;
+        }
+    }
     breakpoint
 }
 
@@ -35,7 +56,8 @@ pub fn run_emu_thread(
     cpu_disassembler: Arc<Mutex<Disassembler<DebugCpu>>>,
     smp_disassembler: Arc<Mutex<Disassembler<DebugSmp>>>,
     receiver: channel::Receiver<EmuThreadMessage>,
-    paused: Arc<Mutex<bool>>,
+    paused: Arc<AtomicBool>,
+    frame_ready: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || loop {
         let Ok(message) = receiver.recv() else {
@@ -44,24 +66,29 @@ pub fn run_emu_thread(
         };
         match message {
             EmuThreadMessage::Continue(device) => {
-                *paused.lock().unwrap() = false;
-                while !*paused.lock().unwrap() {
+                paused.store(false, Ordering::SeqCst);
+                while !paused.load(Ordering::Relaxed) {
+                    // TODO: I think a capacityless channel might be better, though the consumer side shouldn't block.
+                    while frame_ready.load(Ordering::Acquire) {
+                        std::hint::spin_loop();
+                    }
                     let snes = &mut snes.lock().unwrap();
                     let should_break = match device {
-                        Device::CPU => run_instruction_and_disassemble(snes, &cpu_disassembler),
-                        Device::SMP => run_instruction_and_disassemble(snes, &smp_disassembler),
+                        Device::CPU => run_frame_and_disassemble(snes, &cpu_disassembler),
+                        Device::SMP => run_frame_and_disassemble(snes, &smp_disassembler),
                         _ => panic!(),
                     };
+                    frame_ready.store(true, Ordering::Release);
                     if should_break {
-                        *paused.lock().unwrap() = true;
+                        paused.store(true, Ordering::SeqCst);
                     }
                 }
             }
             // TODO: This should correctly handle mirrored PC addresses
             EmuThreadMessage::RunToAddress(device, addr) => {
-                *paused.lock().unwrap() = false;
+                paused.store(false, Ordering::SeqCst);
                 loop {
-                    if *paused.lock().unwrap() {
+                    if paused.load(Ordering::Relaxed) {
                         break;
                     }
                     let mut snes = snes.lock().unwrap();
@@ -73,7 +100,7 @@ pub fn run_emu_thread(
                         _ => panic!(),
                     };
                     if pc == addr {
-                        *paused.lock().unwrap() = true;
+                        paused.store(true, Ordering::SeqCst);
                         break;
                     } else {
                         let should_break = match device {
@@ -86,7 +113,7 @@ pub fn run_emu_thread(
                             _ => panic!(),
                         };
                         if should_break {
-                            *paused.lock().unwrap() = true;
+                            paused.store(true, Ordering::SeqCst);
                         }
                     }
                 }

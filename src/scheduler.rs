@@ -145,6 +145,7 @@ impl Scheduler {
                                 );
                             }
                         }
+                        _ => {}
                     }
                 }
                 _ => panic!("unexpected value from resume"),
@@ -152,8 +153,9 @@ impl Scheduler {
         }
     }
 
-    pub fn run_instruction_debug(&mut self, run_device: Device) -> bool {
+    pub fn run_instruction_debug(&mut self, run_device: Device) -> (bool, bool) {
         let mut hit_debug = false;
+        let mut frame_ready = false;
         loop {
             let yielded = self.resume();
             match yielded {
@@ -164,7 +166,10 @@ impl Scheduler {
                             self.curr_thread().waiting_for = Some(other_device);
                         }
                         YieldReason::FinishedInstruction(device) if device == run_device => {
-                            return hit_debug;
+                            return (hit_debug, frame_ready);
+                        }
+                        YieldReason::FrameReady => {
+                            frame_ready = true;
                         }
                         YieldReason::Debug(debug_point) => {
                             hit_debug = true;

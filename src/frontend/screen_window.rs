@@ -1,9 +1,12 @@
 use super::app_window::AppWindow;
+use super::frame_history::FrameHistory;
+use std::time::Instant;
 
 use crate::snes::SNES;
 
 use eframe::egui::{Color32, ColorImage, TextureHandle};
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub struct ScreenWindow {
@@ -12,10 +15,13 @@ pub struct ScreenWindow {
     snes: Arc<Mutex<SNES>>,
     image: ColorImage,
     texture: Option<TextureHandle>,
+    frame_ready: Arc<AtomicBool>,
+    frame_history: FrameHistory,
+    previous_frame_instant: Option<Instant>,
 }
 
 impl ScreenWindow {
-    pub fn new(title: String, snes: Arc<Mutex<SNES>>) -> Self {
+    pub fn new(title: String, snes: Arc<Mutex<SNES>>, frame_ready: Arc<AtomicBool>) -> Self {
         let id = egui::Id::new(&title);
         let image = ColorImage::new([256, 224], Color32::BLACK);
         Self {
@@ -24,6 +30,9 @@ impl ScreenWindow {
             snes,
             image,
             texture: None,
+            frame_ready,
+            frame_history: FrameHistory::new(),
+            previous_frame_instant: None,
         }
     }
 }
@@ -34,10 +43,47 @@ impl AppWindow for ScreenWindow {
     }
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
-        if let Ok(snes) = self.snes.lock() {
-            if snes.cpu.borrow().debug_frame_ready {
-                snes.cpu.borrow_mut().debug_frame_ready = false;
-                let frame = snes.debug_get_frame();
+        if let Ok(true) =
+            self.frame_ready
+                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+        {
+            // TODO: Much of this need not happen under the lock
+            let mut frame = None;
+            if let Ok(snes) = self.snes.lock() {
+                frame = snes.cpu.borrow_mut().debug_frame.take();
+                if focused && !paused {
+                    let controller_state = ctx.input(|input_state| {
+                        const KEYS: &[egui::Key] = &[
+                            egui::Key::C,          // B
+                            egui::Key::X,          // Y
+                            egui::Key::Enter,      // Select
+                            egui::Key::Space,      // Start
+                            egui::Key::ArrowUp,    // Up
+                            egui::Key::ArrowDown,  // Down
+                            egui::Key::ArrowLeft,  // Left
+                            egui::Key::ArrowRight, // Right
+                            egui::Key::V,          // A
+                            egui::Key::D,          // X
+                            egui::Key::A,          // L
+                            egui::Key::S,          // R
+                        ];
+                        let mut controller_state = 0;
+                        for (i, key) in KEYS.iter().enumerate() {
+                            controller_state |= (input_state.key_down(*key) as u16) << (15 - i);
+                        }
+                        controller_state
+                    });
+                    snes.cpu.borrow_mut().controller_states[0] = controller_state;
+                }
+            }
+            if let Some(frame) = frame {
+                let now = Instant::now();
+                let delta = self
+                    .previous_frame_instant
+                    .map(|previous| (now - previous).as_secs_f32());
+                self.previous_frame_instant = Some(now);
+                self.frame_history
+                    .on_new_frame(ctx.input(|i| i.time), delta);
                 for y in 0..224 {
                     for x in 0..256 {
                         let color = frame[y][x];
@@ -58,19 +104,20 @@ impl AppWindow for ScreenWindow {
         };
 
         egui::Window::new(&self.title)
-            // .default_height(640.0)
+            .default_width(512.0)
             .show(ctx, |ui| {
-                // if !focused {
-                //     ui.set_enabled(false);
-                // }
-                // egui::TopBottomPanel::top(self.id.with("menu_bar"))
-                //     .show_inside(ui, |ui| self.menu_bar(ui));
-
-                // let egui_image = egui::Image::new(self.texture.as_ref().unwrap(), [256., 224.]);
-                // let rect = ctx.available_rect();
-                // egui_image.paint_at(ui, rect);
-
-                ui.image(self.texture.as_ref().unwrap(), [256., 224.]);
+                if !focused {
+                    ui.set_enabled(false);
+                }
+                ui.label(format!(
+                    "Mean frame time: {:.2}ms",
+                    1e3 * self.frame_history.mean_frame_time()
+                ));
+                let rect_size = ui.available_rect_before_wrap().size();
+                ui.image(
+                    self.texture.as_ref().unwrap(),
+                    [rect_size.x, rect_size.x * (224. / 255.)],
+                );
             });
     }
 }
