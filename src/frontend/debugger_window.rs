@@ -215,14 +215,14 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             })
             .body(|body| {
                 let disassembler = self.disassembler.lock().unwrap();
-                body.rows(text_height, total_lines, |row_index, row| {
+                body.rows(text_height, total_lines, |row| {
                     Self::disassembly_row(
                         &disassembler,
                         paused,
                         &self.registers_mirror,
                         &mut self.prev_top_row,
                         &mut self.prev_bottom_row,
-                        row_index,
+                        row.index(),
                         row,
                     )
                 });

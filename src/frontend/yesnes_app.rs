@@ -27,6 +27,9 @@ struct YesnesApp {
 impl Default for YesnesApp {
     fn default() -> Self {
         let snes = Arc::new(Mutex::new(SNES::new()));
+        let cart_path = std::env::args().nth(1).expect("Expected a rom file");
+        snes.lock().unwrap().load_cart(&cart_path);
+        snes.lock().unwrap().reset();
         let cpu_disassembler = Arc::new(Mutex::new(Disassembler::new(DebugCpu::new(
             snes.lock().unwrap().bus.clone(),
         ))));
@@ -119,7 +122,7 @@ impl eframe::App for YesnesApp {
 
 pub fn run() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(1260.0, 1000.0)),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1260.0, 1000.0]),
         ..Default::default()
     };
     eframe::run_native(

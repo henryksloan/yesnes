@@ -6,7 +6,7 @@ use crate::u24::u24;
 
 use std::cell::RefCell;
 use std::fs;
-use std::ops::GeneratorState;
+use std::ops::CoroutineState;
 use std::pin::Pin;
 use std::rc::{Rc, Weak};
 
@@ -41,13 +41,7 @@ impl Bus {
             smp,
             wram: vec![0; 0x20000],
             wram_port_addr: u24(0),
-            cart_test: fs::read(
-                &std::env::args()
-                    .collect::<Vec<String>>()
-                    .get(1)
-                    .expect("Expected a rom file"),
-            )
-            .unwrap(),
+            cart_test: Vec::new(),
             sram: vec![0; 0x80000],
             multiplicand_a: 0,
             dividend: 0,
@@ -64,6 +58,10 @@ impl Bus {
         self.wram.fill(0);
         self.multiplicand_a = 0;
         self.product_or_remainder = 0;
+    }
+
+    pub fn load_cart(&mut self, cart_path: &str) {
+        self.cart_test = fs::read(cart_path).unwrap();
     }
 
     // TODO: I have FORGOTTEN why these don't take &self. Look into why.
@@ -127,6 +125,7 @@ impl Bus {
     }
 
     pub fn read_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u8> + 'a {
+        #[coroutine]
         move || {
             // TODO: Some generalized mapper logic
             // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
@@ -207,6 +206,7 @@ impl Bus {
     }
 
     pub fn read_u16<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let lo = yield_all!(Bus::read_u8(bus.clone(), addr)) as u16;
             let hi = yield_all!(Bus::read_u8(bus.clone(), addr + 1u32)) as u16;
@@ -215,6 +215,7 @@ impl Bus {
     }
 
     pub fn write_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
+        #[coroutine]
         move || {
             // TODO: Some generalized mapper logic
             // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map

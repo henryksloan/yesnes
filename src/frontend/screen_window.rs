@@ -45,7 +45,7 @@ impl AppWindow for ScreenWindow {
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
         if let Ok(true) =
             self.frame_ready
-                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
         {
             // TODO: Much of this need not happen under the lock
             let mut frame = None;
@@ -116,7 +116,7 @@ impl AppWindow for ScreenWindow {
                 let rect_size = ui.available_rect_before_wrap().size();
                 ui.image(
                     self.texture.as_ref().unwrap(),
-                    [rect_size.x, rect_size.x * (224. / 255.)],
+                    // [rect_size.x, rect_size.x * (224. / 255.)],
                 );
             });
     }

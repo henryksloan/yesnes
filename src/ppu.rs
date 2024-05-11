@@ -12,7 +12,7 @@ use crate::cpu::yield_ticks;
 use crate::scheduler::*;
 
 use std::cell::RefCell;
-use std::ops::{Generator, GeneratorState};
+use std::ops::{Coroutine, CoroutineState};
 use std::pin::Pin;
 use std::rc::Rc;
 
@@ -90,7 +90,8 @@ impl PPU {
         self.io_reg = IoRegisters::new();
     }
 
-    pub fn run<'a>(ppu: Rc<RefCell<PPU>>) -> impl DeviceGenerator + 'a {
+    pub fn run<'a>(ppu: Rc<RefCell<PPU>>) -> impl DeviceCoroutine + 'a {
+        #[coroutine]
         move || loop {
             // TODO: This is scanline-granularity, and does no synchronization below that granularity.
             yield_ticks!(ppu, PPU::step(ppu.clone(), 1364));
@@ -98,6 +99,7 @@ impl PPU {
     }
 
     fn step<'a>(ppu: Rc<RefCell<PPU>>, n_clocks: u64) -> impl Yieldable<()> + 'a {
+        #[coroutine]
         move || {
             ppu.borrow_mut().ticks_run += n_clocks;
             let new_scanline = yield_all!(PpuCounter::tick(

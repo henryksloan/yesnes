@@ -25,16 +25,13 @@ impl SNES {
 
         let scheduler = Self::create_scheduler(cpu.clone(), ppu.clone(), smp.clone());
 
-        let mut snes = Self {
+        Self {
             cpu,
             ppu,
             smp,
             bus,
             scheduler,
-        };
-        snes.reset();
-
-        snes
+        }
     }
 
     fn create_scheduler(
@@ -46,6 +43,10 @@ impl SNES {
         let ppu_thread = Box::from(PPU::run(ppu.clone()));
         let smp_thread = Box::from(SMP::run(smp.clone()));
         Scheduler::new(cpu_thread, ppu_thread, smp_thread)
+    }
+
+    pub fn load_cart(&mut self, cart_path: &str) {
+        self.bus.borrow_mut().load_cart(cart_path);
     }
 
     pub fn reset(&mut self) {
@@ -72,4 +73,30 @@ impl SNES {
     pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
         self.ppu.borrow().debug_get_frame()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test::Bencher;
+
+    #[bench]
+    fn bench_1_frame(b: &mut Bencher) {
+        let mut snes = SNES::new();
+        snes.load_cart("/home/henry/roms/snes/Harvest Moon (USA).sfc");
+        snes.reset();
+        b.iter(move || while !snes.run_instruction_debug(Device::CPU).1 {});
+    }
+
+    // #[bench]
+    // fn bench_600_frame(b: &mut Bencher) {
+    //     let mut snes = SNES::new();
+    //     snes.load_cart("/home/henry/roms/snes/Harvest Moon (USA).sfc");
+    //     snes.reset();
+    //     b.iter(move || {
+    //         for _ in 0..600 {
+    //             while !snes.run_instruction_debug(Device::CPU).1 {}
+    //         }
+    //     });
+    // }
 }

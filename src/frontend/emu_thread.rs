@@ -30,6 +30,8 @@ pub fn run_frame_and_disassemble<D: DebugProcessor>(
 ) -> bool {
     let mut breakpoint = false;
     let mut frame_ready = false;
+    use std::time::Instant;
+    let now = Instant::now();
     while !frame_ready {
         (breakpoint, frame_ready) = snes.run_instruction_debug(D::DEVICE);
         let registers = D::registers(snes);
@@ -41,6 +43,8 @@ pub fn run_frame_and_disassemble<D: DebugProcessor>(
             break;
         }
     }
+    let elapsed = now.elapsed();
+    println!("Elapsed: {:.2?}", elapsed);
     breakpoint
 }
 
@@ -66,10 +70,11 @@ pub fn run_emu_thread(
         };
         match message {
             EmuThreadMessage::Continue(device) => {
-                paused.store(false, Ordering::SeqCst);
+                paused.store(false, Ordering::Relaxed);
                 while !paused.load(Ordering::Relaxed) {
                     // TODO: I think a capacityless channel might be better, though the consumer side shouldn't block.
-                    while frame_ready.load(Ordering::Acquire) {
+                    // while frame_ready.load(Ordering::Acquire) {
+                    while frame_ready.load(Ordering::Relaxed) {
                         std::hint::spin_loop();
                     }
                     let snes = &mut snes.lock().unwrap();
@@ -78,9 +83,9 @@ pub fn run_emu_thread(
                         Device::SMP => run_frame_and_disassemble(snes, &smp_disassembler),
                         _ => panic!(),
                     };
-                    frame_ready.store(true, Ordering::Release);
+                    frame_ready.store(true, Ordering::Relaxed);
                     if should_break {
-                        paused.store(true, Ordering::SeqCst);
+                        paused.store(true, Ordering::Relaxed);
                     }
                 }
             }

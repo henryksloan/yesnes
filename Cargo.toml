@@ -3,14 +3,25 @@ name = "yesnes"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "headless"
+path = "src/headless_test.rs"
+
+[[bin]]
+name = "screen"
+path = "src/screen_test.rs"
+
+[profile.release]
+debug = 2
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 gcd = "2.1.0"
 paste = "1.0.6"
-egui = "0.22.0"
-egui_extras = "0.22.0"
-eframe = "0.22.0"
+egui = "0.27.2"
+egui_extras = "0.27.2"
+eframe = "0.27.2"
 log = "0.4.20"
 env_logger = "0.10.0"
 crossbeam = "0.8.2"
