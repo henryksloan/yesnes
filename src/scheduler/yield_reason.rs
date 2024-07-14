@@ -24,6 +24,7 @@ pub struct Access {
 #[derive(Clone, Copy, Debug)]
 pub enum DebugPoint {
     UnimplementedAccess(Access),
+    CodeBreakpoint,
 }
 
 pub type YieldTicks = (YieldReason, u64);

@@ -612,12 +612,14 @@ impl SMP {
 
     fn peak_io_reg(&self, addr: u16) -> u8 {
         match addr {
-            0x00F0 => todo!("IO reg read {addr:#06X}"),
+            0x00F0 => 0,
+            // 0x00F0 => todo!("IO reg read {addr:#06X}"),
             0x00F1 => self.io_reg.control.0,
             0x00F2 => self.io_reg.dsp_addr,
             0x00F3 => self.io_reg.dsp_data,
             0x00F4..=0x00F7 => self.io_reg.external_ports[addr as usize - 0x00F4],
-            0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
+            // 0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
+            0x00F8..=0x00F9 => 0,
             0x00FA..=0x00FC => self.io_reg.timer_dividers[addr as usize - 0x00FA],
             0x00FD..=0x00FF => self.io_reg.timers[addr as usize - 0x00FD],
             _ => panic!("Address {:#02X} is not an SMP IO register", addr),
@@ -629,6 +631,7 @@ impl SMP {
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             dummy_yield!();
+            // yield YieldReason::Sync(Device::CPU);
             smp.borrow().peak_io_reg(addr)
         }
     }
@@ -638,15 +641,18 @@ impl SMP {
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             dummy_yield!();
+            // yield YieldReason::Sync(Device::CPU);
             match addr {
-                0x00F0 => todo!("IO reg write {addr:#06X}"),
+                0x00F0 => {}
+                // 0x00F0 => todo!("IO reg write {addr:#06X}"),
                 0x00F1 => smp.borrow_mut().io_reg.control.0 = data,
                 0x00F2 => smp.borrow_mut().io_reg.dsp_addr = data,
                 0x00F3 => smp.borrow_mut().io_reg.dsp_data = data,
                 0x00F4..=0x00F7 => {
                     smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
                 }
-                0x00F8..=0x00F9 => todo!("IO reg write {addr:#06X}"),
+                // 0x00F8..=0x00F9 => todo!("IO reg write {addr:#06X}"),
+                0x00F8..=0x00F9 => {}
                 0x00FA..=0x00FC => {
                     smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA] = data
                 }
@@ -714,7 +720,22 @@ impl SMP {
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
+            if addr == 0x0001 {
+                println!("SMP 0001 <- {:02X}", data);
+                // yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
+                static mut NOW_BREAK: bool = false;
+                if unsafe { NOW_BREAK } {
+                    yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
+                }
+                if data == 0x02 {
+                    // unsafe {
+                    //     NOW_BREAK = true;
+                    // }
+                    yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
+                }
+            }
             // All writes always go to ram, even if they also go to e.g. IO
+            // println!("APU Write {:#08x} <- {:#04x}", addr, data);
             smp.borrow_mut().ram[addr as usize] = data;
             match addr {
                 0x00F0..=0x00FF => yield_all!(SMP::write_io_reg(smp.clone(), addr, data)),
@@ -899,6 +920,7 @@ impl SMP {
     fn indirect_indexed<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
         #[coroutine]
         move || {
+            // TODO: DO NOT SUBMIT: Get rid of unnecessary dummy yields (are any needed with #coroutine?)
             dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr = fetch!(smp);
@@ -913,6 +935,7 @@ impl SMP {
                 )) as u16;
                 (addr_hi << 8) | addr_lo
             };
+            // println!("direct_page_base ({:08x}) + direct_addr ({:08x}) => indirect_addr ({:08x}) + y ({:04x}) = {:08x}", direct_page_base, direct_addr, indirect_addr, smp.borrow().reg.y, indirect_addr + smp.borrow().reg.y as u16);
             indirect_addr + smp.borrow().reg.y as u16
         }
     }
@@ -1073,8 +1096,13 @@ impl SMP {
     }
 
     fn cmp_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) {
-        smp.borrow_mut().reg.psw.c = dest_data >= src_data;
-        smp.borrow_mut().reg.psw.n = src_data > dest_data;
+        // smp.borrow_mut().reg.psw.c = dest_data >= src_data;
+        // smp.borrow_mut().reg.psw.n = src_data > dest_data;
+        // smp.borrow_mut().reg.psw.z = src_data == dest_data;
+        // TODO: NOTE: This is a critical bug fix
+        let diff: i8 = (dest_data as i8).wrapping_sub(src_data as i8);
+        smp.borrow_mut().reg.psw.c = diff >= 0;
+        smp.borrow_mut().reg.psw.n = (diff as u8 & 0x80) != 0;
         smp.borrow_mut().reg.psw.z = src_data == dest_data;
     }
 

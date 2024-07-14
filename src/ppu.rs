@@ -219,7 +219,7 @@ impl PPU {
             let (flip_x, flip_y) = ((tile >> 14) & 1 == 1, (tile >> 15) & 1 == 1);
             let line = if flip_y { 7 - line_offset } else { line_offset };
             let tile_plane_pairs: Vec<u16> = (0..(bits_per_pixel / 2))
-                .map(|i| self.vram[i * 8 + tile_chr_base + line])
+                .map(|i| self.vram[(i * 8 + tile_chr_base + line) % self.vram.len()])
                 .collect();
             let start_bit = if col_i == 0 { start_pixel_x } else { 0 };
             let end_bit = if col_i == 32 { start_pixel_x } else { 8 };
@@ -233,8 +233,11 @@ impl PPU {
                 if palette_i == 0 {
                     continue;
                 }
-                let palette_entry =
-                    self.cgram[(1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize];
+                // let palette_entry =
+                //     self.cgram[(1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize];
+                let palette_entry = self.cgram[((1 << bits_per_pixel) * (palette_n as usize)
+                    + palette_i as usize)
+                    % self.cgram.len()];
                 let pixel = [
                     ((palette_entry & 0x1F) as u8) << 3,
                     (((palette_entry >> 5) & 0x1F) as u8) << 3,
@@ -368,20 +371,23 @@ impl PPU {
                 let oam_addr = self.io_reg.curr_oam_addr as usize;
                 self.io_reg.curr_oam_addr = self.io_reg.curr_oam_addr.wrapping_add(1);
                 if oam_addr < 0x200 {
-                    self.oam_lo[oam_addr]
+                    self.oam_lo[oam_addr % self.oam_lo.len()]
                 } else {
-                    self.oam_hi[oam_addr - 0x200]
+                    // self.oam_hi[oam_addr - 0x200]
+                    self.oam_hi[(oam_addr - 0x200) % self.oam_hi.len()]
                 }
             }
             0x2139 => {
                 let vram_addr = self.io_reg.vram_addr as usize;
                 self.io_reg.update_vram_addr(false);
-                self.vram[vram_addr].bit_range(7, 0)
+                let len_tmp = self.vram.len();
+                self.vram[vram_addr % len_tmp].bit_range(7, 0)
             }
             0x213A => {
                 let vram_addr = self.io_reg.vram_addr as usize;
                 self.io_reg.update_vram_addr(true);
-                self.vram[vram_addr].bit_range(15, 8)
+                let len_tmp = self.vram.len();
+                self.vram[vram_addr % len_tmp].bit_range(15, 8)
             }
             0x213B => {
                 let cgram_addr = self.io_reg.cgram_addr as usize;
@@ -451,12 +457,14 @@ impl PPU {
             0x2118 => {
                 let vram_addr = self.io_reg.vram_addr as usize;
                 self.io_reg.update_vram_addr(false);
-                self.vram[vram_addr].set_bit_range(7, 0, data);
+                let len_tmp = self.vram.len();
+                self.vram[vram_addr % len_tmp].set_bit_range(7, 0, data);
             }
             0x2119 => {
                 let vram_addr = self.io_reg.vram_addr as usize;
                 self.io_reg.update_vram_addr(true);
-                self.vram[vram_addr].set_bit_range(15, 8, data);
+                let len_tmp = self.vram.len();
+                self.vram[vram_addr % len_tmp].set_bit_range(15, 8, data);
             }
             0x2121 => {
                 self.io_reg.cgram_addr = data;

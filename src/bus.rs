@@ -177,6 +177,7 @@ impl Bus {
                             .unwrap()
                             .borrow_mut()
                             .io_read(addr),
+                        0x4220..=0x42FF => 0, // TODO: Open bus (?)
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
                                 access_type: AccessType::Read,
@@ -191,6 +192,13 @@ impl Bus {
                         [(((addr.bank() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
                 }
                 0x7E..=0x7F => {
+                    println!(
+                        "Mapping {:06X} to {:06X} = {:02X}",
+                        addr.raw(),
+                        0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize,
+                        bus.borrow().wram
+                            [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize]
+                    );
                     bus.borrow().wram
                         [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize]
                 }
@@ -235,6 +243,9 @@ impl Bus {
                         0x2140..=0x217F => {
                             yield YieldReason::Sync(Device::SMP);
                             let port = (addr.lo16() - 0x2140) % 4;
+                            // if port == 2 || port == 3 {
+                            //     println!("Write F{} <- {:02X}", port + 4, data);
+                            // }
                             bus.borrow().smp.borrow_mut().io_write(0x2140 + port, data);
                         }
                         0x2180 => {
@@ -282,6 +293,7 @@ impl Bus {
                                 .borrow_mut()
                                 .io_write(addr, data);
                         }
+                        0x4220..=0x42FF => {} // TODO: Open bus (?)
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
                                 access_type: AccessType::Write,

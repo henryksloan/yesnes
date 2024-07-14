@@ -20,6 +20,10 @@ impl u24 {
         (self.0 & 0xFFFF) as u16
     }
 
+    pub fn set_lo16(&mut self, data: u16) {
+        self.set_bit_range(15, 0, data);
+    }
+
     pub fn lo_byte(&self) -> u8 {
         self.0 as u8
     }

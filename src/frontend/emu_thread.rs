@@ -44,7 +44,7 @@ pub fn run_frame_and_disassemble<D: DebugProcessor>(
         }
     }
     let elapsed = now.elapsed();
-    println!("Elapsed: {:.2?}", elapsed);
+    // println!("Elapsed: {:.2?}", elapsed);
     breakpoint
 }
 

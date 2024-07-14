@@ -167,6 +167,7 @@ macro_rules! branch_instrs {
         paste! {
             fn [<branch_ $flag _ $set_clear>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
+                    // TODO: DO NOT SUBMIT: Do we need wrapping here?
                     let source_pc = cpu.borrow().reg.pc + 1u16;
                     let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
                     if cpu.borrow_mut().reg.p.$flag == $val {
@@ -238,7 +239,7 @@ macro_rules! instrs {
 macro_rules! fetch {
     ($cpu_rc: ident) => {{
         let data = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
-        $cpu_rc.borrow_mut().reg.pc += 1u32;
+        $cpu_rc.borrow_mut().progress_pc(1);
         data
     }};
 }
@@ -246,9 +247,9 @@ macro_rules! fetch {
 macro_rules! fetch_u16 {
     ($cpu_rc: ident) => {{
         let lo = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
-        $cpu_rc.borrow_mut().reg.pc += 1u32;
+        $cpu_rc.borrow_mut().progress_pc(1);
         let hi = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
-        $cpu_rc.borrow_mut().reg.pc += 1u32;
+        $cpu_rc.borrow_mut().progress_pc(1);
         ((hi as u16) << 8) | lo as u16
     }};
 }
@@ -295,6 +296,7 @@ pub struct CPU {
     do_hdmas_this_line: [bool; 8],
     nmi_enqueued: bool,
     irq_enqueued: bool,
+    stopped: bool,
     // TODO: Should change most instances of "tick" to "clock"
     ticks_run: u64,
     // Some events like interrupt polling happen every 4 ticks. This tracks the
@@ -308,6 +310,7 @@ pub struct CPU {
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
     print_timer: u64,
+    debug_latch: bool,
 }
 
 impl CPU {
@@ -327,6 +330,7 @@ impl CPU {
             do_hdmas_this_line: [false; 8],
             nmi_enqueued: false,
             irq_enqueued: false,
+            stopped: false,
             ticks_run: 0,
             ticks_mod_4: 0,
             debug_frame: None,
@@ -334,6 +338,7 @@ impl CPU {
             frame_history: FrameHistory::new(),
             previous_frame_instant: None,
             print_timer: 0,
+            debug_latch: false,
         }
     }
 
@@ -353,6 +358,11 @@ impl CPU {
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
 
+        // TODO: DO NOT SUBMIT: untested resetting; more stuff is definitely msising
+        self.nmi_enqueued = false;
+        self.irq_enqueued = false;
+        self.stopped = false;
+
         self.io_reg.waitstate_control.0 = 0;
         self.io_reg.interrupt_control.0 = 0;
         for channel_regs in self.io_reg.dma_channels.iter_mut() {
@@ -370,10 +380,14 @@ impl CPU {
         // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         #[coroutine]
         move || loop {
+            if cpu.borrow().stopped {
+                yield (YieldReason::FinishedInstruction(Device::CPU), 0);
+                continue;
+            }
             // print!("CPU {:#010X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             // TODO: Need to go through and use wrapping arithmetic where appropriate
-            cpu.borrow_mut().reg.pc += 1u32;
+            cpu.borrow_mut().progress_pc(1);
             // {
             //     let reg = &cpu.borrow().reg;
             //     println!(
@@ -534,6 +548,8 @@ impl CPU {
                 (transfer_x_y, NoFlag; 0x9B=>implied)
                 (transfer_y_a, NoFlag; 0x98=>implied)
                 (transfer_y_x, NoFlag; 0xBB=>implied)
+                // TODO: DO NOT SUBMIT: untested STP
+                (stp, NoFlag; 0xDB=>implied)
             );
 
             // TODO: Proper DMA activation and pause timing
@@ -583,6 +599,12 @@ impl CPU {
             // In fact, this is wrong, as we're returning from the device generator without flushing our cycles.
             yield (YieldReason::FinishedInstruction(Device::CPU), 0);
         }
+    }
+
+    fn progress_pc(&mut self, bytes: i16) {
+        self.reg
+            .pc
+            .set_lo16(self.reg.pc.lo16().wrapping_add_signed(bytes));
     }
 
     fn on_scanline_start<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<()> + 'a {
@@ -737,10 +759,25 @@ impl CPU {
         match addr.lo16() {
             // TODO: Remove debugging value
             // This has bit6 set to simulate some weird open bus behavior for testing
-            0x4210 => 0xC0,
+            // 0x4210 => 0xC0,
+            0x4210 => {
+                self.debug_latch = !self.debug_latch;
+                if !self.debug_latch {
+                    0x80
+                } else {
+                    0x0
+                }
+            } // 0xC0,
             0x4211 => 0, // TODO: IRQ stuff
             // TODO: Remove debugging value
-            0x4212 => 0xC0,
+            0x4212 => {
+                self.debug_latch = !self.debug_latch;
+                if !self.debug_latch {
+                    0xC0
+                } else {
+                    0x0
+                }
+            } // 0xC0,
             0x4218..=0x421F => {
                 let reg_off = addr.lo16() as usize - 0x4218;
                 let controller_state = self.controller_states[reg_off / 4];
@@ -1183,7 +1220,7 @@ impl CPU {
         move || {
             dummy_yield!();
             let addr = cpu.borrow().reg.pc;
-            cpu.borrow_mut().reg.pc += if long { u24(2) } else { u24(1) };
+            cpu.borrow_mut().progress_pc(if long { 2 } else { 1 });
             Pointer { addr, long }
         }
     }
@@ -1744,7 +1781,7 @@ impl CPU {
             cpu.borrow_mut().reg.a = a.wrapping_sub(1);
             if cpu.borrow().reg.a != 0xFFFF {
                 // If the transfer isn't complete, return the PC to the beginning of this instruction
-                cpu.borrow_mut().reg.pc -= 3u32;
+                cpu.borrow_mut().progress_pc(-3);
             }
         }
     }
@@ -2261,9 +2298,18 @@ impl CPU {
     fn push_relative_addr<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let source_pc = cpu.borrow().reg.pc + 2u16;
+            // let source_pc = cpu.borrow().reg.pc + 2u16;
+            // TODO: NOTE: This is a critical bug fix
+            let source_pc = cpu.borrow().reg.pc + 3u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
             yield_all!(CPU::stack_push_u16(cpu.clone(), dest_pc.lo16()));
+        }
+    }
+
+    fn stp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            cpu.borrow_mut().stopped = true;
         }
     }
 
