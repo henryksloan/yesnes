@@ -585,6 +585,10 @@ impl SMP {
                 (bra; 0x2F=>immediate)
                 (jmp; 0x5F=>absolute, 0x1F=>absolute_indexed_indirect)
                 (call; 0x3F=>absolute)
+                (tcall; 0x01=>implied, 0x11=>implied, 0x21=>implied, 0x31=>implied,
+                 0x41=>implied, 0x51=>implied, 0x61=>implied, 0x71=>implied,
+                 0x81=>implied, 0x91=>implied, 0xA1=>implied, 0xB1=>implied,
+                 0xC1=>implied, 0xD1=>implied, 0xE1=>implied, 0xF1=>implied)
                 (pcall; 0x4F=>direct)
                 (ret; 0x6F=>implied)
                 (ret_from_interrupt; 0x7F=>implied)
@@ -1492,6 +1496,23 @@ impl SMP {
         move || {
             yield_all!(SMP::push_pc(smp.clone()));
             smp.borrow_mut().reg.pc = addr;
+            // TODO: Need to look into how many cycles branch can take
+            // smp.borrow_mut().step(1);
+        }
+    }
+
+    fn tcall<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            yield_all!(SMP::push_pc(smp.clone()));
+            // TODO: Might be a bit nicer to express this as a peculiarly parameterized procedure
+            println!(
+                "bdfdsa {:02X}",
+                smp.borrow().peak_u8(smp.borrow().reg.pc - 1)
+            );
+            let n = (smp.borrow().peak_u8(smp.borrow().reg.pc - 1) as u16) >> 4;
+            let dest_pc = yield_all!(Self::read_u16(smp.clone(), 0xFFDE - (2 * n)));
+            smp.borrow_mut().reg.pc = dest_pc;
             // TODO: Need to look into how many cycles branch can take
             // smp.borrow_mut().step(1);
         }
