@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use paste::paste;
 
+pub const BRK_VECTOR: u16 = 0xFFDE;
 pub const RESET_VECTOR: u16 = 0xFFFE;
 
 #[rustfmt::skip]
@@ -333,7 +334,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($smp_rc, $instr_f, $addr_mode_f),)+
             )+
-            _ => {} // panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc - 1),
+            _ => panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc - 1),
         }
     };
 }
@@ -587,6 +588,7 @@ impl SMP {
                 (pcall; 0x4F=>direct)
                 (ret; 0x6F=>implied)
                 (ret_from_interrupt; 0x7F=>implied)
+                (brk; 0x0F=>implied)
                 (clear_flag_p; 0x20=>implied)
                 (set_flag_p; 0x40=>implied)
                 (set_flag_i; 0xA0=>implied)
@@ -1521,6 +1523,18 @@ impl SMP {
             yield_all!(SMP::pop_pc(smp.clone()));
             // TODO: Need to look into how many cycles branch can take
             // smp.borrow_mut().step(1);
+        }
+    }
+
+    fn brk<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            yield_all!(SMP::push_pc(smp.clone()));
+            yield_all!(SMP::push_psw(smp.clone()));
+            smp.borrow_mut().reg.psw.b = true;
+            smp.borrow_mut().reg.psw.i = false;
+            let dest_pc = yield_all!(Self::read_u16(smp.clone(), BRK_VECTOR));
+            smp.borrow_mut().reg.pc = dest_pc;
         }
     }
 
