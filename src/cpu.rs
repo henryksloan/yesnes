@@ -16,18 +16,17 @@ use paste::paste;
 
 // Emulation mode (6502) vectors
 pub const RESET_VECTOR: u24 = u24(0xFFFC);
+pub const COP_VECTOR: u24 = u24(0xFFE4);
 pub const NMI_VECTOR_E: u24 = u24(0xFFFA);
 pub const IRQ_VECTOR_E: u24 = u24(0xFFFE);
 pub const ABORT_VECTOR_E: u24 = u24(0xFFF8);
 pub const BRK_VECTOR_E: u24 = u24(0xFFFE);
-pub const COP_VECTOR_E: u24 = u24(0xFFF4);
 
 // 65C816 mode vectors
 pub const NMI_VECTOR: u24 = u24(0xFFEA);
 pub const IRQ_VECTOR: u24 = u24(0xFFEE);
 pub const ABORT_VECTOR: u24 = u24(0xFFF8);
 pub const BRK_VECTOR: u24 = u24(0xFFE6);
-pub const COP_VECTOR: u24 = u24(0xFFE4);
 
 macro_rules! yield_ticks {
     ($cpu_rc:ident, $gen_expr:expr) => {{
@@ -407,9 +406,9 @@ impl CPU {
             //     );
             // }
 
-            // TODO: Add COP (coprocessor interrupt)
             instrs!(cpu, opcode,
                 (brk, NoFlag; 0x0=>implied)
+                (cop, NoFlag; 0x2=>implied)
                 (clc, NoFlag; 0x18=>implied)
                 (cli, NoFlag; 0x58=>implied)
                 (cld, NoFlag; 0xD8=>implied)
@@ -1365,7 +1364,7 @@ impl CPU {
             let addr = u24({
                 let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
                 let addr_mid = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
-                ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 2u32)) as u32) << 8)
+                ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 2u32)) as u32) << 16)
                     | (addr_mid << 8)
                     | addr_lo
             });
@@ -1381,10 +1380,10 @@ impl CPU {
         move || {
             let indirect_addr = {
                 let pb = cpu.borrow().reg.pc.bank();
-                let addr_lo = fetch!(cpu) as u32;
-                let lo16 = (((fetch!(cpu) as u32) << 8) | addr_lo)
-                    .wrapping_add(cpu.borrow().reg.get_x() as u32);
-                u24(((pb as u32) << 16) | lo16)
+                let addr_lo = fetch!(cpu) as u16;
+                let lo16 = (((fetch!(cpu) as u16) << 8) | addr_lo)
+                    .wrapping_add(cpu.borrow().reg.get_x() as u16);
+                u24(((pb as u32) << 16) | lo16 as u32)
             };
             // TODO: Use read_u16 to simplify some of these addressing modes
             let addr = u24({
@@ -1838,7 +1837,7 @@ impl CPU {
                 16
             };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
@@ -1855,7 +1854,7 @@ impl CPU {
                 16
             };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
@@ -1872,7 +1871,7 @@ impl CPU {
                 16
             };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
@@ -1889,7 +1888,7 @@ impl CPU {
                 16
             };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = (data & ((1u32 << n_bits) - 1) as u16) == 0;
         }
     }
@@ -1906,7 +1905,7 @@ impl CPU {
                 16
             };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = data == 0;
         }
     }
@@ -1923,7 +1922,7 @@ impl CPU {
                 16
             };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = data == 0;
         }
     }
@@ -1940,7 +1939,7 @@ impl CPU {
                 16
             };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = data == 0;
         }
     }
@@ -1956,7 +1955,7 @@ impl CPU {
                 16
             };
             // TODO: Factor out these flag updates
-            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) == 1;
+            cpu.borrow_mut().reg.p.n = (data >> (n_bits - 1)) & 1 == 1;
             cpu.borrow_mut().reg.p.z = data == 0;
         }
     }
@@ -2110,17 +2109,27 @@ impl CPU {
             // TODO: If E flag, do some special stuff with Break flag
             yield_all!(CPU::stack_push_u8(cpu.clone(), p));
             cpu.borrow_mut().reg.p.i = true;
+            cpu.borrow_mut().reg.p.d = false;
             cpu.borrow_mut().reg.pc = u24(yield_all!(CPU::read_u16(cpu.clone(), vector)) as u32);
         }
     }
 
     fn brk<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
+        // TODO: Need to set emulation mode B flag, I think
         let vector = if cpu.borrow().reg.p.e {
             // The emulation mode break vector is the same as its IRQ vector
             BRK_VECTOR_E
         } else {
             BRK_VECTOR
         };
+        cpu.borrow_mut().progress_pc(1);
+        CPU::interrupt(cpu, vector)
+    }
+
+    fn cop<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
+        // TODO: Need to set emulation mode B flag, I think
+        let vector = COP_VECTOR;
+        cpu.borrow_mut().progress_pc(1);
         CPU::interrupt(cpu, vector)
     }
 
@@ -2259,12 +2268,12 @@ impl CPU {
     fn brl<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let source_pc = cpu.borrow().reg.pc + 2u16;
-            let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
+            // let source_pc = cpu.borrow().reg.pc + 2u16;
+            // let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
             // TODO: NOTE: This is a critical bug fix
-            // let source_pc = cpu.borrow().reg.pc;
-            // let offset = fetch_u16!(cpu) as i16;
-            // let dest_pc = source_pc.wrapping_add_lo16(offset + 2);
+            let source_pc = cpu.borrow().reg.pc;
+            let offset = fetch_u16!(cpu) as i16;
+            let dest_pc = source_pc.wrapping_add_lo16(offset + 2);
             cpu.borrow_mut().reg.pc = dest_pc;
             yield_all!(CPU::idle(cpu.clone()));
             // TODO: Maybe some bank cross cycles? Maybe only for emulation mode...

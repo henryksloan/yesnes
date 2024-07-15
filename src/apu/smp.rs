@@ -1522,10 +1522,6 @@ impl SMP {
         move || {
             yield_all!(SMP::push_pc(smp.clone()));
             // TODO: Might be a bit nicer to express this as a peculiarly parameterized procedure
-            println!(
-                "bdfdsa {:02X}",
-                smp.borrow().peak_u8(smp.borrow().reg.pc - 1)
-            );
             let n = (smp.borrow().peak_u8(smp.borrow().reg.pc - 1) as u16) >> 4;
             let dest_pc = yield_all!(Self::read_u16(smp.clone(), 0xFFDE - (2 * n)));
             smp.borrow_mut().reg.pc = dest_pc;
