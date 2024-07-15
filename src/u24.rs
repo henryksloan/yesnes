@@ -24,6 +24,11 @@ impl u24 {
         self.set_bit_range(15, 0, data);
     }
 
+    pub fn wrapping_add_lo16(&self, other: i16) -> u24 {
+        let new_lo16 = self.lo16().wrapping_add_signed(other);
+        u24(((self.bank() as u32) << 16) | (new_lo16 as u32))
+    }
+
     pub fn lo_byte(&self) -> u8 {
         self.0 as u8
     }

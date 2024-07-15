@@ -74,6 +74,7 @@ impl<D: DebugProcessor> Disassembler<D> {
     }
 
     pub fn update_disassembly_at(&mut self, addr: D::Address, state: impl Into<D::AnalysisState>) {
+        // TODO: Need some kind of cache invalidation for when instruction memory changes
         if self.disassembly_cache[addr.into()].is_none() {
             self.analyze(addr, &mut state.into());
             self.update_disassembly();

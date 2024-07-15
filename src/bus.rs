@@ -192,13 +192,6 @@ impl Bus {
                         [(((addr.bank() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
                 }
                 0x7E..=0x7F => {
-                    println!(
-                        "Mapping {:06X} to {:06X} = {:02X}",
-                        addr.raw(),
-                        0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize,
-                        bus.borrow().wram
-                            [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize]
-                    );
                     bus.borrow().wram
                         [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize]
                 }

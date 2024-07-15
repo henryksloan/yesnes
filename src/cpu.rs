@@ -167,9 +167,12 @@ macro_rules! branch_instrs {
         paste! {
             fn [<branch_ $flag _ $set_clear>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    // TODO: DO NOT SUBMIT: Do we need wrapping here?
-                    let source_pc = cpu.borrow().reg.pc + 1u16;
-                    let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
+                    // let source_pc = cpu.borrow().reg.pc + 1u16;
+                    // let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
+                    // TODO: NOTE: This is a critical bug fix
+                    let source_pc = cpu.borrow().reg.pc;
+                    let offset = fetch!(cpu) as i8 as i16;
+                    let dest_pc = source_pc.wrapping_add_lo16(offset + 1);
                     if cpu.borrow_mut().reg.p.$flag == $val {
                         cpu.borrow_mut().reg.pc = dest_pc;
                         yield_all!(CPU::idle(cpu.clone()));
@@ -380,10 +383,13 @@ impl CPU {
         // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         #[coroutine]
         move || loop {
-            if cpu.borrow().stopped {
-                yield (YieldReason::FinishedInstruction(Device::CPU), 0);
-                continue;
-            }
+            // if cpu.borrow().stopped {
+            //     // TODO: DO NOT SUBMIT: Fix this
+            //     yield (YieldReason::Sync(Device::SMP), 1);
+            //     yield (YieldReason::Sync(Device::PPU), 1);
+            //     yield (YieldReason::FinishedInstruction(Device::CPU), 0);
+            //     continue;
+            // }
             // print!("CPU {:#010X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             // TODO: Need to go through and use wrapping arithmetic where appropriate
@@ -548,7 +554,7 @@ impl CPU {
                 (transfer_x_y, NoFlag; 0x9B=>implied)
                 (transfer_y_a, NoFlag; 0x98=>implied)
                 (transfer_y_x, NoFlag; 0xBB=>implied)
-                // TODO: DO NOT SUBMIT: untested STP
+                // TODO: DO NOT SUBMIT: untested STP, definitely breaks frontend (e.g. trace)
                 (stp, NoFlag; 0xDB=>implied)
             );
 
@@ -761,8 +767,11 @@ impl CPU {
             // This has bit6 set to simulate some weird open bus behavior for testing
             // 0x4210 => 0xC0,
             0x4210 => {
-                self.debug_latch = !self.debug_latch;
-                if !self.debug_latch {
+                static mut DEBUG_LATCH: bool = false;
+                unsafe {
+                    DEBUG_LATCH = !DEBUG_LATCH;
+                }
+                if unsafe { DEBUG_LATCH } {
                     0x80
                 } else {
                     0x0
@@ -771,9 +780,12 @@ impl CPU {
             0x4211 => 0, // TODO: IRQ stuff
             // TODO: Remove debugging value
             0x4212 => {
-                self.debug_latch = !self.debug_latch;
-                if !self.debug_latch {
-                    0xC0
+                static mut DEBUG_LATCH: bool = false;
+                unsafe {
+                    DEBUG_LATCH = !DEBUG_LATCH;
+                }
+                if unsafe { DEBUG_LATCH } {
+                    0x80
                 } else {
                     0x0
                 }
@@ -1054,7 +1066,9 @@ impl CPU {
         #[coroutine]
         move || {
             let lo = yield_all!(CPU::read_u8(cpu.clone(), addr)) as u16;
-            let hi = yield_all!(CPU::read_u8(cpu.clone(), addr + 1u32)) as u16;
+            // let hi = yield_all!(CPU::read_u8(cpu.clone(), addr + 1u32)) as u16;
+            // TODO: DO NOT SUBMIT: Not sure...
+            let hi = yield_all!(CPU::read_u8(cpu.clone(), addr.wrapping_add_lo16(1))) as u16;
             (hi << 8) | lo
         }
     }
@@ -1074,6 +1088,10 @@ impl CPU {
             let mut data = yield_all!(CPU::read_u8(cpu.clone(), pointer.addr)) as u16;
             if pointer.long {
                 data |= (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr + 1u32)) as u16) << 8;
+                // TODO: DO NOT SUBMIT: Not sure...
+                // data |= (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr.wrapping_add_lo16(1)))
+                //     as u16)
+                //     << 8;
             }
             data
         }
@@ -1119,6 +1137,7 @@ impl CPU {
         }
     }
 
+    // DO NOT SUBMIT: Stuff like this can OBVIOUSLY be modified to take &self
     fn bank_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
         u24((cpu.borrow().reg.b as u32) << 16) | addr
     }
@@ -1259,7 +1278,8 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24(((fetch!(cpu) as u32) << 8) | addr_lo)
+                // TODO: NOTE: This is a critical bug fix
+                CPU::bank_addr(cpu.clone(), u24(((fetch!(cpu) as u32) << 8) | addr_lo))
             };
             Pointer { addr, long }
         }
@@ -1270,7 +1290,11 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_x() as u32)
+                // TODO: NOTE: This is a critical bug fix
+                CPU::bank_addr(
+                    cpu.clone(),
+                    u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_x() as u32),
+                )
             };
             Pointer { addr, long }
         }
@@ -1281,7 +1305,11 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32)
+                // TODO: NOTE: This is a critical bug fix
+                CPU::bank_addr(
+                    cpu.clone(),
+                    u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32),
+                )
             };
             Pointer { addr, long }
         }
@@ -1379,8 +1407,11 @@ impl CPU {
             let indirect_addr = u24(fetch!(cpu) as u32);
             let addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
+                // TODO: DO NOT SUBMIT: Maybe change this?
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
-                u24((hi << 8) | lo)
+                // u24((hi << 8) | lo)
+                // TODO: NOTE: This is a critical bug fix
+                CPU::bank_addr(cpu.clone(), u24((hi << 8) | lo))
             };
             Pointer { addr, long }
         }
@@ -1393,9 +1424,13 @@ impl CPU {
             let indirect_addr = u24(fetch!(cpu) as u32 + offset);
             let bank_addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
-                let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
+                let hi = yield_all!(CPU::read_direct_u8(
+                    cpu.clone(),
+                    indirect_addr.wrapping_add_lo16(1)
+                )) as u32;
                 u24((hi << 8) | lo)
             };
+            // TODO: NOTE: This is a critical bug fix
             let addr = CPU::bank_addr(cpu.clone(), bank_addr);
             Pointer { addr, long }
         }
@@ -1464,9 +1499,9 @@ impl CPU {
         move || {
             let stack_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
             let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), stack_addr)) as u32;
-            let bank_addr = ((yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32)
-                << 8)
-                | addr_lo + cpu.borrow().reg.get_y() as u32;
+            // TODO: DO NOT SUBMIT: Not sure
+            let addr_hi = yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32;
+            let bank_addr = ((addr_hi << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32;
             let addr = CPU::bank_addr(cpu.clone(), u24(bank_addr));
             Pointer { addr, long }
         }
@@ -2210,8 +2245,12 @@ impl CPU {
     fn bra<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let source_pc = cpu.borrow().reg.pc + 1u16;
-            let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
+            // let source_pc = cpu.borrow().reg.pc + 1u16;
+            // let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
+            // TODO: NOTE: This is a critical bug fix
+            let source_pc = cpu.borrow().reg.pc;
+            let offset = fetch!(cpu) as i8 as i16;
+            let dest_pc = source_pc.wrapping_add_lo16(offset + 1);
             cpu.borrow_mut().reg.pc = dest_pc;
             yield_all!(CPU::idle(cpu.clone()));
             // TODO: Is this right? Maybe only for emulation mode...
@@ -2226,6 +2265,10 @@ impl CPU {
         move || {
             let source_pc = cpu.borrow().reg.pc + 2u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
+            // TODO: NOTE: This is a critical bug fix
+            // let source_pc = cpu.borrow().reg.pc;
+            // let offset = fetch_u16!(cpu) as i16;
+            // let dest_pc = source_pc.wrapping_add_lo16(offset + 2);
             cpu.borrow_mut().reg.pc = dest_pc;
             yield_all!(CPU::idle(cpu.clone()));
             // TODO: Maybe some bank cross cycles? Maybe only for emulation mode...
@@ -2309,7 +2352,8 @@ impl CPU {
     fn stp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            cpu.borrow_mut().stopped = true;
+            // cpu.borrow_mut().stopped = true;
+            cpu.borrow_mut().progress_pc(-1);
         }
     }
 

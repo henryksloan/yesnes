@@ -333,7 +333,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($smp_rc, $instr_f, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc - 1),
+            _ => {} // panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc - 1),
         }
     };
 }
@@ -591,6 +591,7 @@ impl SMP {
                 (set_flag_p; 0x40=>implied)
                 (set_flag_i; 0xA0=>implied)
                 (clear_flag_i; 0xC0=>implied)
+                (nop; 0x00=>implied)
             );
 
             yield (YieldReason::FinishedInstruction(Device::SMP), 0);
@@ -731,7 +732,7 @@ impl SMP {
                     // unsafe {
                     //     NOW_BREAK = true;
                     // }
-                    yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
+                    // yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
                 }
             }
             // All writes always go to ram, even if they also go to e.g. IO
@@ -1413,12 +1414,6 @@ impl SMP {
         #[coroutine]
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
-            log::info!(
-                "and1 {:#06X} {} (invert: {})",
-                addr_bit.addr,
-                addr_bit.bit,
-                addr_bit.invert
-            );
             smp.borrow_mut().reg.psw.c &= (data >> addr_bit.bit) & 1 == !addr_bit.invert as u8;
         }
     }
@@ -1587,5 +1582,10 @@ impl SMP {
             let data = yield_all!(SMP::stack_pop_u8(smp.clone()));
             smp.borrow_mut().reg.psw.set(data);
         }
+    }
+
+    fn nop<'a>(_: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {}
     }
 }
