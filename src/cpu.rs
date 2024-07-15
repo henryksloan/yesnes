@@ -2078,7 +2078,7 @@ impl CPU {
     fn jsr<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let return_pc = cpu.borrow().reg.pc.lo16();
+            let return_pc = cpu.borrow().reg.pc.lo16().wrapping_sub(1);
             yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
             cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
             cpu.borrow_mut().reg.pc |= pointer.addr.lo16();
@@ -2089,7 +2089,7 @@ impl CPU {
         #[coroutine]
         move || {
             let return_pb = cpu.borrow().reg.pc.bank();
-            let return_pc = cpu.borrow().reg.pc.lo16();
+            let return_pc = cpu.borrow().reg.pc.lo16().wrapping_sub(1);
             yield_all!(CPU::stack_push_u8(cpu.clone(), return_pb));
             yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
             cpu.borrow_mut().reg.pc = pointer.addr;
@@ -2287,7 +2287,7 @@ impl CPU {
         move || {
             cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
             let addr = yield_all!(CPU::stack_pull_u16(cpu.clone()));
-            cpu.borrow_mut().reg.pc |= addr;
+            cpu.borrow_mut().reg.pc |= addr.wrapping_add(1);
             if long {
                 cpu.borrow_mut().reg.pc &= 0x00_FFFFu32;
                 let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;

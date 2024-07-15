@@ -597,6 +597,8 @@ impl SMP {
                 (set_flag_i; 0xA0=>implied)
                 (clear_flag_i; 0xC0=>implied)
                 (nop; 0x00=>implied)
+                // TODO: DO NOT SUBMIT: Poor STP implementation
+                (stp; 0xFF=>implied)
             );
 
             yield (YieldReason::FinishedInstruction(Device::SMP), 0);
@@ -1651,6 +1653,14 @@ impl SMP {
         move || {
             let data = yield_all!(SMP::stack_pop_u8(smp.clone()));
             smp.borrow_mut().reg.psw.set(data);
+        }
+    }
+
+    fn stp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            let old_pc = smp.borrow().reg.pc;
+            smp.borrow_mut().reg.pc = (old_pc & 0xFF00) | (old_pc.wrapping_sub(1) & 0xFF);
         }
     }
 
