@@ -142,7 +142,9 @@ impl Registers {
 
     // Sets the P register.
     pub fn set_p(&mut self, val: u8) {
+        // TODO: DO NOT SUBMIT: Do we need to fiddle with M and X after this?
         self.p.set(val);
+        // TODO: DO NOT SUBMIT: Commenting this in two places, but not sure
         if !self.index_reg_16_bits() {
             self.x &= 0xFF;
             self.y &= 0xFF;
@@ -156,6 +158,11 @@ impl Registers {
         if !self.index_reg_16_bits() {
             self.x &= 0xFF;
             self.y &= 0xFF;
+        }
+        // TODO: I think there is more nuance to how M and X behave across E-mode transitions
+        if self.p.e {
+            self.p.m = true;
+            self.p.x_or_b = true;
         }
     }
 }

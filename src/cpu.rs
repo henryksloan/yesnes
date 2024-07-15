@@ -526,6 +526,7 @@ impl CPU {
                 (ror, MFlag; 0x66=>direct, 0x6E=>absolute, 0x76=>direct_x,
                  0x7E=>absolute_x)
                 (nop, NoFlag; 0xEA=>implied)
+                (wdm, NoFlag; 0x42=>immediate)
                 (push_a, NoFlag; 0x48=>implied)
                 (push_b, NoFlag; 0x8B=>implied)
                 (push_d, NoFlag; 0x0B=>implied)
@@ -1649,6 +1650,11 @@ impl CPU {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let p = cpu.borrow().reg.get_p();
             cpu.borrow_mut().reg.set_p(p & !data as u8);
+            // TODO: I think there is more nuance to how M and X behave across E-mode transitions
+            if cpu.borrow().reg.p.e {
+                cpu.borrow_mut().reg.p.m = true;
+                cpu.borrow_mut().reg.p.x_or_b = true;
+            }
         }
     }
 
@@ -1678,7 +1684,6 @@ impl CPU {
     fn xce<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             cpu.borrow_mut().reg.swap_carry_emulation_flags();
         }
     }
@@ -1974,8 +1979,8 @@ impl CPU {
             };
 
             // TODO: Really need to check the 8- and 16-bit flag logic
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let data = {
-                let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
                 if subtract {
                     if n_bits == 8 {
                         !(mem_val as i8 as i16) as u16
@@ -1998,7 +2003,15 @@ impl CPU {
                 bin_to_bcd(temp % bcd_max)
             } else {
                 let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
-                cpu.borrow_mut().reg.p.c = temp > ((1 << n_bits) - 1);
+                // TODO: DO NOT SUBMIT: This is a bandaid fix for the carry bug caused by the signedness hacking
+                cpu.borrow_mut().reg.p.c = if subtract {
+                    let mask = (1u32 << n_bits) - 1;
+                    let temp2 = !(mem_val as u32) & mask;
+                    let res = cpu.borrow().reg.get_a() as u32 + temp2 + carry as u32;
+                    res > mask
+                } else {
+                    temp > ((1 << n_bits) - 1)
+                };
                 temp as u16
             };
 
@@ -2346,9 +2359,9 @@ impl CPU {
     fn push_relative_addr<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            // let source_pc = cpu.borrow().reg.pc + 2u16;
-            // TODO: NOTE: This is a critical bug fix
-            let source_pc = cpu.borrow().reg.pc + 3u16;
+            let source_pc = cpu.borrow().reg.pc + 2u16;
+            // TODO: DO NOT SUBMIT: I had changed this to three, but now that I fixed the other ret/jsr things, I think it's right with 2
+            // let source_pc = cpu.borrow().reg.pc + 3u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
             yield_all!(CPU::stack_push_u16(cpu.clone(), dest_pc.lo16()));
         }
@@ -2364,9 +2377,13 @@ impl CPU {
 
     fn nop<'a>(_: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
-        move || {
-            dummy_yield!();
-        }
+        move || {}
+    }
+
+    // WDM is "Reserved 1or Future Expansion"; it does nothing, but takes one operand
+    fn wdm<'a>(_: Rc<RefCell<CPU>>, _: Pointer) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {}
     }
 
     pull_instrs!();
