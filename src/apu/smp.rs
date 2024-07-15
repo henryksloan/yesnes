@@ -201,7 +201,6 @@ macro_rules! flag_instrs {
         flag_instrs!(p);
         flag_instrs!(c);
         flag_instrs!(i);
-        flag_instrs!(v, clear);
     };
 }
 
@@ -554,7 +553,7 @@ impl SMP {
                 (clear_flag_c; 0x60=>implied)
                 (set_flag_c; 0x80=>implied)
                 (flip_flag_c; 0xED=>implied)
-                (clear_flag_v; 0xE0=>implied)
+                (clear_flag_vh; 0xE0=>implied)
                 (branch_n_clear; 0x10=>immediate)
                 (branch_n_set; 0x30=>immediate)
                 (branch_v_clear; 0x50=>immediate)
@@ -771,6 +770,23 @@ impl SMP {
         move || {
             yield_all!(SMP::write_u8(smp.clone(), addr, data as u8));
             yield_all!(SMP::write_u8(smp.clone(), addr + 1, (data >> 8) as u8));
+        }
+    }
+
+    // DO NOT SUBMIT: There might be a nicer way to do this throughout... this is just for ADDW, etc.
+    fn write_u16_wrapping<'a>(
+        smp: Rc<RefCell<SMP>>,
+        addr: u16,
+        data: u16,
+    ) -> impl Yieldable<()> + 'a {
+        #[coroutine]
+        move || {
+            yield_all!(SMP::write_u8(smp.clone(), addr, data as u8));
+            yield_all!(SMP::write_u8(
+                smp.clone(),
+                (addr & 0xFF00) + ((addr + 1) & 0xFF),
+                (data >> 8) as u8
+            ));
         }
     }
 
@@ -1066,7 +1082,7 @@ impl SMP {
     fn movw_mem_to_ya<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             smp.borrow_mut().reg.set_ya(data);
             // TODO: Should this be bit15 or bit7
             smp.borrow_mut().reg.psw.n = (data >> 15) == 1;
@@ -1078,7 +1094,7 @@ impl SMP {
         #[coroutine]
         move || {
             yield_all!(SMP::read_u8(smp.clone(), addr)); // Dummy read
-            yield_all!(SMP::write_u16(
+            yield_all!(SMP::write_u16_wrapping(
                 smp.clone(),
                 addr,
                 smp.borrow_mut().reg.get_ya()
@@ -1121,7 +1137,7 @@ impl SMP {
         // smp.borrow_mut().reg.psw.z = src_data == dest_data;
         // TODO: NOTE: This is a critical bug fix
         let diff: i8 = (dest_data as i8).wrapping_sub(src_data as i8);
-        smp.borrow_mut().reg.psw.c = diff >= 0;
+        smp.borrow_mut().reg.psw.c = (dest_data as i16 - src_data as i16) >= 0;
         smp.borrow_mut().reg.psw.n = (diff as u8 & 0x80) != 0;
         smp.borrow_mut().reg.psw.z = src_data == dest_data;
     }
@@ -1318,7 +1334,7 @@ impl SMP {
             let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let ya = smp.borrow().reg.get_ya();
             smp.borrow_mut().reg.psw.c = ya >= data;
-            smp.borrow_mut().reg.psw.n = data > ya;
+            smp.borrow_mut().reg.psw.n = ya.wrapping_sub(data) & 0x8000 != 0;
             smp.borrow_mut().reg.psw.z = ya == data;
         }
     }
@@ -1330,7 +1346,7 @@ impl SMP {
             let result = data.wrapping_add(1);
             smp.borrow_mut().reg.psw.n = (result >> 15) == 1;
             smp.borrow_mut().reg.psw.z = result == 0;
-            yield_all!(SMP::write_u16(smp.clone(), addr, result));
+            yield_all!(SMP::write_u16_wrapping(smp.clone(), addr, result));
         }
     }
 
@@ -1341,7 +1357,7 @@ impl SMP {
             let result = data.wrapping_sub(1);
             smp.borrow_mut().reg.psw.n = (result >> 15) == 1;
             smp.borrow_mut().reg.psw.z = result == 0;
-            yield_all!(SMP::write_u16(smp.clone(), addr, result));
+            yield_all!(SMP::write_u16_wrapping(smp.clone(), addr, result));
         }
     }
 
@@ -1605,6 +1621,14 @@ impl SMP {
 
     // Flag instructions
     flag_instrs!();
+
+    fn clear_flag_vh<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            smp.borrow_mut().reg.psw.v = false;
+            smp.borrow_mut().reg.psw.h = false;
+        }
+    }
 
     fn flip_flag_c<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
