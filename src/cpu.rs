@@ -780,15 +780,11 @@ impl CPU {
             0x4211 => 0, // TODO: IRQ stuff
             // TODO: Remove debugging value
             0x4212 => {
-                static mut DEBUG_LATCH: bool = false;
+                static mut DEBUG_LATCH: u8 = 0;
                 unsafe {
-                    DEBUG_LATCH = !DEBUG_LATCH;
+                    DEBUG_LATCH = (DEBUG_LATCH + 1) % 4;
                 }
-                if unsafe { DEBUG_LATCH } {
-                    0x80
-                } else {
-                    0x0
-                }
+                unsafe { DEBUG_LATCH << 6 }
             } // 0xC0,
             0x4218..=0x421F => {
                 let reg_off = addr.lo16() as usize - 0x4218;

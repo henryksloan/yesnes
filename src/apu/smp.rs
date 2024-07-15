@@ -716,6 +716,19 @@ impl SMP {
         }
     }
 
+    // DO NOT SUBMIT: There might be a nicer way to do this throughout... this is just for ADDW, etc.
+    fn read_u16_wrapping<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
+        move || {
+            let lo = yield_all!(SMP::read_u8(smp.clone(), addr)) as u16;
+            let hi = yield_all!(SMP::read_u8(
+                smp.clone(),
+                (addr & 0xFF00) + ((addr + 1) & 0xFF)
+            )) as u16;
+            (hi << 8) | lo
+        }
+    }
+
     fn write_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u8) -> impl Yieldable<()> + 'a {
         #[coroutine]
         move || {
@@ -1257,8 +1270,9 @@ impl SMP {
     fn addw_algorithm(smp: Rc<RefCell<SMP>>, data: u16) -> u16 {
         let old_ya = smp.borrow().reg.get_ya();
         let sum = {
-            let temp = old_ya as i32 + data as i32;
-            smp.borrow_mut().reg.psw.c = temp > 0xFFFF;
+            let temp = old_ya as i32 + data as i16 as i32;
+            // TODO: NOTE: This is a critical bug fix
+            smp.borrow_mut().reg.psw.c = (old_ya as u32 + data as u32) > 0xFFFF;
             // For wide arithmetic, half-carry is carry from bit11 to bit12
             smp.borrow_mut().reg.psw.h = ((old_ya & 0xFFF) + (data & 0xFFF)) > 0xFFF;
             // TODO: Is N based on bit15 or bit7 for these 16-bit instructions?
@@ -1274,7 +1288,8 @@ impl SMP {
     fn addw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            // TODO: NOTE: This is a critical bug fix
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let result = SMP::addw_algorithm(smp.clone(), data);
             smp.borrow_mut().reg.set_ya(result);
         }
@@ -1284,7 +1299,7 @@ impl SMP {
         #[coroutine]
         move || {
             // TODO: This sets V and H incorrectly
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let data_2s_complement = ((data as i16).wrapping_neg()) as u16;
             let result = SMP::addw_algorithm(smp.clone(), data_2s_complement);
             smp.borrow_mut().reg.set_ya(result);
@@ -1294,7 +1309,7 @@ impl SMP {
     fn cmpw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let ya = smp.borrow().reg.get_ya();
             smp.borrow_mut().reg.psw.c = ya >= data;
             smp.borrow_mut().reg.psw.n = data > ya;
@@ -1305,7 +1320,7 @@ impl SMP {
     fn incw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let result = data.wrapping_add(1);
             smp.borrow_mut().reg.psw.n = (result >> 15) == 1;
             smp.borrow_mut().reg.psw.z = result == 0;
@@ -1316,7 +1331,7 @@ impl SMP {
     fn decw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let result = data.wrapping_sub(1);
             smp.borrow_mut().reg.psw.n = (result >> 15) == 1;
             smp.borrow_mut().reg.psw.z = result == 0;
