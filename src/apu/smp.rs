@@ -742,7 +742,7 @@ impl SMP {
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
             if addr == 0x0001 {
-                println!("SMP 0001 <- {:02X}", data);
+                // println!("SMP 0001 <- {:02X}", data);
                 // yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
                 static mut NOW_BREAK: bool = false;
                 if unsafe { NOW_BREAK } {

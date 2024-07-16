@@ -1142,9 +1142,12 @@ impl CPU {
         // TODO: Does 0x100 ever get used, namely in emulation mode?
         #[coroutine]
         move || {
-            let sp = cpu.borrow().reg.sp;
-            cpu.borrow_mut().reg.sp = sp.wrapping_add(1);
-            let val = yield_all!(CPU::read_u8(cpu.clone(), u24(cpu.borrow().reg.sp as u32)));
+            let sp = cpu.borrow().reg.get_sp();
+            cpu.borrow_mut().reg.set_sp(sp.wrapping_add(1));
+            let val = yield_all!(CPU::read_u8(
+                cpu.clone(),
+                u24(cpu.borrow().reg.get_sp() as u32)
+            ));
             val
         }
     }
@@ -1188,11 +1191,11 @@ impl CPU {
         move || {
             yield_all!(CPU::write_u8(
                 cpu.clone(),
-                u24(cpu.borrow().reg.sp as u32),
+                u24(cpu.borrow().reg.get_sp() as u32),
                 data
             ));
-            let sp = cpu.borrow().reg.sp;
-            cpu.borrow_mut().reg.sp = sp.wrapping_sub(1);
+            let sp = cpu.borrow().reg.get_sp();
+            cpu.borrow_mut().reg.set_sp(sp.wrapping_sub(1));
         }
     }
 
@@ -1481,7 +1484,7 @@ impl CPU {
     fn stack_relative<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         #[coroutine]
         move || {
-            let bank_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
+            let bank_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_sp() as u32);
             let addr = CPU::bank_addr(cpu.clone(), bank_addr);
             Pointer { addr, long }
         }
@@ -1493,7 +1496,7 @@ impl CPU {
     ) -> impl Yieldable<Pointer> + 'a {
         #[coroutine]
         move || {
-            let stack_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.sp as u32);
+            let stack_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_sp() as u32);
             let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), stack_addr)) as u32;
             // TODO: DO NOT SUBMIT: Not sure
             let addr_hi = yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32;
@@ -1763,11 +1766,14 @@ impl CPU {
         move || {
             yield_all!(CPU::idle(cpu.clone()));
             let a = cpu.borrow().reg.a;
-            if cpu.borrow().reg.p.e {
-                cpu.borrow_mut().reg.sp = (1 << 8) | (a & 0xFF);
-            } else {
-                cpu.borrow_mut().reg.sp = a;
-            }
+            cpu.borrow_mut().reg.set_sp(a);
+            // TODO: DO NOT SUBMIT: Not sure
+            // let a = cpu.borrow().reg.get_a();
+            // if cpu.borrow().reg.p.e {
+            //     cpu.borrow_mut().reg.set_sp((1 << 8) | (a & 0xFF));
+            // } else {
+            //     cpu.borrow_mut().reg.set_sp(a);
+            // }
         }
     }
 
@@ -1775,12 +1781,16 @@ impl CPU {
         #[coroutine]
         move || {
             yield_all!(CPU::idle(cpu.clone()));
-            let x = cpu.borrow().reg.x;
+            // let x = cpu.borrow().reg.x;
+            // TODO: DO NOT SUBMIT: Not sure
+            let x = cpu.borrow().reg.get_x();
             if cpu.borrow().reg.p.e {
-                cpu.borrow_mut().reg.sp &= 0xFF00;
-                cpu.borrow_mut().reg.sp |= x & 0xFF;
+                // cpu.borrow_mut().reg.sp &= 0xFF00;
+                // cpu.borrow_mut().reg.sp |= x & 0xFF;
+                // TODO: DO NOT SUBMIT: Not sure
+                cpu.borrow_mut().reg.set_sp((1 << 8) | (x & 0xFF));
             } else {
-                cpu.borrow_mut().reg.sp = x;
+                cpu.borrow_mut().reg.set_sp(x);
             }
         }
     }
@@ -1994,19 +2004,32 @@ impl CPU {
 
             let carry = cpu.borrow().reg.p.c as u16;
             let result = if cpu.borrow().reg.p.d {
-                let temp = bcd_to_bin(cpu.borrow().reg.get_a())
-                    .wrapping_add(bcd_to_bin(data))
-                    .wrapping_add(carry as u16);
                 let bcd_max = if n_bits == 8 { 100 } else { 10000 };
+                let bcd_a = bcd_to_bin(cpu.borrow().reg.get_a()) as i32;
+                let temp = if subtract {
+                    // bcd_a - (bcd_to_bin(mem_val) as i32 + 1) + carry as i32
+                    bcd_a + ((bcd_max - bcd_to_bin(mem_val) as i32) - 1) + carry as i32
+                } else {
+                    bcd_a + bcd_to_bin(mem_val) as i32 + carry as i32
+                };
+                // cpu.borrow_mut().reg.p.c = if subtract { temp < 0 } else { temp >= bcd_max };
                 cpu.borrow_mut().reg.p.c = temp >= bcd_max;
-                // TODO: This sets V incorrectly; V seems to depend on the weird implementation of BCD adjustment
-                bin_to_bcd(temp % bcd_max)
+                bin_to_bcd((temp % bcd_max).abs() as u16)
+
+                // cpu.borrow_mut().reg.p.c = if subtract {
+                //     let temp2 = bcd_data % bcd_max;
+                //     let res = cpu.borrow().reg.get_a() as u32 + temp2 as u32 + carry as u32;
+                //     res >= bcd_max as u32
+                // } else {
+                //     temp >= bcd_max
+                // };
             } else {
                 let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
                 // TODO: DO NOT SUBMIT: This is a bandaid fix for the carry bug caused by the signedness hacking
                 cpu.borrow_mut().reg.p.c = if subtract {
                     let mask = (1u32 << n_bits) - 1;
                     let temp2 = !(mem_val as u32) & mask;
+                    // TODO: DO NOT SUBMIT: Wrapping? Here and throughout
                     let res = cpu.borrow().reg.get_a() as u32 + temp2 + carry as u32;
                     res > mask
                 } else {
@@ -2015,6 +2038,7 @@ impl CPU {
                 temp as u16
             };
 
+            // TODO: This doesn't work for decimal mode
             let overflow =
                 ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & (1 << (n_bits - 1))) != 0;
             cpu.borrow_mut().reg.p.v = overflow;
