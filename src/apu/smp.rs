@@ -1409,6 +1409,9 @@ impl SMP {
         move || {
             dummy_yield!();
             // Algorithm from https://snesdev.mesen.ca/wiki/index.php?title=SPC700:
+            // "H is odd, it seems to get set based on X&$F<=Y&$F"
+            let h_flag = (smp.borrow().reg.x & 0xF) <= (smp.borrow().reg.y & 0xF);
+            smp.borrow_mut().reg.psw.h = h_flag;
             let mut yva = smp.borrow().reg.get_ya() as u32;
             let x = (smp.borrow().reg.x as u32) << 9;
             for _ in 0..9 {
@@ -1424,13 +1427,10 @@ impl SMP {
             let new_a = yva as u8;
             smp.borrow_mut().reg.y = new_y;
             smp.borrow_mut().reg.a = new_a;
-            // "ZN are set based on A. V is set if YA/X>$FF (so the result won't fit in A).
-            //  H is odd, it seems to get set based on X&$F<=Y&$F"
+            // "ZN are set based on A. V is set if YA/X>$FF (so the result won't fit in A)."
             smp.borrow_mut().reg.psw.v = (yva >> 8) & 1 == 1;
             smp.borrow_mut().reg.psw.n = (new_a >> 7) == 1;
             smp.borrow_mut().reg.psw.z = new_a == 0;
-            let reg_x = smp.borrow().reg.x;
-            smp.borrow_mut().reg.psw.h = (reg_x & 0xF) <= (new_y & 0xF);
         }
     }
 
