@@ -502,6 +502,8 @@ impl SMP {
                  0xB6=>absolute_y, 0xB7=>indirect_indexed, 0xA7=>indexed_indirect)
                 (sbc_mem_to_mem; 0xA9=>direct_to_direct,
                  0xB8=>immediate_to_direct, 0xB9=>indirect_to_indirect)
+                (daa; 0xDF=>implied)
+                (das; 0xBE=>implied)
                 (xcn; 0x9F=>implied)
                 (tclr1; 0x4E=>absolute)
                 (tset1; 0x0E=>absolute)
@@ -1207,12 +1209,47 @@ impl SMP {
 
     // Special ALU Operations
 
+    fn daa<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            let mut a = smp.borrow().reg.a;
+            if smp.borrow().reg.psw.c || smp.borrow().reg.a > 0x99 {
+                a = a.wrapping_add(0x60);
+                smp.borrow_mut().reg.psw.c = true;
+            }
+            if smp.borrow().reg.psw.h || a & 0xF > 0x9 {
+                a = a.wrapping_add(0x6);
+            }
+            smp.borrow_mut().reg.a = a;
+            smp.borrow_mut().reg.psw.n = a >> 7 == 1;
+            smp.borrow_mut().reg.psw.z = a == 0;
+        }
+    }
+
+    fn das<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            let mut a = smp.borrow().reg.a;
+            if !smp.borrow().reg.psw.c || smp.borrow().reg.a > 0x99 {
+                a = a.wrapping_sub(0x60);
+                smp.borrow_mut().reg.psw.c = false;
+            }
+            if !smp.borrow().reg.psw.h || a & 0xF > 0x9 {
+                a = a.wrapping_sub(0x6);
+            }
+            smp.borrow_mut().reg.a = a;
+            smp.borrow_mut().reg.psw.n = a >> 7 == 1;
+            smp.borrow_mut().reg.psw.z = a == 0;
+        }
+    }
+
     fn tclr1<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
             let a = smp.borrow().reg.a;
             let data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            smp.borrow_mut().reg.psw.n = data > a;
+            let diff: i8 = (a as i8).wrapping_sub(data as i8);
+            smp.borrow_mut().reg.psw.n = (diff as u8 & 0x80) != 0;
             smp.borrow_mut().reg.psw.z = data == a;
             yield_all!(SMP::write_u8(smp.clone(), addr, data & !a));
         }
@@ -1223,7 +1260,8 @@ impl SMP {
         move || {
             let a = smp.borrow().reg.a;
             let data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            smp.borrow_mut().reg.psw.n = data > a;
+            let diff: i8 = (a as i8).wrapping_sub(data as i8);
+            smp.borrow_mut().reg.psw.n = (diff as u8 & 0x80) != 0;
             smp.borrow_mut().reg.psw.z = data == a;
             yield_all!(SMP::write_u8(smp.clone(), addr, data | a));
         }
@@ -1234,7 +1272,10 @@ impl SMP {
         move || {
             dummy_yield!();
             let a = smp.borrow().reg.a;
-            smp.borrow_mut().reg.a = (a >> 4) | (a << 4);
+            let result = (a >> 4) | (a << 4);
+            smp.borrow_mut().reg.a = result;
+            smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
+            smp.borrow_mut().reg.psw.z = result == 0;
         }
     }
 
@@ -1300,7 +1341,7 @@ impl SMP {
             // For wide arithmetic, half-carry is carry from bit11 to bit12
             smp.borrow_mut().reg.psw.h = ((old_ya & 0xFFF) + (data & 0xFFF)) > 0xFFF;
             // TODO: Is N based on bit15 or bit7 for these 16-bit instructions?
-            smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
+            smp.borrow_mut().reg.psw.n = (temp >> 15) & 1 == 1;
             smp.borrow_mut().reg.psw.z = (temp & 0xFFFF) == 0;
             temp as u16
         };
