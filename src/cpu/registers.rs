@@ -119,7 +119,7 @@ impl Registers {
         if self.stack_pointer_16_bits() {
             self.sp
         } else {
-            self.sp & 0xFF
+            0x100 | (self.sp & 0xFF)
         }
     }
 

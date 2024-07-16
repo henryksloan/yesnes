@@ -1117,6 +1117,7 @@ impl CPU {
 
     fn direct_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
         if cpu.borrow().reg.p.e && (cpu.borrow().reg.d & 0xFF == 0) {
+            // TODO: In emulation mode, we probably need "read_direct_u16" (and 24) to avoid this from over-wrapping
             u24(cpu.borrow().reg.d.into()) | (addr & 0xFFu8)
         } else {
             (u24(cpu.borrow().reg.d.into()) + addr) & 0xFFFFu32
