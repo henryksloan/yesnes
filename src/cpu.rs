@@ -970,6 +970,8 @@ impl CPU {
             let region_cycles = cpu.borrow().region_cycles(addr);
             // yield_all!(CPU::step(cpu.clone(), region_cycles - 4));
             let n_clocks = region_cycles - 4;
+            // TODO: This is literally copied from step() to fix a huge performance bug. Inlining doesn't seem to achieve that,
+            // but it would be great to root-cause and fix the performance issue more cleanly (and perhaps in other places like write()).
             let (aligned_clocks, poll_offset) = {
                 let mut cpu = cpu.borrow_mut();
                 cpu.ticks_run += n_clocks;
