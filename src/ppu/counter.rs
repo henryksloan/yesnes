@@ -22,9 +22,9 @@ impl PpuCounter {
     // TODO: When this needs to get interlace, it needs to 1) sync the current thread to the CPU (?)
     // and 2) somehow get the interlace information (from the PPU?).
     pub fn tick<'a>(counter: Rc<RefCell<PpuCounter>>, n_clocks: u16) -> impl Yieldable<bool> + 'a {
+        #[coroutine]
         move || {
             // TODO: Yield to CPU when we decide to latch the interlace
-            dummy_yield!();
             let mut new_scanline = false;
             counter.borrow_mut().h_ticks += n_clocks;
             if counter.borrow().h_ticks >= 1364 {

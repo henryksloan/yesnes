@@ -1,5 +1,6 @@
 use crate::u24::u24;
 
+// TODO: Either find a use for this or remove it
 pub trait Memory {
     fn read(&mut self, addr: u24) -> u8;
     fn peek(&self, addr: u24) -> u8;

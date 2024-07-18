@@ -6,7 +6,7 @@ use crate::u24::u24;
 
 use std::cell::RefCell;
 use std::fs;
-use std::ops::GeneratorState;
+use std::ops::CoroutineState;
 use std::pin::Pin;
 use std::rc::{Rc, Weak};
 
@@ -41,13 +41,8 @@ impl Bus {
             smp,
             wram: vec![0; 0x20000],
             wram_port_addr: u24(0),
-            cart_test: fs::read(
-                &std::env::args()
-                    .collect::<Vec<String>>()
-                    .get(1)
-                    .expect("Expected a rom file"),
-            )
-            .unwrap(),
+            cart_test: Vec::new(),
+            // TODO: Need to consider the amount of SRAM in the cart and mirror. Super Metroid use this for piracy checks.
             sram: vec![0; 0x80000],
             multiplicand_a: 0,
             dividend: 0,
@@ -64,6 +59,10 @@ impl Bus {
         self.wram.fill(0);
         self.multiplicand_a = 0;
         self.product_or_remainder = 0;
+    }
+
+    pub fn load_cart(&mut self, cart_path: &str) {
+        self.cart_test = fs::read(cart_path).unwrap();
     }
 
     // TODO: I have FORGOTTEN why these don't take &self. Look into why.
@@ -127,6 +126,7 @@ impl Bus {
     }
 
     pub fn read_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u8> + 'a {
+        #[coroutine]
         move || {
             // TODO: Some generalized mapper logic
             // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
@@ -178,6 +178,7 @@ impl Bus {
                             .unwrap()
                             .borrow_mut()
                             .io_read(addr),
+                        0x4220..=0x42FF => 0, // TODO: Open bus (?)
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
                                 access_type: AccessType::Read,
@@ -207,6 +208,7 @@ impl Bus {
     }
 
     pub fn read_u16<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let lo = yield_all!(Bus::read_u8(bus.clone(), addr)) as u16;
             let hi = yield_all!(Bus::read_u8(bus.clone(), addr + 1u32)) as u16;
@@ -215,6 +217,7 @@ impl Bus {
     }
 
     pub fn write_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
+        #[coroutine]
         move || {
             // TODO: Some generalized mapper logic
             // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
@@ -234,6 +237,9 @@ impl Bus {
                         0x2140..=0x217F => {
                             yield YieldReason::Sync(Device::SMP);
                             let port = (addr.lo16() - 0x2140) % 4;
+                            // if port == 2 || port == 3 {
+                            //     println!("Write F{} <- {:02X}", port + 4, data);
+                            // }
                             bus.borrow().smp.borrow_mut().io_write(0x2140 + port, data);
                         }
                         0x2180 => {
@@ -281,6 +287,7 @@ impl Bus {
                                 .borrow_mut()
                                 .io_write(addr, data);
                         }
+                        0x4220..=0x42FF => {} // TODO: Open bus (?)
                         _ => {
                             yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
                                 access_type: AccessType::Write,

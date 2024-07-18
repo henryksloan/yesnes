@@ -6,12 +6,13 @@ use crate::cpu::yield_ticks;
 use crate::scheduler::*;
 
 use std::cell::RefCell;
-use std::ops::{Generator, GeneratorState};
+use std::ops::{Coroutine, CoroutineState};
 use std::pin::Pin;
 use std::rc::Rc;
 
 use paste::paste;
 
+pub const BRK_VECTOR: u16 = 0xFFDE;
 pub const RESET_VECTOR: u16 = 0xFFFE;
 
 #[rustfmt::skip]
@@ -29,9 +30,8 @@ const BOOT_ROM: [u8; 64] = [
 macro_rules! transfer_instrs {
     ($from:ident => sp) => {
         paste! {
-            fn [<transfer_ $from _sp>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-                move || {
-                    dummy_yield!();
+            fn [<transfer_ $from _sp>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let data = smp.borrow().reg.$from;
                     smp.borrow_mut().reg.sp = data;
                 }
@@ -40,9 +40,8 @@ macro_rules! transfer_instrs {
     };
     ($from:ident => $to:ident) => {
         paste! {
-            fn [<transfer_ $from _ $to>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-                move || {
-                    dummy_yield!();
+            fn [<transfer_ $from _ $to>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let data = smp.borrow().reg.$from;
                     smp.borrow_mut().reg.$to = data;
                     smp.borrow_mut().reg.psw.n = ((data >> 7) == 1);
@@ -64,8 +63,8 @@ macro_rules! transfer_instrs {
 macro_rules! load_instrs {
     ($reg:ident) => {
         paste! {
-            fn [<load_ $reg>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
-                move || {
+            fn [<load_ $reg>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let data = yield_all!(SMP::read_u8(smp.clone(), addr));
                     smp.borrow_mut().reg.$reg = data;
                     smp.borrow_mut().reg.psw.n = ((data >> 7) == 1);
@@ -84,8 +83,8 @@ macro_rules! load_instrs {
 macro_rules! store_instrs {
     ($reg:ident) => {
         paste! {
-            fn [<store_ $reg>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
-                move || {
+            fn [<store_ $reg>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     // TODO: Some store instructions issue reads
                     let data = smp.borrow_mut().reg.$reg;
                     yield_all!(SMP::write_u8(smp.clone(), addr, data));
@@ -107,8 +106,8 @@ macro_rules! alu_instr {
             fn [<$op _mem_to_mem>]<'a>(
                 smp: Rc<RefCell<SMP>>,
                 addrs: MemToMemAddresses,
-            ) -> impl InstructionGenerator + 'a {
-                move || {
+            ) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let dest_data = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
                     let src_data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
                     let output = SMP::[<$op _algorithm>](smp.clone(), src_data, dest_data);
@@ -116,8 +115,8 @@ macro_rules! alu_instr {
                 }
             }
 
-            fn [<$op _acc>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
-                move || {
+            fn [<$op _acc>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
                     let a = smp.borrow().reg.a;
                     let output = Self::[<$op _algorithm>](smp.clone(), src_data, a);
@@ -132,8 +131,8 @@ macro_rules! alu_instr {
 macro_rules! step_shift_instrs {
     ($op:ident, mem) => {
         paste! {
-            fn [<$op _mem>]<'a>( smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
-                move || {
+            fn [<$op _mem>]<'a>( smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let data = yield_all!(SMP::read_u8(smp.clone(), addr));
                     let output = SMP::[<$op _algorithm>](smp.clone(), data);
                     yield_all!(SMP::write_u8(smp.clone(), addr, output));
@@ -143,9 +142,8 @@ macro_rules! step_shift_instrs {
     };
     ($op:ident, $reg:ident, $reg_fn_name:ident) => {
         paste! {
-            fn [<$op _ $reg_fn_name>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-                move || {
-                    dummy_yield!();
+            fn [<$op _ $reg_fn_name>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let data = smp.borrow().reg.$reg;
                     let output = Self::[<$op _algorithm>](smp.clone(), data);
                     smp.borrow_mut().reg.$reg = output;
@@ -174,9 +172,8 @@ macro_rules! step_shift_instrs {
 macro_rules! flag_instrs {
     ($flag:ident, set) => {
         paste! {
-            fn [<set_flag_ $flag>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-                move || {
-                    dummy_yield!();
+            fn [<set_flag_ $flag>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     smp.borrow_mut().reg.psw.$flag = true;
                 }
             }
@@ -184,9 +181,8 @@ macro_rules! flag_instrs {
     };
     ($flag:ident, clear) => {
         paste! {
-            fn [<clear_flag_ $flag>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-                move || {
-                    dummy_yield!();
+            fn [<clear_flag_ $flag>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     smp.borrow_mut().reg.psw.$flag = false;
                 }
             }
@@ -200,22 +196,21 @@ macro_rules! flag_instrs {
         flag_instrs!(p);
         flag_instrs!(c);
         flag_instrs!(i);
-        flag_instrs!(v, clear);
     };
 }
 
 macro_rules! push_pop_instrs {
     ($reg:ident) => {
         paste! {
-            fn [<push_ $reg>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-                move || {
+            fn [<push_ $reg>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let data = smp.borrow().reg.$reg;
                     yield_all!(SMP::stack_push_u8(smp.clone(), data));
                 }
             }
 
-            fn [<pop_ $reg>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
-                move || {
+            fn [<pop_ $reg>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let data = yield_all!(SMP::stack_pop_u8(smp.clone()));
                     smp.borrow_mut().reg.$reg = data;
                 }
@@ -232,8 +227,8 @@ macro_rules! push_pop_instrs {
 macro_rules! branch_instrs {
     ($flag:ident => $val:expr, $set_clear:ident) => {
         paste! {
-            fn [<branch_ $flag _ $set_clear>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
-                move || {
+            fn [<branch_ $flag _ $set_clear>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let src_pc = smp.borrow().reg.pc;
                     // TODO: Do we even read the offset if we don't branch? Almost certainly, as it's part of decoding
                     let offset = yield_all!(SMP::read_u8(smp.clone(), addr));
@@ -261,8 +256,8 @@ macro_rules! branch_instrs {
 macro_rules! bit_branch_instrs {
     ($bit:expr => $val:expr, $set_clear:ident) => {
         paste! {
-            fn [<branch_bit_ $bit _ $set_clear>]<'a>(smp: Rc<RefCell<SMP>>, addrs: MemToMemAddresses) -> impl InstructionGenerator + 'a {
-                move || {
+            fn [<branch_bit_ $bit _ $set_clear>]<'a>(smp: Rc<RefCell<SMP>>, addrs: MemToMemAddresses) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
                     let offset = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
                     let src_pc = smp.borrow().reg.pc;
@@ -290,8 +285,8 @@ macro_rules! bit_branch_instrs {
 macro_rules! set_clear_bit_instrs {
     ($bit:expr => $val:expr, $set_clear:ident) => {
         paste! {
-            fn [<$set_clear _bit_ $bit>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
-                move || {
+            fn [<$set_clear _bit_ $bit>]<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+                #[coroutine] move || {
                     let data = yield_all!(SMP::read_u8(smp.clone(), addr));
                     let result = (data & !(1 << $bit)) | (($val as u8) << $bit);
                     yield_all!(SMP::write_u8(smp.clone(), addr, result));
@@ -415,7 +410,8 @@ impl SMP {
         smp.borrow_mut().reg.sp = 0xEF;
     }
 
-    pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceGenerator + 'a {
+    pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceCoroutine + 'a {
+        #[coroutine]
         move || loop {
             // if smp.borrow().reg.pc == 0x08C5 {
             //     smp.borrow_mut().debug_log = true;
@@ -501,6 +497,8 @@ impl SMP {
                  0xB6=>absolute_y, 0xB7=>indirect_indexed, 0xA7=>indexed_indirect)
                 (sbc_mem_to_mem; 0xA9=>direct_to_direct,
                  0xB8=>immediate_to_direct, 0xB9=>indirect_to_indirect)
+                (daa; 0xDF=>implied)
+                (das; 0xBE=>implied)
                 (xcn; 0x9F=>implied)
                 (tclr1; 0x4E=>absolute)
                 (tset1; 0x0E=>absolute)
@@ -552,7 +550,7 @@ impl SMP {
                 (clear_flag_c; 0x60=>implied)
                 (set_flag_c; 0x80=>implied)
                 (flip_flag_c; 0xED=>implied)
-                (clear_flag_v; 0xE0=>implied)
+                (clear_flag_vh; 0xE0=>implied)
                 (branch_n_clear; 0x10=>immediate)
                 (branch_n_set; 0x30=>immediate)
                 (branch_v_clear; 0x50=>immediate)
@@ -583,13 +581,20 @@ impl SMP {
                 (bra; 0x2F=>immediate)
                 (jmp; 0x5F=>absolute, 0x1F=>absolute_indexed_indirect)
                 (call; 0x3F=>absolute)
+                (tcall; 0x01=>implied, 0x11=>implied, 0x21=>implied, 0x31=>implied,
+                 0x41=>implied, 0x51=>implied, 0x61=>implied, 0x71=>implied,
+                 0x81=>implied, 0x91=>implied, 0xA1=>implied, 0xB1=>implied,
+                 0xC1=>implied, 0xD1=>implied, 0xE1=>implied, 0xF1=>implied)
                 (pcall; 0x4F=>direct)
                 (ret; 0x6F=>implied)
                 (ret_from_interrupt; 0x7F=>implied)
+                (brk; 0x0F=>implied)
                 (clear_flag_p; 0x20=>implied)
                 (set_flag_p; 0x40=>implied)
                 (set_flag_i; 0xA0=>implied)
                 (clear_flag_i; 0xC0=>implied)
+                (nop; 0x00=>implied)
+                (stp; 0xFF=>implied)
             );
 
             yield (YieldReason::FinishedInstruction(Device::SMP), 0);
@@ -611,12 +616,14 @@ impl SMP {
 
     fn peak_io_reg(&self, addr: u16) -> u8 {
         match addr {
-            0x00F0 => todo!("IO reg read {addr:#06X}"),
+            0x00F0 => 0,
+            // 0x00F0 => todo!("IO reg read {addr:#06X}"),
             0x00F1 => self.io_reg.control.0,
             0x00F2 => self.io_reg.dsp_addr,
             0x00F3 => self.io_reg.dsp_data,
             0x00F4..=0x00F7 => self.io_reg.external_ports[addr as usize - 0x00F4],
-            0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
+            // 0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
+            0x00F8..=0x00F9 => 0,
             0x00FA..=0x00FC => self.io_reg.timer_dividers[addr as usize - 0x00FA],
             0x00FD..=0x00FF => self.io_reg.timers[addr as usize - 0x00FD],
             _ => panic!("Address {:#02X} is not an SMP IO register", addr),
@@ -624,26 +631,30 @@ impl SMP {
     }
 
     fn read_io_reg<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
+        #[coroutine]
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
-            dummy_yield!();
+            // yield YieldReason::Sync(Device::CPU);
             smp.borrow().peak_io_reg(addr)
         }
     }
 
     fn write_io_reg<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u8) -> impl Yieldable<()> + 'a {
+        #[coroutine]
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
-            dummy_yield!();
+            // yield YieldReason::Sync(Device::CPU);
             match addr {
-                0x00F0 => todo!("IO reg write {addr:#06X}"),
+                0x00F0 => {}
+                // 0x00F0 => todo!("IO reg write {addr:#06X}"),
                 0x00F1 => smp.borrow_mut().io_reg.control.0 = data,
                 0x00F2 => smp.borrow_mut().io_reg.dsp_addr = data,
                 0x00F3 => smp.borrow_mut().io_reg.dsp_data = data,
                 0x00F4..=0x00F7 => {
                     smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
                 }
-                0x00F8..=0x00F9 => todo!("IO reg write {addr:#06X}"),
+                // 0x00F8..=0x00F9 => todo!("IO reg write {addr:#06X}"),
+                0x00F8..=0x00F9 => {}
                 0x00FA..=0x00FC => {
                     smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA] = data
                 }
@@ -675,6 +686,7 @@ impl SMP {
     }
 
     fn read_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
+        #[coroutine]
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
@@ -697,6 +709,7 @@ impl SMP {
     }
 
     fn read_u16<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let lo = yield_all!(SMP::read_u8(smp.clone(), addr)) as u16;
             let hi = yield_all!(SMP::read_u8(smp.clone(), addr + 1)) as u16;
@@ -704,11 +717,40 @@ impl SMP {
         }
     }
 
+    // TODO: There might be a nicer way to do this throughout... this is just for ADDW, etc.
+    fn read_u16_wrapping<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
+        move || {
+            let lo = yield_all!(SMP::read_u8(smp.clone(), addr)) as u16;
+            let hi = yield_all!(SMP::read_u8(
+                smp.clone(),
+                (addr & 0xFF00) + ((addr + 1) & 0xFF)
+            )) as u16;
+            (hi << 8) | lo
+        }
+    }
+
     fn write_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u8) -> impl Yieldable<()> + 'a {
+        #[coroutine]
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
+            if addr == 0x0001 {
+                // println!("SMP 0001 <- {:02X}", data);
+                // yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
+                static mut NOW_BREAK: bool = false;
+                if unsafe { NOW_BREAK } {
+                    yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
+                }
+                if data == 0x02 {
+                    // unsafe {
+                    //     NOW_BREAK = true;
+                    // }
+                    // yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
+                }
+            }
             // All writes always go to ram, even if they also go to e.g. IO
+            // println!("APU Write {:#08x} <- {:#04x}", addr, data);
             smp.borrow_mut().ram[addr as usize] = data;
             match addr {
                 0x00F0..=0x00FF => yield_all!(SMP::write_io_reg(smp.clone(), addr, data)),
@@ -719,14 +761,25 @@ impl SMP {
         }
     }
 
-    fn write_u16<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u16) -> impl Yieldable<()> + 'a {
+    // TODO: There might be a nicer way to do this throughout... this is just for ADDW, etc.
+    fn write_u16_wrapping<'a>(
+        smp: Rc<RefCell<SMP>>,
+        addr: u16,
+        data: u16,
+    ) -> impl Yieldable<()> + 'a {
+        #[coroutine]
         move || {
             yield_all!(SMP::write_u8(smp.clone(), addr, data as u8));
-            yield_all!(SMP::write_u8(smp.clone(), addr + 1, (data >> 8) as u8));
+            yield_all!(SMP::write_u8(
+                smp.clone(),
+                (addr & 0xFF00) + ((addr + 1) & 0xFF),
+                (data >> 8) as u8
+            ));
         }
     }
 
     fn stack_push_u8<'a>(smp: Rc<RefCell<SMP>>, data: u8) -> impl Yieldable<()> + 'a {
+        #[coroutine]
         move || {
             let stack_addr = 0x100 + smp.borrow().reg.sp as u16;
             yield_all!(SMP::write_u8(smp.clone(), stack_addr, data));
@@ -736,6 +789,7 @@ impl SMP {
     }
 
     fn stack_pop_u8<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u8> + 'a {
+        #[coroutine]
         move || {
             let new_sp = smp.borrow().reg.sp.wrapping_add(1);
             smp.borrow_mut().reg.sp = new_sp;
@@ -744,7 +798,7 @@ impl SMP {
         }
     }
 
-    pub fn io_peak(&self, addr: u16) -> u8 {
+    pub fn io_peak(&self, _addr: u16) -> u8 {
         // TODO
         0
     }
@@ -766,8 +820,8 @@ impl SMP {
     // Addressing modes:
 
     fn immediate<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
             let addr = smp.borrow().reg.pc;
             // TODO: Need to use wrapping adds for PC increments and most addressing mode adds
             smp.borrow_mut().reg.pc += 1;
@@ -777,6 +831,7 @@ impl SMP {
 
     // TODO: Reduce code duplication across these three
     fn direct<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr = direct_page_base + fetch!(smp) as u16;
@@ -785,6 +840,7 @@ impl SMP {
     }
 
     fn direct_x<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr =
@@ -794,6 +850,7 @@ impl SMP {
     }
 
     fn direct_y<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr =
@@ -804,6 +861,7 @@ impl SMP {
 
     // TODO: Reduce code duplication across these three
     fn absolute<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let addr_lo = fetch!(smp) as u16;
             ((fetch!(smp) as u16) << 8) | addr_lo
@@ -811,6 +869,7 @@ impl SMP {
     }
 
     fn absolute_x<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let addr_lo = fetch!(smp) as u16;
             (((fetch!(smp) as u16) << 8) | addr_lo).wrapping_add(smp.borrow().reg.x as u16)
@@ -818,6 +877,7 @@ impl SMP {
     }
 
     fn absolute_y<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let addr_lo = fetch!(smp) as u16;
             (((fetch!(smp) as u16) << 8) | addr_lo).wrapping_add(smp.borrow().reg.y as u16)
@@ -825,6 +885,7 @@ impl SMP {
     }
 
     fn absolute_indexed_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
             let addr_lo = fetch!(smp) as u16;
             let absolute_addr = ((fetch!(smp) as u16) << 8) | addr_lo;
@@ -834,6 +895,7 @@ impl SMP {
     }
 
     fn absolute_bit<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<AddressBit> + 'a {
+        #[coroutine]
         move || {
             let operand = fetch_u16!(smp) as u16;
             AddressBit {
@@ -845,6 +907,7 @@ impl SMP {
     }
 
     fn absolute_not_bit<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<AddressBit> + 'a {
+        #[coroutine]
         move || {
             let operand = fetch_u16!(smp) as u16;
             AddressBit {
@@ -856,8 +919,8 @@ impl SMP {
     }
 
     fn indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr = direct_page_base + smp.borrow().reg.x as u16;
             direct_addr
@@ -865,8 +928,8 @@ impl SMP {
     }
 
     fn indirect_increment<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let x = smp.borrow().reg.x;
             let direct_addr = direct_page_base + x as u16;
@@ -876,8 +939,9 @@ impl SMP {
     }
 
     fn indirect_indexed<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
+            // TODO: DO NOT SUBMIT: Get rid of unnecessary dummy yields (are any needed with #coroutine?)
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr = fetch!(smp);
             let indirect_addr = {
@@ -896,8 +960,8 @@ impl SMP {
     }
 
     fn indexed_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr =
                 direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16;
@@ -917,6 +981,7 @@ impl SMP {
     }
 
     fn immediate_to_direct<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        #[coroutine]
         move || {
             let src_addr = yield_all!(Self::immediate(smp.clone()));
             let dest_addr = yield_all!(Self::direct(smp.clone()));
@@ -928,6 +993,7 @@ impl SMP {
     }
 
     fn direct_to_direct<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        #[coroutine]
         move || {
             let src_addr = yield_all!(Self::direct(smp.clone()));
             let dest_addr = yield_all!(Self::direct(smp.clone()));
@@ -939,8 +1005,8 @@ impl SMP {
     }
 
     fn indirect_to_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let src_addr = direct_page_base + smp.borrow().reg.y as u16;
             let dest_addr = direct_page_base + smp.borrow().reg.x as u16;
@@ -952,6 +1018,7 @@ impl SMP {
     }
 
     fn direct_and_relative<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        #[coroutine]
         move || {
             let src_addr = yield_all!(Self::direct(smp.clone()));
             let dest_addr = yield_all!(Self::immediate(smp.clone()));
@@ -963,6 +1030,7 @@ impl SMP {
     }
 
     fn direct_x_and_relative<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
+        #[coroutine]
         move || {
             let src_addr = yield_all!(Self::direct_x(smp.clone()));
             let dest_addr = yield_all!(Self::immediate(smp.clone()));
@@ -983,7 +1051,8 @@ impl SMP {
     fn mov_mem_to_mem<'a>(
         smp: Rc<RefCell<SMP>>,
         addrs: MemToMemAddresses,
-    ) -> impl InstructionGenerator + 'a {
+    ) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             // TODO: This *might* issue a read, but maybe only for immediate?
             let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
@@ -991,9 +1060,10 @@ impl SMP {
         }
     }
 
-    fn movw_mem_to_ya<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn movw_mem_to_ya<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             smp.borrow_mut().reg.set_ya(data);
             // TODO: Should this be bit15 or bit7
             smp.borrow_mut().reg.psw.n = (data >> 15) == 1;
@@ -1001,10 +1071,11 @@ impl SMP {
         }
     }
 
-    fn movw_ya_to_mem<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn movw_ya_to_mem<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             yield_all!(SMP::read_u8(smp.clone(), addr)); // Dummy read
-            yield_all!(SMP::write_u16(
+            yield_all!(SMP::write_u16_wrapping(
                 smp.clone(),
                 addr,
                 smp.borrow_mut().reg.get_ya()
@@ -1042,8 +1113,13 @@ impl SMP {
     }
 
     fn cmp_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) {
-        smp.borrow_mut().reg.psw.c = dest_data >= src_data;
-        smp.borrow_mut().reg.psw.n = src_data > dest_data;
+        // smp.borrow_mut().reg.psw.c = dest_data >= src_data;
+        // smp.borrow_mut().reg.psw.n = src_data > dest_data;
+        // smp.borrow_mut().reg.psw.z = src_data == dest_data;
+        // TODO: NOTE: This is a critical bug fix
+        let diff: i8 = (dest_data as i8).wrapping_sub(src_data as i8);
+        smp.borrow_mut().reg.psw.c = (dest_data as i16 - src_data as i16) >= 0;
+        smp.borrow_mut().reg.psw.n = (diff as u8 & 0x80) != 0;
         smp.borrow_mut().reg.psw.z = src_data == dest_data;
     }
 
@@ -1072,7 +1148,8 @@ impl SMP {
     fn cmp_mem_to_mem<'a>(
         smp: Rc<RefCell<SMP>>,
         addrs: MemToMemAddresses,
-    ) -> impl InstructionGenerator + 'a {
+    ) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let dest_data = yield_all!(SMP::read_u8(smp.clone(), addrs.dest_addr));
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
@@ -1080,7 +1157,8 @@ impl SMP {
         }
     }
 
-    fn cmp_acc<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn cmp_acc<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
             let a = smp.borrow().reg.a;
@@ -1088,7 +1166,8 @@ impl SMP {
         }
     }
 
-    fn cmp_x<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn cmp_x<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
             let x = smp.borrow().reg.x;
@@ -1096,7 +1175,8 @@ impl SMP {
         }
     }
 
-    fn cmp_y<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn cmp_y<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let src_data = yield_all!(SMP::read_u8(smp.clone(), addr));
             let y = smp.borrow().reg.y;
@@ -1106,31 +1186,72 @@ impl SMP {
 
     // Special ALU Operations
 
-    fn tclr1<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn daa<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            let mut a = smp.borrow().reg.a;
+            if smp.borrow().reg.psw.c || smp.borrow().reg.a > 0x99 {
+                a = a.wrapping_add(0x60);
+                smp.borrow_mut().reg.psw.c = true;
+            }
+            if smp.borrow().reg.psw.h || a & 0xF > 0x9 {
+                a = a.wrapping_add(0x6);
+            }
+            smp.borrow_mut().reg.a = a;
+            smp.borrow_mut().reg.psw.n = a >> 7 == 1;
+            smp.borrow_mut().reg.psw.z = a == 0;
+        }
+    }
+
+    fn das<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            let mut a = smp.borrow().reg.a;
+            if !smp.borrow().reg.psw.c || smp.borrow().reg.a > 0x99 {
+                a = a.wrapping_sub(0x60);
+                smp.borrow_mut().reg.psw.c = false;
+            }
+            if !smp.borrow().reg.psw.h || a & 0xF > 0x9 {
+                a = a.wrapping_sub(0x6);
+            }
+            smp.borrow_mut().reg.a = a;
+            smp.borrow_mut().reg.psw.n = a >> 7 == 1;
+            smp.borrow_mut().reg.psw.z = a == 0;
+        }
+    }
+
+    fn tclr1<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let a = smp.borrow().reg.a;
             let data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            smp.borrow_mut().reg.psw.n = data > a;
+            let diff: i8 = (a as i8).wrapping_sub(data as i8);
+            smp.borrow_mut().reg.psw.n = (diff as u8 & 0x80) != 0;
             smp.borrow_mut().reg.psw.z = data == a;
             yield_all!(SMP::write_u8(smp.clone(), addr, data & !a));
         }
     }
 
-    fn tset1<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn tset1<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let a = smp.borrow().reg.a;
             let data = yield_all!(SMP::read_u8(smp.clone(), addr));
-            smp.borrow_mut().reg.psw.n = data > a;
+            let diff: i8 = (a as i8).wrapping_sub(data as i8);
+            smp.borrow_mut().reg.psw.n = (diff as u8 & 0x80) != 0;
             smp.borrow_mut().reg.psw.z = data == a;
             yield_all!(SMP::write_u8(smp.clone(), addr, data | a));
         }
     }
 
-    fn xcn<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+    fn xcn<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
             let a = smp.borrow().reg.a;
-            smp.borrow_mut().reg.a = (a >> 4) | (a << 4);
+            let result = (a >> 4) | (a << 4);
+            smp.borrow_mut().reg.a = result;
+            smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
+            smp.borrow_mut().reg.psw.z = result == 0;
         }
     }
 
@@ -1190,12 +1311,13 @@ impl SMP {
     fn addw_algorithm(smp: Rc<RefCell<SMP>>, data: u16) -> u16 {
         let old_ya = smp.borrow().reg.get_ya();
         let sum = {
-            let temp = old_ya as i32 + data as i32;
-            smp.borrow_mut().reg.psw.c = temp > 0xFFFF;
+            let temp = old_ya as i32 + data as i16 as i32;
+            // TODO: NOTE: This is a critical bug fix
+            smp.borrow_mut().reg.psw.c = (old_ya as u32 + data as u32) > 0xFFFF;
             // For wide arithmetic, half-carry is carry from bit11 to bit12
             smp.borrow_mut().reg.psw.h = ((old_ya & 0xFFF) + (data & 0xFFF)) > 0xFFF;
             // TODO: Is N based on bit15 or bit7 for these 16-bit instructions?
-            smp.borrow_mut().reg.psw.n = (temp >> 15) == 1;
+            smp.borrow_mut().reg.psw.n = (temp >> 15) & 1 == 1;
             smp.borrow_mut().reg.psw.z = (temp & 0xFFFF) == 0;
             temp as u16
         };
@@ -1204,58 +1326,67 @@ impl SMP {
         sum
     }
 
-    fn addw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn addw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            // TODO: NOTE: This is a critical bug fix
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let result = SMP::addw_algorithm(smp.clone(), data);
             smp.borrow_mut().reg.set_ya(result);
         }
     }
 
-    fn subw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn subw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             // TODO: This sets V and H incorrectly
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let data_2s_complement = ((data as i16).wrapping_neg()) as u16;
             let result = SMP::addw_algorithm(smp.clone(), data_2s_complement);
             smp.borrow_mut().reg.set_ya(result);
         }
     }
 
-    fn cmpw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn cmpw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let ya = smp.borrow().reg.get_ya();
             smp.borrow_mut().reg.psw.c = ya >= data;
-            smp.borrow_mut().reg.psw.n = data > ya;
+            smp.borrow_mut().reg.psw.n = ya.wrapping_sub(data) & 0x8000 != 0;
             smp.borrow_mut().reg.psw.z = ya == data;
         }
     }
 
-    fn incw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn incw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let result = data.wrapping_add(1);
             smp.borrow_mut().reg.psw.n = (result >> 15) == 1;
             smp.borrow_mut().reg.psw.z = result == 0;
-            yield_all!(SMP::write_u16(smp.clone(), addr, result));
+            yield_all!(SMP::write_u16_wrapping(smp.clone(), addr, result));
         }
     }
 
-    fn decw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn decw<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            let data = yield_all!(SMP::read_u16(smp.clone(), addr));
+            let data = yield_all!(SMP::read_u16_wrapping(smp.clone(), addr));
             let result = data.wrapping_sub(1);
             smp.borrow_mut().reg.psw.n = (result >> 15) == 1;
             smp.borrow_mut().reg.psw.z = result == 0;
-            yield_all!(SMP::write_u16(smp.clone(), addr, result));
+            yield_all!(SMP::write_u16_wrapping(smp.clone(), addr, result));
         }
     }
 
-    fn div<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+    fn div<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
             // Algorithm from https://snesdev.mesen.ca/wiki/index.php?title=SPC700:
+            // "H is odd, it seems to get set based on X&$F<=Y&$F"
+            let h_flag = (smp.borrow().reg.x & 0xF) <= (smp.borrow().reg.y & 0xF);
+            smp.borrow_mut().reg.psw.h = h_flag;
             let mut yva = smp.borrow().reg.get_ya() as u32;
             let x = (smp.borrow().reg.x as u32) << 9;
             for _ in 0..9 {
@@ -1271,19 +1402,16 @@ impl SMP {
             let new_a = yva as u8;
             smp.borrow_mut().reg.y = new_y;
             smp.borrow_mut().reg.a = new_a;
-            // "ZN are set based on A. V is set if YA/X>$FF (so the result won't fit in A).
-            //  H is odd, it seems to get set based on X&$F<=Y&$F"
+            // "ZN are set based on A. V is set if YA/X>$FF (so the result won't fit in A)."
             smp.borrow_mut().reg.psw.v = (yva >> 8) & 1 == 1;
             smp.borrow_mut().reg.psw.n = (new_a >> 7) == 1;
             smp.borrow_mut().reg.psw.z = new_a == 0;
-            let reg_x = smp.borrow().reg.x;
-            smp.borrow_mut().reg.psw.h = (reg_x & 0xF) <= (new_y & 0xF);
         }
     }
 
-    fn mul<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+    fn mul<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
             let product = (smp.borrow().reg.y as u16).wrapping_mul(smp.borrow().reg.a as u16);
             smp.borrow_mut().reg.set_ya(product);
             let new_y = smp.borrow().reg.y;
@@ -1295,7 +1423,8 @@ impl SMP {
     // 1-bit instructions
     set_clear_bit_instrs!();
 
-    fn not1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionGenerator + 'a {
+    fn not1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
             let result = data ^ (1 << addr_bit.bit);
@@ -1306,7 +1435,8 @@ impl SMP {
     fn mov1_to_c<'a>(
         smp: Rc<RefCell<SMP>>,
         addr_bit: AddressBit,
-    ) -> impl InstructionGenerator + 'a {
+    ) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
             smp.borrow_mut().reg.psw.c = (data >> addr_bit.bit) & 1 == 1;
@@ -1316,7 +1446,8 @@ impl SMP {
     fn mov1_from_c<'a>(
         smp: Rc<RefCell<SMP>>,
         addr_bit: AddressBit,
-    ) -> impl InstructionGenerator + 'a {
+    ) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
             let carry = smp.borrow().reg.psw.c as u8;
@@ -1325,27 +1456,24 @@ impl SMP {
         }
     }
 
-    fn or1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionGenerator + 'a {
+    fn or1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
             smp.borrow_mut().reg.psw.c |= (data >> addr_bit.bit) & 1 == !addr_bit.invert as u8;
         }
     }
 
-    fn and1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionGenerator + 'a {
+    fn and1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
-            log::info!(
-                "and1 {:#06X} {} (invert: {})",
-                addr_bit.addr,
-                addr_bit.bit,
-                addr_bit.invert
-            );
             smp.borrow_mut().reg.psw.c &= (data >> addr_bit.bit) & 1 == !addr_bit.invert as u8;
         }
     }
 
-    fn eor1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionGenerator + 'a {
+    fn eor1<'a>(smp: Rc<RefCell<SMP>>, addr_bit: AddressBit) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addr_bit.addr));
             smp.borrow_mut().reg.psw.c ^= (data >> addr_bit.bit) & 1 == 1;
@@ -1356,7 +1484,8 @@ impl SMP {
     branch_instrs!();
     bit_branch_instrs!();
 
-    fn bra<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn bra<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let src_pc = smp.borrow().reg.pc;
             let offset = yield_all!(SMP::read_u8(smp.clone(), addr));
@@ -1367,9 +1496,9 @@ impl SMP {
         }
     }
 
-    fn jmp<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn jmp<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
             smp.borrow_mut().reg.pc = addr;
             // TODO: Need to look into how many cycles branch can take
             // smp.borrow_mut().step(1);
@@ -1377,6 +1506,7 @@ impl SMP {
     }
 
     fn push_pc<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<()> + 'a {
+        #[coroutine]
         move || {
             let src_pc = smp.borrow().reg.pc;
             yield_all!(SMP::stack_push_u8(smp.clone(), (src_pc >> 8) as u8));
@@ -1385,6 +1515,7 @@ impl SMP {
     }
 
     fn pop_pc<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<()> + 'a {
+        #[coroutine]
         move || {
             let lo = yield_all!(SMP::stack_pop_u8(smp.clone())) as u16;
             let hi = yield_all!(SMP::stack_pop_u8(smp.clone())) as u16;
@@ -1392,7 +1523,8 @@ impl SMP {
         }
     }
 
-    fn call<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn call<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             yield_all!(SMP::push_pc(smp.clone()));
             smp.borrow_mut().reg.pc = addr;
@@ -1401,7 +1533,21 @@ impl SMP {
         }
     }
 
-    fn pcall<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn tcall<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            yield_all!(SMP::push_pc(smp.clone()));
+            // TODO: Might be a bit nicer to express this as a peculiarly parameterized procedure
+            let n = (smp.borrow().peak_u8(smp.borrow().reg.pc - 1) as u16) >> 4;
+            let dest_pc = yield_all!(Self::read_u16(smp.clone(), 0xFFDE - (2 * n)));
+            smp.borrow_mut().reg.pc = dest_pc;
+            // TODO: Need to look into how many cycles branch can take
+            // smp.borrow_mut().step(1);
+        }
+    }
+
+    fn pcall<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             yield_all!(SMP::push_pc(smp.clone()));
             smp.borrow_mut().reg.pc = 0xFF00 | (addr & 0xFF);
@@ -1410,7 +1556,8 @@ impl SMP {
         }
     }
 
-    fn ret<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+    fn ret<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             yield_all!(SMP::pop_pc(smp.clone()));
             // TODO: Need to look into how many cycles branch can take
@@ -1418,7 +1565,8 @@ impl SMP {
         }
     }
 
-    fn ret_from_interrupt<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+    fn ret_from_interrupt<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             yield_all!(SMP::pop_psw(smp.clone()));
             yield_all!(SMP::pop_pc(smp.clone()));
@@ -1427,7 +1575,20 @@ impl SMP {
         }
     }
 
-    fn dbnz_y<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionGenerator + 'a {
+    fn brk<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            yield_all!(SMP::push_pc(smp.clone()));
+            yield_all!(SMP::push_psw(smp.clone()));
+            smp.borrow_mut().reg.psw.b = true;
+            smp.borrow_mut().reg.psw.i = false;
+            let dest_pc = yield_all!(Self::read_u16(smp.clone(), BRK_VECTOR));
+            smp.borrow_mut().reg.pc = dest_pc;
+        }
+    }
+
+    fn dbnz_y<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let y = smp.borrow().reg.y;
             smp.borrow_mut().reg.y = y.wrapping_sub(1);
@@ -1440,7 +1601,8 @@ impl SMP {
         }
     }
 
-    fn cbne<'a>(smp: Rc<RefCell<SMP>>, addrs: MemToMemAddresses) -> impl InstructionGenerator + 'a {
+    fn cbne<'a>(smp: Rc<RefCell<SMP>>, addrs: MemToMemAddresses) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr));
             let src_pc = smp.borrow().reg.pc;
@@ -1455,7 +1617,8 @@ impl SMP {
     fn dbnz_mem<'a>(
         smp: Rc<RefCell<SMP>>,
         addrs: MemToMemAddresses,
-    ) -> impl InstructionGenerator + 'a {
+    ) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = yield_all!(SMP::read_u8(smp.clone(), addrs.src_addr)).wrapping_sub(1);
             yield_all!(SMP::write_u8(smp.clone(), addrs.src_addr, data));
@@ -1471,9 +1634,17 @@ impl SMP {
     // Flag instructions
     flag_instrs!();
 
-    fn flip_flag_c<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+    fn clear_flag_vh<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
-            dummy_yield!();
+            smp.borrow_mut().reg.psw.v = false;
+            smp.borrow_mut().reg.psw.h = false;
+        }
+    }
+
+    fn flip_flag_c<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
             let c = smp.borrow_mut().reg.psw.c;
             smp.borrow_mut().reg.psw.c = !c;
         }
@@ -1482,17 +1653,33 @@ impl SMP {
     // Push/pop instructions
     push_pop_instrs!();
 
-    fn push_psw<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+    fn push_psw<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = smp.borrow().reg.psw.get();
             yield_all!(SMP::stack_push_u8(smp.clone(), data));
         }
     }
 
-    fn pop_psw<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionGenerator + 'a {
+    fn pop_psw<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
         move || {
             let data = yield_all!(SMP::stack_pop_u8(smp.clone()));
             smp.borrow_mut().reg.psw.set(data);
         }
+    }
+
+    fn stp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            // TODO: There's probably a more useful way to do STP
+            let old_pc = smp.borrow().reg.pc;
+            smp.borrow_mut().reg.pc = (old_pc & 0xFF00) | (old_pc.wrapping_sub(1) & 0xFF);
+        }
+    }
+
+    fn nop<'a>(_: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {}
     }
 }

@@ -119,7 +119,7 @@ impl Registers {
         if self.stack_pointer_16_bits() {
             self.sp
         } else {
-            self.sp & 0xFF
+            0x100 | (self.sp & 0xFF)
         }
     }
 
@@ -130,6 +130,7 @@ impl Registers {
         if self.stack_pointer_16_bits() {
             self.sp = val;
         } else {
+            // TODO: Should this just set the MSB to 1, simplifying the cpu.rs logic?
             self.sp &= 0xFF00;
             self.sp |= val & 0xFF;
         }
@@ -153,9 +154,17 @@ impl Registers {
     /// MSBs of X and Y if appropriate
     pub fn swap_carry_emulation_flags(&mut self) {
         std::mem::swap(&mut self.p.c, &mut self.p.e);
+        // TODO: Why is this unconditional on E?
         if !self.index_reg_16_bits() {
             self.x &= 0xFF;
             self.y &= 0xFF;
+        }
+        // TODO: I think there is more nuance to how M and X behave across E-mode transitions
+        if self.p.e {
+            self.p.m = true;
+            self.p.x_or_b = true;
+            self.sp &= 0xFF;
+            self.sp |= 0x100;
         }
     }
 }

@@ -7,7 +7,7 @@ pub use device::Device;
 pub use relative_clock::RelativeClock;
 pub use yield_reason::{Access, AccessType, DebugPoint, YieldReason, YieldTicks};
 
-use std::ops::{Generator, GeneratorState};
+use std::ops::{Coroutine, CoroutineState};
 use std::pin::Pin;
 
 // Based on Higan's empirical numbers
@@ -18,10 +18,10 @@ pub const PPU_FREQ: u64 = CPU_FREQ;
 // maybe to accurately clock timers. If so, waitstates should be halved.
 pub const SMP_FREQ: u64 = 24_606_720 / 24;
 
-pub trait Yieldable<T> = Generator<Yield = YieldReason, Return = T>;
-pub trait DeviceGenerator = Generator<Yield = YieldTicks, Return = !>;
-pub trait InstructionGenerator = Yieldable<()>;
-type BoxGen = Box<dyn Unpin + DeviceGenerator>;
+pub trait Yieldable<T> = Coroutine<Yield = YieldReason, Return = T>;
+pub trait DeviceCoroutine = Coroutine<Yield = YieldTicks, Return = !>;
+pub trait InstructionCoroutine = Yieldable<()>;
+type BoxGen = Box<dyn Unpin + DeviceCoroutine>;
 
 struct DeviceThread {
     generator: BoxGen,
@@ -42,8 +42,8 @@ macro_rules! yield_all {
         let mut gen = $gen_expr;
         loop {
             match Pin::new(&mut gen).resume(()) {
-                GeneratorState::Yielded(yield_reason) => yield yield_reason,
-                GeneratorState::Complete(out) => break out,
+                CoroutineState::Yielded(yield_reason) => yield yield_reason,
+                CoroutineState::Complete(out) => break out,
             }
         }
     }};
@@ -56,7 +56,7 @@ macro_rules! ignore_yields {
         let mut gen = $gen_expr;
         loop {
             match Pin::new(&mut gen).resume(()) {
-                GeneratorState::Complete(out) => break out,
+                CoroutineState::Complete(out) => break out,
                 _ => {}
             }
         }
@@ -64,21 +64,6 @@ macro_rules! ignore_yields {
 }
 
 pub(crate) use ignore_yields;
-
-// A silly hack:
-// An expression only satisfies the Generator trait if it
-// uses the `yield` keyword. But not all instructions yield,
-// so this must be used to satisfy the trait
-macro_rules! dummy_yield {
-    () => {
-        if false {
-            use crate::scheduler::Device;
-            yield YieldReason::Sync(Device::CPU);
-        }
-    };
-}
-
-pub(crate) use dummy_yield;
 
 pub struct Scheduler {
     cpu: DeviceThread,
@@ -112,7 +97,7 @@ impl Scheduler {
         loop {
             let yielded = self.resume();
             match yielded {
-                GeneratorState::Yielded((yield_reason, n_ticks)) => {
+                CoroutineState::Yielded((yield_reason, n_ticks)) => {
                     self.tick_curr_clocks(n_ticks);
                     if let YieldReason::Sync(other_device) = yield_reason {
                         self.curr_thread().waiting_for = Some(other_device);
@@ -127,7 +112,7 @@ impl Scheduler {
         loop {
             let yielded = self.resume();
             match yielded {
-                GeneratorState::Yielded((yield_reason, n_ticks)) => {
+                CoroutineState::Yielded((yield_reason, n_ticks)) => {
                     self.tick_curr_clocks(n_ticks);
                     match yield_reason {
                         YieldReason::Sync(other_device) => {
@@ -159,7 +144,7 @@ impl Scheduler {
         loop {
             let yielded = self.resume();
             match yielded {
-                GeneratorState::Yielded((yield_reason, n_ticks)) => {
+                CoroutineState::Yielded((yield_reason, n_ticks)) => {
                     self.tick_curr_clocks(n_ticks);
                     match yield_reason {
                         YieldReason::Sync(other_device) => {
@@ -174,6 +159,8 @@ impl Scheduler {
                         YieldReason::Debug(debug_point) => {
                             hit_debug = true;
                             if let DebugPoint::UnimplementedAccess(access) = debug_point {
+                                // TODO: Will want more control over which debug points stop execution, etc. in the future
+                                hit_debug = false;
                                 log::debug!(
                                     "Unimplemented {:?} of {:#08}",
                                     access.access_type,
@@ -197,7 +184,7 @@ impl Scheduler {
         }
     }
 
-    fn resume(&mut self) -> GeneratorState<YieldTicks, !> {
+    fn resume(&mut self) -> CoroutineState<YieldTicks, !> {
         if let Some(waiting_for) = self.curr_thread().waiting_for {
             // If this thread is waiting for another, check if the other thread has caught up.
             // If it has, remove the `waiting_for` relationship. If not, yield to the other thread.

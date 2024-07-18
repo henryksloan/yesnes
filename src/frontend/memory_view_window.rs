@@ -86,8 +86,8 @@ impl MemoryViewWindow {
                 }
             })
             .body(|body| {
-                body.rows(text_height, 0x10_0000, |row_index, mut row| {
-                    let row_addr = row_index * 0x10;
+                body.rows(text_height, 0x10_0000, |mut row| {
+                    let row_addr = row.index() * 0x10;
                     row.col(|ui| {
                         ui.strong(format!("{:06X}", row_addr));
                     });

@@ -194,7 +194,7 @@ impl DebugProcessor for DebugSmp {
         registers.pc
     }
 
-    fn to_analysis_state(registers: &Self::Registers) -> Self::AnalysisState {
+    fn to_analysis_state(_registers: &Self::Registers) -> Self::AnalysisState {
         SmpAnalysisState
     }
 }
