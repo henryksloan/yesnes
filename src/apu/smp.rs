@@ -32,7 +32,6 @@ macro_rules! transfer_instrs {
         paste! {
             fn [<transfer_ $from _sp>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    dummy_yield!();
                     let data = smp.borrow().reg.$from;
                     smp.borrow_mut().reg.sp = data;
                 }
@@ -43,7 +42,6 @@ macro_rules! transfer_instrs {
         paste! {
             fn [<transfer_ $from _ $to>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    dummy_yield!();
                     let data = smp.borrow().reg.$from;
                     smp.borrow_mut().reg.$to = data;
                     smp.borrow_mut().reg.psw.n = ((data >> 7) == 1);
@@ -146,7 +144,6 @@ macro_rules! step_shift_instrs {
         paste! {
             fn [<$op _ $reg_fn_name>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    dummy_yield!();
                     let data = smp.borrow().reg.$reg;
                     let output = Self::[<$op _algorithm>](smp.clone(), data);
                     smp.borrow_mut().reg.$reg = output;
@@ -177,7 +174,6 @@ macro_rules! flag_instrs {
         paste! {
             fn [<set_flag_ $flag>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    dummy_yield!();
                     smp.borrow_mut().reg.psw.$flag = true;
                 }
             }
@@ -187,7 +183,6 @@ macro_rules! flag_instrs {
         paste! {
             fn [<clear_flag_ $flag>]<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    dummy_yield!();
                     smp.borrow_mut().reg.psw.$flag = false;
                 }
             }
@@ -639,7 +634,6 @@ impl SMP {
         #[coroutine]
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
-            dummy_yield!();
             // yield YieldReason::Sync(Device::CPU);
             smp.borrow().peak_io_reg(addr)
         }
@@ -649,7 +643,6 @@ impl SMP {
         #[coroutine]
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
-            dummy_yield!();
             // yield YieldReason::Sync(Device::CPU);
             match addr {
                 0x00F0 => {}
@@ -829,7 +822,6 @@ impl SMP {
     fn immediate<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let addr = smp.borrow().reg.pc;
             // TODO: Need to use wrapping adds for PC increments and most addressing mode adds
             smp.borrow_mut().reg.pc += 1;
@@ -929,7 +921,6 @@ impl SMP {
     fn indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr = direct_page_base + smp.borrow().reg.x as u16;
             direct_addr
@@ -939,7 +930,6 @@ impl SMP {
     fn indirect_increment<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let x = smp.borrow().reg.x;
             let direct_addr = direct_page_base + x as u16;
@@ -952,7 +942,6 @@ impl SMP {
         #[coroutine]
         move || {
             // TODO: DO NOT SUBMIT: Get rid of unnecessary dummy yields (are any needed with #coroutine?)
-            dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr = fetch!(smp);
             let indirect_addr = {
@@ -966,7 +955,6 @@ impl SMP {
                 )) as u16;
                 (addr_hi << 8) | addr_lo
             };
-            // println!("direct_page_base ({:08x}) + direct_addr ({:08x}) => indirect_addr ({:08x}) + y ({:04x}) = {:08x}", direct_page_base, direct_addr, indirect_addr, smp.borrow().reg.y, indirect_addr + smp.borrow().reg.y as u16);
             indirect_addr + smp.borrow().reg.y as u16
         }
     }
@@ -974,7 +962,6 @@ impl SMP {
     fn indexed_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr =
                 direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16;
@@ -1020,7 +1007,6 @@ impl SMP {
     fn indirect_to_indirect<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<MemToMemAddresses> + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let src_addr = direct_page_base + smp.borrow().reg.y as u16;
             let dest_addr = direct_page_base + smp.borrow().reg.x as u16;
@@ -1261,7 +1247,6 @@ impl SMP {
     fn xcn<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let a = smp.borrow().reg.a;
             let result = (a >> 4) | (a << 4);
             smp.borrow_mut().reg.a = result;
@@ -1398,7 +1383,6 @@ impl SMP {
     fn div<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             // Algorithm from https://snesdev.mesen.ca/wiki/index.php?title=SPC700:
             // "H is odd, it seems to get set based on X&$F<=Y&$F"
             let h_flag = (smp.borrow().reg.x & 0xF) <= (smp.borrow().reg.y & 0xF);
@@ -1428,7 +1412,6 @@ impl SMP {
     fn mul<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let product = (smp.borrow().reg.y as u16).wrapping_mul(smp.borrow().reg.a as u16);
             smp.borrow_mut().reg.set_ya(product);
             let new_y = smp.borrow().reg.y;
@@ -1516,7 +1499,6 @@ impl SMP {
     fn jmp<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             smp.borrow_mut().reg.pc = addr;
             // TODO: Need to look into how many cycles branch can take
             // smp.borrow_mut().step(1);
@@ -1663,7 +1645,6 @@ impl SMP {
     fn flip_flag_c<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let c = smp.borrow_mut().reg.psw.c;
             smp.borrow_mut().reg.psw.c = !c;
         }

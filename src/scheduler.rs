@@ -65,21 +65,6 @@ macro_rules! ignore_yields {
 
 pub(crate) use ignore_yields;
 
-// A silly hack:
-// An expression only satisfies the Coroutine trait if it
-// uses the `yield` keyword. But not all instructions yield,
-// so this must be used to satisfy the trait
-macro_rules! dummy_yield {
-    () => {
-        if false {
-            use crate::scheduler::Device;
-            yield YieldReason::Sync(Device::CPU);
-        }
-    };
-}
-
-pub(crate) use dummy_yield;
-
 pub struct Scheduler {
     cpu: DeviceThread,
     ppu: DeviceThread,

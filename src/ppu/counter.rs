@@ -25,7 +25,6 @@ impl PpuCounter {
         #[coroutine]
         move || {
             // TODO: Yield to CPU when we decide to latch the interlace
-            dummy_yield!();
             let mut new_scanline = false;
             counter.borrow_mut().h_ticks += n_clocks;
             if counter.borrow().h_ticks >= 1364 {

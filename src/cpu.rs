@@ -596,7 +596,6 @@ impl CPU {
         // by avoiding the nesting? If so, it would be worth finding a middle-ground.
         #[coroutine]
         move || {
-            dummy_yield!();
             // TODO: This is required to prevent deadlocks on the frontend. Consider a more elegent way
             // to resynchronize.
             yield YieldReason::Sync(Device::SMP);
@@ -1195,7 +1194,6 @@ impl CPU {
     fn immediate<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let addr = cpu.borrow().reg.pc;
             cpu.borrow_mut().progress_pc(if long { 2 } else { 1 });
             Pointer { addr, long }
@@ -1786,7 +1784,6 @@ impl CPU {
     fn ina<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let data = cpu.borrow().reg.get_a().wrapping_add(1);
             cpu.borrow_mut().reg.set_a(data);
             let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
@@ -1803,7 +1800,6 @@ impl CPU {
     fn inx<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let data = cpu.borrow().reg.get_x().wrapping_add(1);
             cpu.borrow_mut().reg.set_x(data);
             let n_bits = if cpu.borrow().reg.p.x_or_b || cpu.borrow().reg.p.e {
@@ -1820,7 +1816,6 @@ impl CPU {
     fn iny<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let data = cpu.borrow().reg.get_y().wrapping_add(1);
             cpu.borrow_mut().reg.set_y(data);
             let n_bits = if cpu.borrow().reg.p.x_or_b || cpu.borrow().reg.p.e {
@@ -1854,7 +1849,6 @@ impl CPU {
     fn dea<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let data = cpu.borrow().reg.get_a().wrapping_sub(1);
             cpu.borrow_mut().reg.set_a(data);
             let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
@@ -1871,7 +1865,6 @@ impl CPU {
     fn dex<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let data = cpu.borrow().reg.get_x().wrapping_sub(1);
             cpu.borrow_mut().reg.set_x(data);
             let n_bits = if cpu.borrow().reg.p.x_or_b || cpu.borrow().reg.p.e {
@@ -1888,7 +1881,6 @@ impl CPU {
     fn dey<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let data = cpu.borrow().reg.get_y().wrapping_sub(1);
             cpu.borrow_mut().reg.set_y(data);
             let n_bits = if cpu.borrow().reg.p.x_or_b || cpu.borrow().reg.p.e {
@@ -2031,7 +2023,6 @@ impl CPU {
     fn jmp<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
             cpu.borrow_mut().reg.pc |= pointer.addr.lo16();
         }
@@ -2040,7 +2031,6 @@ impl CPU {
     fn jml<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             cpu.borrow_mut().reg.pc = pointer.addr;
         }
     }
@@ -2152,7 +2142,6 @@ impl CPU {
     fn rotate_acc_op<'a>(cpu: Rc<RefCell<CPU>>, left: bool) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let data = cpu.borrow().reg.get_a();
             let result = CPU::rotate_through_carry(cpu.clone(), data, left);
             cpu.borrow_mut().reg.set_a(result);
@@ -2189,7 +2178,6 @@ impl CPU {
     fn asl_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let data = cpu.borrow().reg.get_a();
             let result = CPU::shift_with_carry(cpu.clone(), data, true);
             cpu.borrow_mut().reg.set_a(result);
@@ -2208,7 +2196,6 @@ impl CPU {
     fn lsr_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            dummy_yield!();
             let data = cpu.borrow().reg.get_a();
             let result = CPU::shift_with_carry(cpu.clone(), data, false);
             cpu.borrow_mut().reg.set_a(result);
