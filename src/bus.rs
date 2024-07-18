@@ -42,6 +42,7 @@ impl Bus {
             wram: vec![0; 0x20000],
             wram_port_addr: u24(0),
             cart_test: Vec::new(),
+            // TODO: Need to consider the amount of SRAM in the cart and mirror. Super Metroid use this for piracy checks.
             sram: vec![0; 0x80000],
             multiplicand_a: 0,
             dividend: 0,

@@ -599,7 +599,6 @@ impl SMP {
                 (set_flag_i; 0xA0=>implied)
                 (clear_flag_i; 0xC0=>implied)
                 (nop; 0x00=>implied)
-                // TODO: DO NOT SUBMIT: Poor STP implementation
                 (stp; 0xFF=>implied)
             );
 
@@ -725,7 +724,7 @@ impl SMP {
         }
     }
 
-    // DO NOT SUBMIT: There might be a nicer way to do this throughout... this is just for ADDW, etc.
+    // TODO: There might be a nicer way to do this throughout... this is just for ADDW, etc.
     fn read_u16_wrapping<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u16> + 'a {
         #[coroutine]
         move || {
@@ -769,15 +768,7 @@ impl SMP {
         }
     }
 
-    fn write_u16<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u16) -> impl Yieldable<()> + 'a {
-        #[coroutine]
-        move || {
-            yield_all!(SMP::write_u8(smp.clone(), addr, data as u8));
-            yield_all!(SMP::write_u8(smp.clone(), addr + 1, (data >> 8) as u8));
-        }
-    }
-
-    // DO NOT SUBMIT: There might be a nicer way to do this throughout... this is just for ADDW, etc.
+    // TODO: There might be a nicer way to do this throughout... this is just for ADDW, etc.
     fn write_u16_wrapping<'a>(
         smp: Rc<RefCell<SMP>>,
         addr: u16,
@@ -1700,6 +1691,7 @@ impl SMP {
     fn stp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
+            // TODO: There's probably a more useful way to do STP
             let old_pc = smp.borrow().reg.pc;
             smp.borrow_mut().reg.pc = (old_pc & 0xFF00) | (old_pc.wrapping_sub(1) & 0xFF);
         }

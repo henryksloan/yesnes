@@ -295,7 +295,6 @@ pub struct CPU {
     do_hdmas_this_line: [bool; 8],
     nmi_enqueued: bool,
     irq_enqueued: bool,
-    stopped: bool,
     // TODO: Should change most instances of "tick" to "clock"
     ticks_run: u64,
     // Some events like interrupt polling happen every 4 ticks. This tracks the
@@ -324,7 +323,6 @@ impl CPU {
             do_hdmas_this_line: [false; 8],
             nmi_enqueued: false,
             irq_enqueued: false,
-            stopped: false,
             ticks_run: 0,
             ticks_mod_4: 0,
             debug_frame: None,
@@ -348,10 +346,9 @@ impl CPU {
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
 
-        // TODO: DO NOT SUBMIT: untested resetting; more stuff is definitely missing
+        // TODO: This reset function is very obviously incomplete, but modularizing e.g. interrupts will make it easier
         self.nmi_enqueued = false;
         self.irq_enqueued = false;
-        self.stopped = false;
 
         self.io_reg.waitstate_control.0 = 0;
         self.io_reg.interrupt_control.0 = 0;
@@ -370,13 +367,6 @@ impl CPU {
         // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         #[coroutine]
         move || loop {
-            // if cpu.borrow().stopped {
-            //     // TODO: DO NOT SUBMIT: Fix this
-            //     yield (YieldReason::Sync(Device::SMP), 1);
-            //     yield (YieldReason::Sync(Device::PPU), 1);
-            //     yield (YieldReason::FinishedInstruction(Device::CPU), 0);
-            //     continue;
-            // }
             // print!("CPU {:#010X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             // TODO: Need to go through and use wrapping arithmetic where appropriate
@@ -542,7 +532,6 @@ impl CPU {
                 (transfer_x_y, NoFlag; 0x9B=>implied)
                 (transfer_y_a, NoFlag; 0x98=>implied)
                 (transfer_y_x, NoFlag; 0xBB=>implied)
-                // TODO: DO NOT SUBMIT: untested STP, definitely breaks frontend (e.g. trace)
                 (stp, NoFlag; 0xDB=>implied)
             );
 
@@ -2336,7 +2325,7 @@ impl CPU {
     fn stp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            // cpu.borrow_mut().stopped = true;
+            // TODO: There might be a more useful way to implement this
             cpu.borrow_mut().progress_pc(-1);
         }
     }
