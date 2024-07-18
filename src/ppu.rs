@@ -360,7 +360,7 @@ impl PPU {
         self.frame
     }
 
-    pub fn io_peak(&self, addr: u16) -> u8 {
+    pub fn io_peak(&self, _addr: u16) -> u8 {
         // TODO
         0
     }
@@ -401,7 +401,7 @@ impl PPU {
                 log::debug!("TODO: PPU IO read {addr:04X}");
                 0
             } // TODO: Remove this fallback
-            _ => panic!("Invalid IO read of PPU at {addr:#04X}"),
+              // _ => panic!("Invalid IO read of PPU at {addr:#04X}"),
         }
     }
 
@@ -481,7 +481,7 @@ impl PPU {
             }
             0x2123..=0x212B | 0x212E..=0x212F => {} // TODO: Window
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
-            _ => panic!("Invalid IO write of PPU at {addr:#04X}"),
+                                                                           // _ => panic!("Invalid IO write of PPU at {addr:#04X}"),
         }
     }
 

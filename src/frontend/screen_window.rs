@@ -18,6 +18,18 @@ pub struct ScreenWindow {
     frame_ready: Arc<AtomicBool>,
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
+
+    title_bar: bool,
+    closable: bool,
+    collapsible: bool,
+    resizable: bool,
+    constrain: bool,
+    scroll2: egui::Vec2b,
+    disabled_time: f64,
+
+    anchored: bool,
+    anchor: egui::Align2,
+    anchor_offset: egui::Vec2,
 }
 
 impl ScreenWindow {
@@ -33,6 +45,17 @@ impl ScreenWindow {
             frame_ready,
             frame_history: FrameHistory::new(),
             previous_frame_instant: None,
+
+            title_bar: true,
+            closable: true,
+            collapsible: true,
+            resizable: true,
+            constrain: true,
+            scroll2: egui::Vec2b::TRUE,
+            disabled_time: f64::NEG_INFINITY,
+            anchored: false,
+            anchor: egui::Align2::RIGHT_TOP,
+            anchor_offset: egui::Vec2::ZERO,
         }
     }
 }
@@ -104,20 +127,31 @@ impl AppWindow for ScreenWindow {
         };
 
         egui::Window::new(&self.title)
-            .default_width(512.0)
+            .default_width(256.0)
+            .default_height(256.0)
+            .resizable(true)
+            .scroll2(egui::Vec2b::FALSE)
             .show(ctx, |ui| {
                 if !focused {
                     ui.set_enabled(false);
                 }
-                ui.label(format!(
-                    "Mean frame time: {:.2}ms",
-                    1e3 * self.frame_history.mean_frame_time()
-                ));
-                let rect_size = ui.available_rect_before_wrap().size();
-                ui.image(
-                    self.texture.as_ref().unwrap(),
-                    // [rect_size.x, rect_size.x * (224. / 255.)],
-                );
+                ui.vertical(|ui| {
+                    ui.label(format!(
+                        "Mean frame time: {:.2}ms",
+                        1e3 * self.frame_history.mean_frame_time()
+                    ));
+                });
+                // TODO: This is a janky resizing implementation to maintain aspect ratio
+                let rect = ui.available_rect_before_wrap();
+                let new_size = {
+                    let available_size = ui.available_size();
+                    egui::Vec2::new(available_size.max_elem(), available_size.max_elem())
+                };
+                ui.allocate_space(new_size);
+                ui.ctx().request_repaint();
+                egui::Image::new(self.texture.as_ref().unwrap())
+                    .maintain_aspect_ratio(true)
+                    .paint_at(ui, rect);
             });
     }
 }

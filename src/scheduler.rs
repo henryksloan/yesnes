@@ -174,7 +174,8 @@ impl Scheduler {
                         YieldReason::Debug(debug_point) => {
                             hit_debug = true;
                             if let DebugPoint::UnimplementedAccess(access) = debug_point {
-                                hit_debug = false; // DO NOT SUBMIT
+                                // TODO: Will want more control over which debug points stop execution, etc. in the future
+                                hit_debug = false;
                                 log::debug!(
                                     "Unimplemented {:?} of {:#08}",
                                     access.access_type,

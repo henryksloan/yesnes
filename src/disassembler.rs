@@ -3,8 +3,8 @@ pub mod debug_cpu;
 pub mod debug_smp;
 pub mod instruction_data;
 
-pub use debug_cpu::{CpuAnalysisState, CpuDisassembledInstruction, DebugCpu};
-pub use debug_smp::{DebugSmp, SmpAnalysisState, SmpDisassembledInstruction};
+pub use debug_cpu::{CpuAnalysisState, DebugCpu};
+pub use debug_smp::DebugSmp;
 
 use crate::{scheduler::Device, snes::SNES};
 

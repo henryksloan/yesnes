@@ -43,7 +43,6 @@ impl eframe::emath::Numeric for smp::StatusRegister {
     }
 
     fn from_f64(num: f64) -> Self {
-        let mut new_register = Self::new(num as u32 as u8);
-        new_register
+        Self::new(num as u32 as u8)
     }
 }

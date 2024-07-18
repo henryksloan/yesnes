@@ -30,8 +30,6 @@ pub fn run_frame_and_disassemble<D: DebugProcessor>(
 ) -> bool {
     let mut breakpoint = false;
     let mut frame_ready = false;
-    use std::time::Instant;
-    let now = Instant::now();
     while !frame_ready {
         (breakpoint, frame_ready) = snes.run_instruction_debug(D::DEVICE);
         let registers = D::registers(snes);
@@ -43,8 +41,6 @@ pub fn run_frame_and_disassemble<D: DebugProcessor>(
             break;
         }
     }
-    let elapsed = now.elapsed();
-    // println!("Elapsed: {:.2?}", elapsed);
     breakpoint
 }
 

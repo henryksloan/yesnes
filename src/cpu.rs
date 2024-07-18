@@ -3,14 +3,11 @@ pub mod registers;
 pub use registers::{IoRegisters, Registers, StatusRegister};
 
 use crate::{bus::Bus, ppu::PpuCounter, scheduler::*, u24::u24};
-// DO NOT SUBMIT
-use crate::frontend::frame_history::FrameHistory;
 
 use std::cell::RefCell;
 use std::ops::{Coroutine, CoroutineState};
 use std::pin::Pin;
 use std::rc::Rc;
-use std::time::Instant;
 
 use paste::paste;
 
@@ -303,16 +300,11 @@ pub struct CPU {
     ticks_run: u64,
     // Some events like interrupt polling happen every 4 ticks. This tracks the
     // remainder ticks from `step()`, e.g. if `2` or `5` ticks elapse.
-    // DO NOT SUBMIT: Consider encapsulating this (and much else) into some interrupt controller abstraction.
+    // TODO: Encapsulate this (and much else) into some interrupt controller abstraction.
     ticks_mod_4: u8,
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
     pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
     pub controller_states: [u16; 4],
-    // DO NOT SUBMIT
-    frame_history: FrameHistory,
-    previous_frame_instant: Option<Instant>,
-    print_timer: u64,
-    debug_latch: bool,
 }
 
 impl CPU {
@@ -337,10 +329,6 @@ impl CPU {
             ticks_mod_4: 0,
             debug_frame: None,
             controller_states: [0; 4],
-            frame_history: FrameHistory::new(),
-            previous_frame_instant: None,
-            print_timer: 0,
-            debug_latch: false,
         }
     }
 
@@ -360,7 +348,7 @@ impl CPU {
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
 
-        // TODO: DO NOT SUBMIT: untested resetting; more stuff is definitely msising
+        // TODO: DO NOT SUBMIT: untested resetting; more stuff is definitely missing
         self.nmi_enqueued = false;
         self.irq_enqueued = false;
         self.stopped = false;
@@ -659,25 +647,6 @@ impl CPU {
                 }
                 let frame = cpu.borrow().bus.borrow().debug_get_frame();
                 cpu.borrow_mut().debug_frame = Some(frame);
-                // DO NOT SUBMIT
-                let now = Instant::now();
-                let delta = cpu
-                    .borrow()
-                    .previous_frame_instant
-                    .map(|previous| (now - previous).as_secs_f32());
-                let prev = cpu.borrow().previous_frame_instant;
-                if let Some(previous_frame_instant) = prev {
-                    let elapsed = previous_frame_instant.elapsed();
-                    cpu.borrow_mut()
-                        .frame_history
-                        .on_new_frame(elapsed.as_secs_f64(), delta);
-                }
-                cpu.borrow_mut().previous_frame_instant = Some(now);
-                let print_timer = cpu.borrow().print_timer;
-                cpu.borrow_mut().print_timer = (print_timer + 1) % 120;
-                if print_timer == 0 {
-                    log::debug!("{}", cpu.borrow().frame_history.mean_frame_time());
-                }
                 yield YieldReason::FrameReady;
             }
         }
@@ -756,7 +725,7 @@ impl CPU {
         }
     }
 
-    pub fn io_peak(&self, addr: u24) -> u8 {
+    pub fn io_peak(&self, _addr: u24) -> u8 {
         // TODO
         0
     }
@@ -814,7 +783,7 @@ impl CPU {
                 log::debug!("TODO: CPU IO read {addr}");
                 0
             } // TODO: Remove this fallback
-            _ => panic!("Invalid IO read of CPU at {addr:#06X}"),
+              // _ => panic!("Invalid IO read of CPU at {addr:#06X}"),
         }
     }
 
@@ -849,7 +818,7 @@ impl CPU {
             }
             0x420D => self.io_reg.waitstate_control.0 = data,
             _ => log::debug!("TODO: CPU IO write {addr}: {data:02X}"), // TODO: Remove this fallback
-            _ => panic!("Invalid IO write of CPU at {addr:#06X}"),
+                                                                       // _ => panic!("Invalid IO write of CPU at {addr:#06X}"),
         }
     }
 
@@ -1062,8 +1031,8 @@ impl CPU {
         #[coroutine]
         move || {
             let lo = yield_all!(CPU::read_u8(cpu.clone(), addr)) as u16;
+            // TODO: This is inconsistent with the other read_ functions; should figure out a consistent wrapping approach.
             // let hi = yield_all!(CPU::read_u8(cpu.clone(), addr + 1u32)) as u16;
-            // TODO: DO NOT SUBMIT: Not sure...
             let hi = yield_all!(CPU::read_u8(cpu.clone(), addr.wrapping_add_lo16(1))) as u16;
             (hi << 8) | lo
         }
@@ -1083,11 +1052,11 @@ impl CPU {
         move || {
             let mut data = yield_all!(CPU::read_u8(cpu.clone(), pointer.addr)) as u16;
             if pointer.long {
-                data |= (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr + 1u32)) as u16) << 8;
-                // TODO: DO NOT SUBMIT: Not sure...
+                // TODO: This is inconsistent with the other read_ functions; should figure out a consistent wrapping approach.
                 // data |= (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr.wrapping_add_lo16(1)))
                 //     as u16)
                 //     << 8;
+                data |= (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr + 1u32)) as u16) << 8;
             }
             data
         }
@@ -1134,7 +1103,7 @@ impl CPU {
         }
     }
 
-    // DO NOT SUBMIT: Stuff like this can OBVIOUSLY be modified to take &self
+    // TODO: Stuff like this can OBVIOUSLY be modified to take &self
     fn bank_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
         u24((cpu.borrow().reg.b as u32) << 16) | addr
     }
@@ -1407,7 +1376,7 @@ impl CPU {
             let indirect_addr = u24(fetch!(cpu) as u32);
             let addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
-                // TODO: DO NOT SUBMIT: Maybe change this?
+                // TODO: Normalize wrapping behavior/functions for 16 bit accesses throughout
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 // u24((hi << 8) | lo)
                 // TODO: NOTE: This is a critical bug fix
@@ -1499,7 +1468,7 @@ impl CPU {
         move || {
             let stack_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_sp() as u32);
             let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), stack_addr)) as u32;
-            // TODO: DO NOT SUBMIT: Not sure
+            // TODO: Normalize wrapping behavior/functions for 16 bit accesses throughout
             let addr_hi = yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32;
             let bank_addr = ((addr_hi << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32;
             let addr = CPU::bank_addr(cpu.clone(), u24(bank_addr));
@@ -1768,13 +1737,6 @@ impl CPU {
             yield_all!(CPU::idle(cpu.clone()));
             let a = cpu.borrow().reg.a;
             cpu.borrow_mut().reg.set_sp(a);
-            // TODO: DO NOT SUBMIT: Not sure
-            // let a = cpu.borrow().reg.get_a();
-            // if cpu.borrow().reg.p.e {
-            //     cpu.borrow_mut().reg.set_sp((1 << 8) | (a & 0xFF));
-            // } else {
-            //     cpu.borrow_mut().reg.set_sp(a);
-            // }
         }
     }
 
@@ -1782,17 +1744,8 @@ impl CPU {
         #[coroutine]
         move || {
             yield_all!(CPU::idle(cpu.clone()));
-            // let x = cpu.borrow().reg.x;
-            // TODO: DO NOT SUBMIT: Not sure
             let x = cpu.borrow().reg.get_x();
-            if cpu.borrow().reg.p.e {
-                // cpu.borrow_mut().reg.sp &= 0xFF00;
-                // cpu.borrow_mut().reg.sp |= x & 0xFF;
-                // TODO: DO NOT SUBMIT: Not sure
-                cpu.borrow_mut().reg.set_sp((1 << 8) | (x & 0xFF));
-            } else {
-                cpu.borrow_mut().reg.set_sp(x);
-            }
+            cpu.borrow_mut().reg.set_sp(x);
         }
     }
 
@@ -1976,6 +1929,8 @@ impl CPU {
         }
     }
 
+    // TODO: This is a mess in order to capture a bunch of little details about flags, and some
+    // decimal-mode flags are still wrong.
     fn arithmetic_op<'a>(
         cpu: Rc<RefCell<CPU>>,
         pointer: Pointer,
@@ -2008,29 +1963,17 @@ impl CPU {
                 let bcd_max = if n_bits == 8 { 100 } else { 10000 };
                 let bcd_a = bcd_to_bin(cpu.borrow().reg.get_a()) as i32;
                 let temp = if subtract {
-                    // bcd_a - (bcd_to_bin(mem_val) as i32 + 1) + carry as i32
                     bcd_a + ((bcd_max - bcd_to_bin(mem_val) as i32) - 1) + carry as i32
                 } else {
                     bcd_a + bcd_to_bin(mem_val) as i32 + carry as i32
                 };
-                // cpu.borrow_mut().reg.p.c = if subtract { temp < 0 } else { temp >= bcd_max };
                 cpu.borrow_mut().reg.p.c = temp >= bcd_max;
                 bin_to_bcd((temp % bcd_max).abs() as u16)
-
-                // cpu.borrow_mut().reg.p.c = if subtract {
-                //     let temp2 = bcd_data % bcd_max;
-                //     let res = cpu.borrow().reg.get_a() as u32 + temp2 as u32 + carry as u32;
-                //     res >= bcd_max as u32
-                // } else {
-                //     temp >= bcd_max
-                // };
             } else {
                 let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
-                // TODO: DO NOT SUBMIT: This is a bandaid fix for the carry bug caused by the signedness hacking
                 cpu.borrow_mut().reg.p.c = if subtract {
                     let mask = (1u32 << n_bits) - 1;
                     let temp2 = !(mem_val as u32) & mask;
-                    // TODO: DO NOT SUBMIT: Wrapping? Here and throughout
                     let res = cpu.borrow().reg.get_a() as u32 + temp2 + carry as u32;
                     res > mask
                 } else {
@@ -2385,8 +2328,6 @@ impl CPU {
         #[coroutine]
         move || {
             let source_pc = cpu.borrow().reg.pc + 2u16;
-            // TODO: DO NOT SUBMIT: I had changed this to three, but now that I fixed the other ret/jsr things, I think it's right with 2
-            // let source_pc = cpu.borrow().reg.pc + 3u16;
             let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
             yield_all!(CPU::stack_push_u16(cpu.clone(), dest_pc.lo16()));
         }

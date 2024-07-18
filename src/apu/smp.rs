@@ -814,7 +814,7 @@ impl SMP {
         }
     }
 
-    pub fn io_peak(&self, addr: u16) -> u8 {
+    pub fn io_peak(&self, _addr: u16) -> u8 {
         // TODO
         0
     }

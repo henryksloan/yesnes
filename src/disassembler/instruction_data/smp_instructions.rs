@@ -37,6 +37,9 @@ pub enum SmpAddressingMode {
     YXIndexedDirect,
     DirectRelative,
     XIndexedDirectRelative,
+    // TODO: The (u8) is considered dead code because it's only used by Debug...
+    // FWIW Debug isn't quite appropriate for this usage, so maybe change it.
+    #[allow(dead_code)]
     DirectRelativeBit(u8),
     AccXIndexedDirect,
     XIndexedDirectAcc,
