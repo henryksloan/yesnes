@@ -720,7 +720,8 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
-            // TODO: Remove debugging value
+            // TODO: Remove debugging value; once this is real, read should also ACK
+            // TODO: Games seem to write this; why?
             // This has bit6 set to simulate some weird open bus behavior for testing
             // 0x4210 => 0xC0,
             0x4210 => {
@@ -736,6 +737,7 @@ impl CPU {
             } // 0xC0,
             0x4211 => 0, // TODO: IRQ stuff
             // TODO: Remove debugging value
+            // TODO: Games see to write this; why? Should probably just do thing?
             0x4212 => {
                 static mut DEBUG_LATCH: u8 = 0;
                 unsafe {
@@ -778,9 +780,11 @@ impl CPU {
     pub fn io_write(&mut self, addr: u24, data: u8) {
         match addr.lo16() {
             0x4200 => self.io_reg.interrupt_control.0 = data,
-            0x420B => {
-                self.dmas_enqueued = Some(data);
-            }
+            0x4207 => self.io_reg.h_scan_count.set_lo_byte(data),
+            0x4208 => self.io_reg.h_scan_count.set_hi_byte(data),
+            0x4209 => self.io_reg.v_scan_count.set_lo_byte(data),
+            0x420A => self.io_reg.v_scan_count.set_hi_byte(data),
+            0x420B => self.dmas_enqueued = Some(data),
             0x420C => {
                 // log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
                 self.hdmas_enqueued = Some(data);

@@ -155,7 +155,9 @@ impl PPU {
             7 | _ => &[8], // TODO: Rotation/scaling
         };
         for (bg_i, layer_bpp) in layer_bpps.iter().enumerate() {
-            self.debug_render_scanline_bpp(bg_i, draw_line, *layer_bpp);
+            if self.io_reg.main_layer_enable.layer_enabled(bg_i + 1) {
+                self.debug_render_scanline_bpp(bg_i, draw_line, *layer_bpp);
+            }
         }
         self.debug_render_sprites(draw_line);
         for sublayer in layer_priority_order(
@@ -479,6 +481,9 @@ impl PPU {
                 }
                 self.cgram[cgram_addr].set_bit_range(write_bits.0, write_bits.1, data);
             }
+            // DO NOT SUBMIT: Should reads of these work? What is the program tries to OR or something?
+            0x212C => self.io_reg.main_layer_enable.0 = data,
+            0x212D => self.io_reg.sub_layer_enable.0 = data,
             0x2123..=0x212B | 0x212E..=0x212F => {} // TODO: Window
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
                                                                            // _ => panic!("Invalid IO write of PPU at {addr:#04X}"),

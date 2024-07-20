@@ -3,7 +3,8 @@ use bitfield::bitfield;
 #[derive(Default, Clone, Copy)]
 pub struct IoRegisters {
     pub display_control_1: DisplayControl1,
-    pub layer_enable: LayerEnable,
+    pub main_layer_enable: LayerEnable,
+    pub sub_layer_enable: LayerEnable,
     pub display_control_2: DisplayControl2,
     pub obj_size_base: ObjSizeBase,
     pub oam_addr_priority: OamAddrPriority,
@@ -73,6 +74,18 @@ bitfield! {
   pub bg3, _: 2;
   pub bg4, _: 3;
   pub obj, _: 4;
+}
+
+impl LayerEnable {
+    pub fn layer_enabled(&self, bg_n: usize) -> bool {
+        assert!((1..=4).contains(&bg_n));
+        match bg_n {
+            1 => self.bg1(),
+            2 => self.bg2(),
+            3 => self.bg3(),
+            4 | _ => self.bg4(),
+        }
+    }
 }
 
 bitfield! {
