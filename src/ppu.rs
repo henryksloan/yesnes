@@ -130,6 +130,7 @@ impl PPU {
         ]
     }
 
+    // TODO: All of these "debug" functions are unrealistic PPU emulation
     fn debug_render_scanline(&mut self, scanline: u16) {
         if scanline == 0 {
             return;
@@ -143,6 +144,7 @@ impl PPU {
         // to be overdrawn by any non-transparent pixels.
         let backdrop_color = self.palette_entry_to_rgb(self.cgram[0]);
         self.frame[draw_line as usize].fill(backdrop_color);
+        self.debug_clear_scanline_buffs();
         // TODO: Support layer disablement (in which case, no need to draw some layers)
         let layer_bpps: &[usize] = match self.io_reg.bg_mode.bg_mode() {
             0 => &[2, 2, 2, 2],
@@ -159,7 +161,9 @@ impl PPU {
                 self.debug_render_scanline_bpp(bg_i, draw_line, *layer_bpp);
             }
         }
-        self.debug_render_sprites(draw_line);
+        if self.io_reg.main_layer_enable.obj() {
+            self.debug_render_sprites(draw_line);
+        }
         for sublayer in layer_priority_order(
             self.io_reg.bg_mode.bg_mode(),
             self.io_reg.bg_mode.bg3_priority(),
@@ -179,11 +183,19 @@ impl PPU {
         }
     }
 
+    fn debug_clear_scanline_buffs(&mut self) {
+        for line_buffs in &mut self.scanline_buffs.bg_buff {
+            line_buffs[0].fill(None);
+            line_buffs[1].fill(None);
+        }
+        for obj_buff in &mut self.scanline_buffs.obj_buff {
+            obj_buff.fill(None);
+        }
+    }
+
     fn debug_render_scanline_bpp(&mut self, bg_i: usize, scanline: u16, bits_per_pixel: usize) {
         assert_eq!(bits_per_pixel % 2, 0);
         let line_buffs = &mut self.scanline_buffs.bg_buff[bg_i];
-        line_buffs[0].fill(None);
-        line_buffs[1].fill(None);
         // TODO: Doesn't support direct color mode
         // TODO: Doesn't support large tiles
         // TODO: Reading from VRAM takes cycles...
@@ -251,10 +263,6 @@ impl PPU {
     }
 
     fn debug_render_sprites(&mut self, scanline: u16) {
-        self.scanline_buffs.obj_buff[0].fill(None);
-        self.scanline_buffs.obj_buff[1].fill(None);
-        self.scanline_buffs.obj_buff[2].fill(None);
-        self.scanline_buffs.obj_buff[3].fill(None);
         for sprite_i in (0..128).rev() {
             let oam_lo_entry = {
                 let oam_off = sprite_i * 4;
@@ -468,6 +476,7 @@ impl PPU {
                 let len_tmp = self.vram.len();
                 self.vram[vram_addr % len_tmp].set_bit_range(15, 8, data);
             }
+            0x211A..=0x2120 => {} // TODO: Rotation/scaling
             0x2121 => {
                 self.io_reg.cgram_addr = data;
                 self.io_reg.cgram_access_latch = false;

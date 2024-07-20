@@ -97,6 +97,14 @@ impl Bus {
                 match addr.lo16() {
                     // TODO: System area
                     0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
+                    // TODO: These PPU registers should probably belong to the PPU eventually
+                    0x2137 | 0x213C | 0x213D | 0x213F => bus
+                        .borrow_mut()
+                        .cpu
+                        .upgrade()
+                        .unwrap()
+                        .borrow_mut()
+                        .io_peak(addr),
                     0x2100..=0x213F => bus.borrow().ppu.borrow().io_peak(addr.lo16()),
                     0x2140..=0x217F => {
                         let port = (addr.lo16() - 0x2140) % 4;
@@ -162,6 +170,14 @@ impl Bus {
                     match addr.lo16() {
                         // TODO: System area
                         0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
+                        // TODO: These PPU registers should probably belong to the PPU eventually
+                        0x2137 | 0x213C | 0x213D | 0x213F => bus
+                            .borrow_mut()
+                            .cpu
+                            .upgrade()
+                            .unwrap()
+                            .borrow_mut()
+                            .io_peak(addr),
                         0x2100..=0x213F => {
                             // TODO: Uncomment once PPU actually does stuff
                             // yield YieldReason::Sync(Device::PPU);

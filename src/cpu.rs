@@ -285,6 +285,11 @@ pub struct CPU {
     io_reg: IoRegisters,
     bus: Rc<RefCell<Bus>>,
     pub ppu_counter: Rc<RefCell<PpuCounter>>,
+    ppu_h_count_latch: u16,
+    ppu_h_count_flipflop: bool,
+    ppu_v_count_latch: u16,
+    ppu_v_count_flipflop: bool,
+    ppu_count_latch_flag: bool,
     dmas_enqueued: Option<u8>,
     hdmas_enqueued: Option<u8>,
     hdmas_ongoing: Option<u8>,
@@ -313,6 +318,11 @@ impl CPU {
             io_reg: IoRegisters::new(),
             bus,
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
+            ppu_h_count_latch: 0,
+            ppu_h_count_flipflop: false,
+            ppu_v_count_latch: 0,
+            ppu_v_count_flipflop: false,
+            ppu_count_latch_flag: false,
             dmas_enqueued: None,
             hdmas_enqueued: None,
             hdmas_ongoing: None,
@@ -665,6 +675,7 @@ impl CPU {
                     let irq_mode = cpu.io_reg.interrupt_control.h_v_irq();
                     let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
                     let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
+                    // TODO: This is technically wrong since there are shorter and longer lines, and some dots are 5 cycles long
                     let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
                     let scanline = cpu.ppu_counter.borrow().scanline;
                     cpu.irq_enqueued |= match irq_mode {
@@ -768,6 +779,41 @@ impl CPU {
                     0xB | 0xF => channel_regs.unused_byte,
                     _ => 0, // TODO: Open bus (maybe handle this in Bus)
                 }
+            }
+            // TODO: These PPU registers should probably belong to the PPU eventually
+            0x2137 => {
+                // TODO: This is technically wrong since there are shorter and longer lines, and some dots are 5 cycles long
+                self.ppu_h_count_latch = self.ppu_counter.borrow().h_ticks / 4;
+                self.ppu_v_count_latch = self.ppu_counter.borrow().scanline;
+                self.ppu_count_latch_flag = true;
+                // TODO: CPU open bus
+                0
+            }
+            0x213C => {
+                let data = if self.ppu_h_count_flipflop {
+                    self.ppu_h_count_latch as u8
+                } else {
+                    (self.ppu_h_count_latch >> 8) as u8
+                };
+                self.ppu_h_count_flipflop = !self.ppu_h_count_flipflop;
+                data
+            }
+            0x213D => {
+                let data = if self.ppu_v_count_flipflop {
+                    self.ppu_v_count_latch as u8
+                } else {
+                    (self.ppu_v_count_latch >> 8) as u8
+                };
+                self.ppu_v_count_flipflop = !self.ppu_v_count_flipflop;
+                data
+            }
+            0x213F => {
+                // TODO: Implement the rest of this register, maybe with a bitfield
+                let old_latch_flag = self.ppu_count_latch_flag;
+                self.ppu_count_latch_flag = false;
+                self.ppu_h_count_flipflop = false;
+                self.ppu_v_count_flipflop = false;
+                (old_latch_flag as u8) << 6
             }
             _ => {
                 log::debug!("TODO: CPU IO read {addr}");
