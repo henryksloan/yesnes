@@ -1,3 +1,7 @@
+mod cartridge;
+
+use cartridge::CartridgeHeader;
+
 use crate::apu::SMP;
 use crate::cpu::CPU;
 use crate::ppu::PPU;
@@ -20,6 +24,7 @@ pub struct Bus {
     // TODO: These should eventually be encapsulated,
     // which should include only allocating according to the ROM header
     cart_test: Vec<u8>,
+    cart_header: Option<CartridgeHeader>,
     sram: Vec<u8>,
     // TODO: These arithmetic ops take place in the CPU (ALU) and take cycle (mult=8, div=16)
     // TODO: Refactor these CPU IOs to a new struct or something
@@ -42,6 +47,7 @@ impl Bus {
             wram: vec![0; 0x20000],
             wram_port_addr: u24(0),
             cart_test: Vec::new(),
+            cart_header: None,
             // TODO: Need to consider the amount of SRAM in the cart and mirror. Super Metroid use this for piracy checks.
             sram: vec![0; 0x80000],
             multiplicand_a: 0,
@@ -63,6 +69,12 @@ impl Bus {
 
     pub fn load_cart(&mut self, cart_path: &str) {
         self.cart_test = fs::read(cart_path).unwrap();
+        self.cart_header = Some(CartridgeHeader::new(
+            // TODO: This depends on HiROM or LoROM
+            &self.cart_test[0x7FC0..0x7FE0].try_into().unwrap(),
+        ));
+        log::debug!("{}", self.cart_header.as_ref().unwrap().title());
+        self.sram = vec![0; self.cart_header.as_ref().unwrap().ram_bytes()]
     }
 
     // TODO: I have FORGOTTEN why these don't take &self. Look into why.
@@ -109,8 +121,14 @@ impl Bus {
                 }
             }
             0x70..=0x7D | 0xF0..=0xFF => {
-                bus.borrow().sram
-                    [(((addr.bank() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
+                let sram_size = bus.borrow().sram.len();
+                if sram_size > 0 {
+                    bus.borrow().sram[((((addr.bank() as usize & !0x80) - 0x70) * 0x8000)
+                        | addr.lo16() as usize)
+                        % sram_size]
+                } else {
+                    0
+                }
             }
             0x7E..=0x7F => {
                 bus.borrow().wram[0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize]
@@ -189,8 +207,14 @@ impl Bus {
                     }
                 }
                 0x70..=0x7D | 0xF0..=0xFF => {
-                    bus.borrow().sram
-                        [(((addr.bank() as usize & !0x80) - 0x70) * 0x8000) | addr.lo16() as usize]
+                    let sram_size = bus.borrow().sram.len();
+                    if sram_size > 0 {
+                        bus.borrow().sram[((((addr.bank() as usize & !0x80) - 0x70) * 0x8000)
+                            | addr.lo16() as usize)
+                            % sram_size]
+                    } else {
+                        0
+                    }
                 }
                 0x7E..=0x7F => {
                     bus.borrow().wram
@@ -297,8 +321,13 @@ impl Bus {
                     }
                 }
                 0x70..=0x7D | 0xF0..=0xFF if (0x0000..=0x7FFF).contains(&addr.lo16()) => {
-                    bus.borrow_mut().sram[(((addr.bank() as usize & !0x80) - 0x70) * 0x8000)
-                        | addr.lo16() as usize] = data
+                    let sram_size = bus.borrow().sram.len();
+                    if sram_size > 0 {
+                        bus.borrow_mut().sram[((((addr.bank() as usize & !0x80) - 0x70)
+                            * 0x8000)
+                            | addr.lo16() as usize)
+                            % sram_size] = data
+                    }
                 }
                 0x7E..=0x7F => {
                     bus.borrow_mut().wram
