@@ -1,8 +1,5 @@
-mod cartridge;
-
-use cartridge::CartridgeHeader;
-
 use crate::apu::SMP;
+use crate::cartridge::Cartridge;
 use crate::cpu::CPU;
 use crate::ppu::PPU;
 use crate::scheduler::*;
@@ -21,11 +18,7 @@ pub struct Bus {
     // TODO: Probably want Box<[u8; 0x20000]>, but need to somehow avoid allocating on stack first
     wram: Vec<u8>,
     wram_port_addr: u24,
-    // TODO: These should eventually be encapsulated,
-    // which should include only allocating according to the ROM header
-    cart_test: Vec<u8>,
-    cart_header: Option<CartridgeHeader>,
-    sram: Vec<u8>,
+    cart: Option<Cartridge>,
     // TODO: These arithmetic ops take place in the CPU (ALU) and take cycle (mult=8, div=16)
     // TODO: Refactor these CPU IOs to a new struct or something
     // 4202h - WRMPYA for IO multiplication
@@ -46,10 +39,7 @@ impl Bus {
             smp,
             wram: vec![0; 0x20000],
             wram_port_addr: u24(0),
-            cart_test: Vec::new(),
-            cart_header: None,
-            // TODO: Need to consider the amount of SRAM in the cart and mirror. Super Metroid use this for piracy checks.
-            sram: vec![0; 0x80000],
+            cart: None,
             multiplicand_a: 0,
             dividend: 0,
             quotient: 0,
@@ -68,13 +58,7 @@ impl Bus {
     }
 
     pub fn load_cart(&mut self, cart_path: &str) {
-        self.cart_test = fs::read(cart_path).unwrap();
-        self.cart_header = Some(CartridgeHeader::new(
-            // TODO: This depends on HiROM or LoROM
-            &self.cart_test[0x7FC0..0x7FE0].try_into().unwrap(),
-        ));
-        log::debug!("{}", self.cart_header.as_ref().unwrap().title());
-        self.sram = vec![0; self.cart_header.as_ref().unwrap().ram_bytes()]
+        self.cart = Some(Cartridge::new(fs::read(cart_path).unwrap()));
     }
 
     // TODO: I have FORGOTTEN why these don't take &self. Look into why.
@@ -84,16 +68,7 @@ impl Bus {
         // TODO: Some generalized mapper logic
         // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
         match addr.bank() {
-            0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
-                bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
-            }
-            0x00..=0x7D | 0x80..=0xFF if (0x8000..=0xFFFF).contains(&addr.lo16()) => {
-                let len = bus.borrow().cart_test.len();
-                bus.borrow().cart_test[(((addr.bank() as usize & !0x80) * 0x8000)
-                    | (addr.lo16() as usize - 0x8000))
-                    % len]
-            }
-            0x00..=0x3F | 0x80..=0xBF => {
+            0x00..=0x3F | 0x80..=0xBF if (0x0000..=0x5FFF).contains(&addr.lo16()) => {
                 match addr.lo16() {
                     // TODO: System area
                     0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
@@ -128,20 +103,16 @@ impl Bus {
                     _ => 0,
                 }
             }
-            0x70..=0x7D | 0xF0..=0xFF => {
-                let sram_size = bus.borrow().sram.len();
-                if sram_size > 0 {
-                    bus.borrow().sram[((((addr.bank() as usize & !0x80) - 0x70) * 0x8000)
-                        | addr.lo16() as usize)
-                        % sram_size]
-                } else {
-                    0
-                }
-            }
             0x7E..=0x7F => {
                 bus.borrow().wram[0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize]
             }
-            _ => 0,
+            _ => {
+                bus.borrow()
+                    .cart
+                    .as_ref()
+                    .and_then(|cart| cart.try_read_u8(addr))
+                    .unwrap_or(0) // TODO: Open bus for peak?
+            }
         }
     }
 
@@ -157,16 +128,7 @@ impl Bus {
             // TODO: Some generalized mapper logic
             // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
             match addr.bank() {
-                0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
-                    bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
-                }
-                0x00..=0x7D | 0x80..=0xFF if (0x8000..=0xFFFF).contains(&addr.lo16()) => {
-                    let len = bus.borrow().cart_test.len();
-                    bus.borrow().cart_test[(((addr.bank() as usize & !0x80) * 0x8000)
-                        | (addr.lo16() as usize - 0x8000))
-                        % len]
-                }
-                0x00..=0x3F | 0x80..=0xBF => {
+                0x00..=0x3F | 0x80..=0xBF if (0x0000..=0x5FFF).contains(&addr.lo16()) => {
                     match addr.lo16() {
                         // TODO: System area
                         0x0000..=0x1FFF => bus.borrow().wram[addr.lo16() as usize],
@@ -222,26 +184,26 @@ impl Bus {
                         }
                     }
                 }
-                0x70..=0x7D | 0xF0..=0xFF => {
-                    let sram_size = bus.borrow().sram.len();
-                    if sram_size > 0 {
-                        bus.borrow().sram[((((addr.bank() as usize & !0x80) - 0x70) * 0x8000)
-                            | addr.lo16() as usize)
-                            % sram_size]
-                    } else {
-                        0
-                    }
-                }
                 0x7E..=0x7F => {
                     bus.borrow().wram
                         [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize]
                 }
                 _ => {
-                    yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
-                        access_type: AccessType::Read,
-                        addr,
-                    }));
-                    0
+                    let cart_read = bus
+                        .borrow()
+                        .cart
+                        .as_ref()
+                        .and_then(|cart| cart.try_read_u8(addr));
+                    if let Some(data) = cart_read {
+                        data
+                    } else {
+                        yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
+                            access_type: AccessType::Read,
+                            addr,
+                        }));
+                        // TODO: Open bus
+                        0
+                    }
                 }
             }
         }
@@ -262,10 +224,7 @@ impl Bus {
             // TODO: Some generalized mapper logic
             // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
             match addr.bank() {
-                0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
-                    // bus.borrow().cart_test[(0x7F00 | (addr.lo16() & 0xFF)) as usize]
-                }
-                0x00..=0x3F | 0x80..=0xBF => {
+                0x00..=0x3F | 0x80..=0xBF if (0x0000..=0x5FFF).contains(&addr.lo16()) => {
                     match addr.lo16() {
                         // TODO: System area
                         0x0000..=0x1FFF => bus.borrow_mut().wram[addr.lo16() as usize] = data,
@@ -277,9 +236,6 @@ impl Bus {
                         0x2140..=0x217F => {
                             yield YieldReason::Sync(Device::SMP);
                             let port = (addr.lo16() - 0x2140) % 4;
-                            // if port == 2 || port == 3 {
-                            //     println!("Write F{} <- {:02X}", port + 4, data);
-                            // }
                             bus.borrow().smp.borrow_mut().io_write(0x2140 + port, data);
                         }
                         0x2180 => {
@@ -336,24 +292,22 @@ impl Bus {
                         }
                     }
                 }
-                0x70..=0x7D | 0xF0..=0xFF if (0x0000..=0x7FFF).contains(&addr.lo16()) => {
-                    let sram_size = bus.borrow().sram.len();
-                    if sram_size > 0 {
-                        bus.borrow_mut().sram[((((addr.bank() as usize & !0x80) - 0x70)
-                            * 0x8000)
-                            | addr.lo16() as usize)
-                            % sram_size] = data
-                    }
-                }
                 0x7E..=0x7F => {
                     bus.borrow_mut().wram
                         [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize] = data
                 }
                 _ => {
-                    yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
-                        access_type: AccessType::Write,
-                        addr,
-                    }));
+                    let cart_write = bus
+                        .borrow_mut()
+                        .cart
+                        .as_mut()
+                        .is_some_and(|cart| cart.try_write_u8(addr, data));
+                    if !cart_write {
+                        yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
+                            access_type: AccessType::Write,
+                            addr,
+                        }));
+                    }
                 }
             }
         }

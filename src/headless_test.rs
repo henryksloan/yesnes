@@ -7,6 +7,7 @@
 
 mod apu;
 mod bus;
+mod cartridge;
 mod cpu;
 mod disassembler;
 mod frontend;
@@ -21,7 +22,8 @@ use std::time::Instant;
 
 fn main() {
     let mut snes = snes::SNES::new();
-    snes.load_cart("/home/henry/roms/snes/Harvest Moon (USA).sfc");
+    let cart_path = std::env::args().nth(1).expect("Expected a rom file");
+    snes.load_cart(&cart_path);
     snes.reset();
     loop {
         // for _ in 0..5 {
