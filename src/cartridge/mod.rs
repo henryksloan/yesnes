@@ -1,6 +1,8 @@
 mod cartridge_header;
+mod mapper;
 
 use cartridge_header::CartridgeHeader;
+use mapper::Mapper;
 
 use crate::u24::u24;
 
@@ -11,13 +13,29 @@ pub struct Cartridge {
 }
 
 impl Cartridge {
-    pub fn new(data: Vec<u8>) -> Self {
-        let header = CartridgeHeader::try_read_from(
-            // DO NOT SUBMIT: This depends on HiROM or LoROM
-            data[0x7FC0..0x7FE0].try_into().unwrap(),
-        )
+    pub fn new(mut data: Vec<u8>) -> Self {
+        // Drop extra headers from copiers (SWC/UFO/etc.)
+        if data.len() & 0x3FF == 0x200 {
+            data.drain(..0x200);
+        }
         // TODO: Once the frontend has any error reporting, refactor these panics to Result
-        .expect("Invalid ROM");
+        let (header, mapper) = {
+            let lorom_header =
+                CartridgeHeader::try_read_from(data[0x7FC0..0x7FE0].try_into().unwrap())
+                    .map(|header| (header, Mapper::LoROM));
+            let hirom_header =
+                CartridgeHeader::try_read_from(data[0xFFC0..0xFFE0].try_into().unwrap())
+                    .map(|header| (header, Mapper::HiROM));
+            lorom_header.or(hirom_header).expect("Invalid ROM")
+        };
+        if header.mapper() != mapper {
+            // TODO: Guessing the mappign type purely from checksums isn't quite ideal
+            panic!(
+                "ROM mapping type {:?} mismatches checksum-ascertained type {:?}",
+                header.mapper(),
+                mapper
+            );
+        }
         match header.cartridge_type().0 {
             0x00 | 0x01 | 0x02 => {}
             cartridge_type => panic!("Unsupported cartridge type 0x{cartridge_type:X}"),
