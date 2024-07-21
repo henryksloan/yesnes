@@ -490,7 +490,7 @@ impl PPU {
                 }
                 self.cgram[cgram_addr].set_bit_range(write_bits.0, write_bits.1, data);
             }
-            // DO NOT SUBMIT: Should reads of these work? What is the program tries to OR or something?
+            // TODO: Should reads of these work? What is the program tries to OR or something?
             0x212C => self.io_reg.main_layer_enable.0 = data,
             0x212D => self.io_reg.sub_layer_enable.0 = data,
             0x2123..=0x212B | 0x212E..=0x212F => {} // TODO: Window

@@ -24,6 +24,12 @@ pub struct CartridgeHeader {
 
 impl CartridgeHeader {
     pub fn new(data: &[u8; 0x20]) -> Self {
+        // TODO: Remove this temporary check
+        match CartridgeType(data[0x16]).0 {
+            0x00 | 0x01 | 0x02 => {}
+            cartridge_type => panic!("Unsupported cartridge type 0x{cartridge_type:X}"),
+        }
+
         Self {
             title: data[..0x15].try_into().unwrap(),
             rom_speed_map_mode: RomSpeedMapMode(data[0x15]),
