@@ -12,10 +12,16 @@ pub struct Cartridge {
 
 impl Cartridge {
     pub fn new(data: Vec<u8>) -> Self {
-        let header = CartridgeHeader::new(
+        let header = CartridgeHeader::try_read_from(
             // DO NOT SUBMIT: This depends on HiROM or LoROM
             data[0x7FC0..0x7FE0].try_into().unwrap(),
-        );
+        )
+        // TODO: Once the frontend has any error reporting, refactor these panics to Result
+        .expect("Invalid ROM");
+        match header.cartridge_type().0 {
+            0x00 | 0x01 | 0x02 => {}
+            cartridge_type => panic!("Unsupported cartridge type 0x{cartridge_type:X}"),
+        }
         log::debug!("{}", header.title());
         let sram = vec![0; header.ram_bytes()];
         Self {

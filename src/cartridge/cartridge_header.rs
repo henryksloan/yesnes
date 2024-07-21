@@ -23,14 +23,15 @@ pub struct CartridgeHeader {
 }
 
 impl CartridgeHeader {
-    pub fn new(data: &[u8; 0x20]) -> Self {
-        // TODO: Remove this temporary check
-        match CartridgeType(data[0x16]).0 {
-            0x00 | 0x01 | 0x02 => {}
-            cartridge_type => panic!("Unsupported cartridge type 0x{cartridge_type:X}"),
+    pub fn try_read_from(data: &[u8; 0x20]) -> Option<Self> {
+        let checksum_complement = u16::from_le_bytes(data[0x1C..=0x1D].try_into().unwrap());
+        let checksum = u16::from_le_bytes(data[0x1E..=0x1F].try_into().unwrap());
+
+        if !checksum != checksum_complement {
+            return None;
         }
 
-        Self {
+        Some(Self {
             title: data[..0x15].try_into().unwrap(),
             rom_speed_map_mode: RomSpeedMapMode(data[0x15]),
             cartridge_type: CartridgeType(data[0x16]),
@@ -39,9 +40,9 @@ impl CartridgeHeader {
             country: data[0x19],
             developer_id: data[0x1A],
             rom_version: data[0x1B],
-            checksum_complement: u16::from_le_bytes(data[0x1C..=0x1D].try_into().unwrap()),
-            checksum: u16::from_le_bytes(data[0x1E..=0x1F].try_into().unwrap()),
-        }
+            checksum_complement,
+            checksum,
+        })
     }
 
     pub fn title(&self) -> String {
@@ -55,6 +56,10 @@ impl CartridgeHeader {
             0 => 0,
             shift => (1 << shift) * 0x400,
         }
+    }
+
+    pub fn cartridge_type(&self) -> CartridgeType {
+        self.cartridge_type
     }
 }
 
