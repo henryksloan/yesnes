@@ -941,7 +941,6 @@ impl SMP {
     fn indirect_indexed<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<u16> + 'a {
         #[coroutine]
         move || {
-            // TODO: DO NOT SUBMIT: Get rid of unnecessary dummy yields (are any needed with #coroutine?)
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr = fetch!(smp);
             let indirect_addr = {

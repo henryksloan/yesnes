@@ -285,6 +285,11 @@ pub struct CPU {
     io_reg: IoRegisters,
     bus: Rc<RefCell<Bus>>,
     pub ppu_counter: Rc<RefCell<PpuCounter>>,
+    ppu_h_count_latch: u16,
+    ppu_h_count_flipflop: bool,
+    ppu_v_count_latch: u16,
+    ppu_v_count_flipflop: bool,
+    ppu_count_latch_flag: bool,
     dmas_enqueued: Option<u8>,
     hdmas_enqueued: Option<u8>,
     hdmas_ongoing: Option<u8>,
@@ -313,6 +318,11 @@ impl CPU {
             io_reg: IoRegisters::new(),
             bus,
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
+            ppu_h_count_latch: 0,
+            ppu_h_count_flipflop: false,
+            ppu_v_count_latch: 0,
+            ppu_v_count_flipflop: false,
+            ppu_count_latch_flag: false,
             dmas_enqueued: None,
             hdmas_enqueued: None,
             hdmas_ongoing: None,
@@ -665,6 +675,7 @@ impl CPU {
                     let irq_mode = cpu.io_reg.interrupt_control.h_v_irq();
                     let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
                     let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
+                    // TODO: This is technically wrong since there are shorter and longer lines, and some dots are 5 cycles long
                     let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
                     let scanline = cpu.ppu_counter.borrow().scanline;
                     cpu.irq_enqueued |= match irq_mode {
@@ -720,7 +731,8 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
-            // TODO: Remove debugging value
+            // TODO: Remove debugging value; once this is real, read should also ACK
+            // TODO: Games seem to write this; why?
             // This has bit6 set to simulate some weird open bus behavior for testing
             // 0x4210 => 0xC0,
             0x4210 => {
@@ -736,6 +748,7 @@ impl CPU {
             } // 0xC0,
             0x4211 => 0, // TODO: IRQ stuff
             // TODO: Remove debugging value
+            // TODO: Games see to write this; why? Should probably just do thing?
             0x4212 => {
                 static mut DEBUG_LATCH: u8 = 0;
                 unsafe {
@@ -767,6 +780,41 @@ impl CPU {
                     _ => 0, // TODO: Open bus (maybe handle this in Bus)
                 }
             }
+            // TODO: These PPU registers should probably belong to the PPU eventually
+            0x2137 => {
+                // TODO: This is technically wrong since there are shorter and longer lines, and some dots are 5 cycles long
+                self.ppu_h_count_latch = self.ppu_counter.borrow().h_ticks / 4;
+                self.ppu_v_count_latch = self.ppu_counter.borrow().scanline;
+                self.ppu_count_latch_flag = true;
+                // TODO: CPU open bus
+                0
+            }
+            0x213C => {
+                let data = if self.ppu_h_count_flipflop {
+                    self.ppu_h_count_latch as u8
+                } else {
+                    (self.ppu_h_count_latch >> 8) as u8
+                };
+                self.ppu_h_count_flipflop = !self.ppu_h_count_flipflop;
+                data
+            }
+            0x213D => {
+                let data = if self.ppu_v_count_flipflop {
+                    self.ppu_v_count_latch as u8
+                } else {
+                    (self.ppu_v_count_latch >> 8) as u8
+                };
+                self.ppu_v_count_flipflop = !self.ppu_v_count_flipflop;
+                data
+            }
+            0x213F => {
+                // TODO: Implement the rest of this register, maybe with a bitfield
+                let old_latch_flag = self.ppu_count_latch_flag;
+                self.ppu_count_latch_flag = false;
+                self.ppu_h_count_flipflop = false;
+                self.ppu_v_count_flipflop = false;
+                (old_latch_flag as u8) << 6
+            }
             _ => {
                 log::debug!("TODO: CPU IO read {addr}");
                 0
@@ -778,9 +826,11 @@ impl CPU {
     pub fn io_write(&mut self, addr: u24, data: u8) {
         match addr.lo16() {
             0x4200 => self.io_reg.interrupt_control.0 = data,
-            0x420B => {
-                self.dmas_enqueued = Some(data);
-            }
+            0x4207 => self.io_reg.h_scan_count.set_lo_byte(data),
+            0x4208 => self.io_reg.h_scan_count.set_hi_byte(data),
+            0x4209 => self.io_reg.v_scan_count.set_lo_byte(data),
+            0x420A => self.io_reg.v_scan_count.set_hi_byte(data),
+            0x420B => self.dmas_enqueued = Some(data),
             0x420C => {
                 // log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
                 self.hdmas_enqueued = Some(data);
