@@ -16,7 +16,7 @@ impl LoROM {
 impl Mapper for LoROM {
     fn try_read_u8(&self, addr: u24) -> Option<u8> {
         match addr.bank() {
-            // DO NOT SUBMIT: I believe this is a mirror of the header; verify and add comment
+            // A mirror of the cartridge header and exception vectors (as they are placed in LoROM images)
             0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
                 Some(self.rom[(0x7F00 | (addr.lo16() & 0xFF)) as usize])
             }
@@ -25,6 +25,7 @@ impl Mapper for LoROM {
                     | (addr.lo16() as usize - 0x8000))
                     % self.rom.len()],
             ),
+            // DO NOT SUBMIT: Where does this 0xF0..=0xFF come from? Is it correct?
             0x70..=0x7D | 0xF0..=0xFF => {
                 let sram_size = self.sram.len();
                 if sram_size > 0 {

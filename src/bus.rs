@@ -122,6 +122,7 @@ impl Bus {
         (hi << 8) | lo
     }
 
+    // TODO: Implement speeds and such
     pub fn read_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u8> + 'a {
         #[coroutine]
         move || {

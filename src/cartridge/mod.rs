@@ -2,10 +2,11 @@ mod cartridge_header;
 mod mapper;
 
 use cartridge_header::CartridgeHeader;
-use mapper::{LoROM, Mapper, MapperType};
+use mapper::{HiROM, LoROM, Mapper, MapperType};
 
 use crate::u24::u24;
 
+// TODO: Implement speeds and such
 pub struct Cartridge {
     header: CartridgeHeader,
     mapper: Box<dyn Mapper>,
@@ -41,10 +42,11 @@ impl Cartridge {
         }
         log::debug!("{}", header.title());
         let sram = vec![0; header.ram_bytes()];
-        let mapper = Box::new(match mapper_type {
-            MapperType::LoROM => LoROM::new(data, sram),
+        let mapper: Box<dyn Mapper> = match mapper_type {
+            MapperType::LoROM => Box::new(LoROM::new(data, sram)),
+            MapperType::HiROM => Box::new(HiROM::new(data, sram)),
             _ => unimplemented!("Mapper {mapper_type:?} is not yet implemented"),
-        });
+        };
         Self { header, mapper }
     }
 

@@ -1,5 +1,7 @@
+pub mod hi_rom;
 pub mod lo_rom;
 
+pub use hi_rom::HiROM;
 pub use lo_rom::LoROM;
 
 use crate::u24::u24;
