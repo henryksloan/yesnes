@@ -1,4 +1,4 @@
-use super::mapper::Mapper;
+use super::mapper::MapperType;
 
 use bitfield::bitfield;
 
@@ -64,7 +64,7 @@ impl CartridgeHeader {
         self.cartridge_type
     }
 
-    pub fn mapper(&self) -> Mapper {
+    pub fn mapper(&self) -> MapperType {
         self.rom_speed_map_mode.mapper()
     }
 }
@@ -79,11 +79,11 @@ bitfield! {
 }
 
 impl RomSpeedMapMode {
-    pub fn mapper(&self) -> Mapper {
+    pub fn mapper(&self) -> MapperType {
         match self.map_mode() {
-            0x0 | 0x2 | 0x3 => Mapper::LoROM,
-            0x1 | 0x5 | 0xA => Mapper::HiROM,
-            _ => Mapper::Unknown,
+            0x0 | 0x2 | 0x3 => MapperType::LoROM,
+            0x1 | 0x5 | 0xA => MapperType::HiROM,
+            _ => MapperType::Unknown,
         }
     }
 }
