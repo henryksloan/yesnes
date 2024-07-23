@@ -163,9 +163,6 @@ macro_rules! branch_instrs {
         paste! {
             fn [<branch_ $flag _ $set_clear>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    // let source_pc = cpu.borrow().reg.pc + 1u16;
-                    // let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
-                    // TODO: NOTE: This is a critical bug fix
                     let source_pc = cpu.borrow().reg.pc;
                     let offset = fetch!(cpu) as i8 as i16;
                     let dest_pc = source_pc.wrapping_add_lo16(offset + 1);
@@ -543,6 +540,7 @@ impl CPU {
                 (transfer_y_a, NoFlag; 0x98=>implied)
                 (transfer_y_x, NoFlag; 0xBB=>implied)
                 (stp, NoFlag; 0xDB=>implied)
+                // TODO: Implement WAI instruction
             );
 
             // TODO: Proper DMA activation and pause timing
@@ -601,7 +599,6 @@ impl CPU {
     }
 
     fn on_scanline_start<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<()> + 'a {
-        // TODO: Possibly resync all threads at this time
         // TODO: How expensive are nested generators for function calls? Are macros much cheaper
         // by avoiding the nesting? If so, it would be worth finding a middle-ground.
         #[coroutine]
@@ -1286,7 +1283,6 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                // TODO: NOTE: This is a critical bug fix
                 CPU::bank_addr(cpu.clone(), u24(((fetch!(cpu) as u32) << 8) | addr_lo))
             };
             Pointer { addr, long }
@@ -1298,7 +1294,6 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                // TODO: NOTE: This is a critical bug fix
                 CPU::bank_addr(
                     cpu.clone(),
                     u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_x() as u32),
@@ -1313,7 +1308,6 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                // TODO: NOTE: This is a critical bug fix
                 CPU::bank_addr(
                     cpu.clone(),
                     u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32),
@@ -1417,8 +1411,6 @@ impl CPU {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 // TODO: Normalize wrapping behavior/functions for 16 bit accesses throughout
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
-                // u24((hi << 8) | lo)
-                // TODO: NOTE: This is a critical bug fix
                 CPU::bank_addr(cpu.clone(), u24((hi << 8) | lo))
             };
             Pointer { addr, long }
@@ -1438,7 +1430,6 @@ impl CPU {
                 )) as u32;
                 u24((hi << 8) | lo)
             };
-            // TODO: NOTE: This is a critical bug fix
             let addr = CPU::bank_addr(cpu.clone(), bank_addr);
             Pointer { addr, long }
         }
@@ -2259,9 +2250,6 @@ impl CPU {
     fn bra<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            // let source_pc = cpu.borrow().reg.pc + 1u16;
-            // let dest_pc = u24((source_pc.raw() as i32 + (fetch!(cpu) as i8 as i32)) as u32);
-            // TODO: NOTE: This is a critical bug fix
             let source_pc = cpu.borrow().reg.pc;
             let offset = fetch!(cpu) as i8 as i16;
             let dest_pc = source_pc.wrapping_add_lo16(offset + 1);
@@ -2277,9 +2265,6 @@ impl CPU {
     fn brl<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            // let source_pc = cpu.borrow().reg.pc + 2u16;
-            // let dest_pc = u24((source_pc.raw() as i32 + (fetch_u16!(cpu) as i16 as i32)) as u32);
-            // TODO: NOTE: This is a critical bug fix
             let source_pc = cpu.borrow().reg.pc;
             let offset = fetch_u16!(cpu) as i16;
             let dest_pc = source_pc.wrapping_add_lo16(offset + 2);
@@ -2365,6 +2350,7 @@ impl CPU {
         #[coroutine]
         move || {
             // TODO: There might be a more useful way to implement this
+            // TODO: This doesn't do anything to block interrupts
             cpu.borrow_mut().progress_pc(-1);
         }
     }
