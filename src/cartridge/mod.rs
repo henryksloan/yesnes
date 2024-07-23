@@ -20,12 +20,18 @@ impl Cartridge {
         }
         // TODO: Once the frontend has any error reporting, refactor these panics to Result
         let (header, mapper_type) = {
-            let lorom_header =
-                CartridgeHeader::try_read_from(data[0x7FC0..0x7FE0].try_into().unwrap())
-                    .map(|header| (header, MapperType::LoROM));
-            let hirom_header =
-                CartridgeHeader::try_read_from(data[0xFFC0..0xFFE0].try_into().unwrap())
-                    .map(|header| (header, MapperType::HiROM));
+            let lorom_header = (data.len() >= 0x7FE0)
+                .then(|| {
+                    CartridgeHeader::try_read_from(data[0x7FC0..0x7FE0].try_into().unwrap())
+                        .map(|header| (header, MapperType::LoROM))
+                })
+                .flatten();
+            let hirom_header = (data.len() >= 0xFFE0)
+                .then(|| {
+                    CartridgeHeader::try_read_from(data[0xFFC0..0xFFE0].try_into().unwrap())
+                        .map(|header| (header, MapperType::HiROM))
+                })
+                .flatten();
             lorom_header.or(hirom_header).expect("Invalid ROM")
         };
         if header.mapper() != mapper_type {
