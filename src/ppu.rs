@@ -195,7 +195,6 @@ impl PPU {
 
     fn debug_render_scanline_bpp(&mut self, bg_i: usize, scanline: u16, bits_per_pixel: usize) {
         assert_eq!(bits_per_pixel % 2, 0);
-        let line_buffs = &mut self.scanline_buffs.bg_buff[bg_i];
         // TODO: Doesn't support direct color mode
         // TODO: Doesn't support large tiles
         // TODO: Reading from VRAM takes cycles...
@@ -231,35 +230,62 @@ impl PPU {
             let palette_n = (tile >> 10) & 0x7;
             let priority = (tile >> 13) & 0x1;
             let (flip_x, flip_y) = ((tile >> 14) & 1 == 1, (tile >> 15) & 1 == 1);
-            let line = if flip_y { 7 - line_offset } else { line_offset };
-            let tile_plane_pairs: Vec<u16> = (0..(bits_per_pixel / 2))
-                .map(|i| self.vram[(i * 8 + tile_chr_base + line) % self.vram.len()])
-                .collect();
             let start_bit = if col_i == 0 { start_pixel_x } else { 0 };
             let end_bit = if col_i == 32 { start_pixel_x } else { 8 };
+            let tile_line_pixels = self.render_tile_line(
+                tile_chr_base,
+                line_offset,
+                palette_n,
+                bits_per_pixel,
+                flip_x,
+                flip_y,
+                false,
+            );
+            let line_buffs = &mut self.scanline_buffs.bg_buff[bg_i];
             for bit_i in start_bit..end_bit {
-                let bit = if flip_x { 7 - bit_i } else { bit_i };
-                let palette_i = tile_plane_pairs.iter().rev().fold(0, |acc, word| {
-                    let pair = (((word >> (15 - bit)) & 1) << 1) | ((word >> (7 - bit)) & 1);
-                    (acc << 2) | pair
-                });
-                // Entry 0 in each BG palette is transparent.
-                if palette_i == 0 {
-                    continue;
-                }
-                // let palette_entry =
-                //     self.cgram[(1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize];
-                let palette_entry = self.cgram[((1 << bits_per_pixel) * (palette_n as usize)
-                    + palette_i as usize)
-                    % self.cgram.len()];
-                let pixel = [
-                    ((palette_entry & 0x1F) as u8) << 3,
-                    (((palette_entry >> 5) & 0x1F) as u8) << 3,
-                    (((palette_entry >> 10) & 0x1F) as u8) << 3,
-                ];
-                line_buffs[priority as usize][(col_i * 8 + bit_i) - start_pixel_x] = Some(pixel);
+                line_buffs[priority as usize][(col_i * 8 + bit_i) - start_pixel_x] =
+                    tile_line_pixels[bit_i];
             }
         }
+    }
+
+    fn render_tile_line(
+        &self,
+        tile_chr_base: usize,
+        line_offset: usize,
+        palette_n: u16,
+        bits_per_pixel: usize,
+        flip_x: bool,
+        flip_y: bool,
+        sprite: bool,
+    ) -> [Option<[u8; 3]>; 8] {
+        let mut result = [None; 8];
+        let line = if flip_y { 7 - line_offset } else { line_offset };
+        let tile_plane_pairs: Vec<u16> = (0..(bits_per_pixel / 2))
+            .map(|i| self.vram[(i * 8 + tile_chr_base + line) % self.vram.len()])
+            .collect();
+        for bit_i in 0..8 {
+            let bit = if flip_x { 7 - bit_i } else { bit_i };
+            let palette_i = tile_plane_pairs.iter().rev().fold(0, |acc, word| {
+                let pair = (((word >> (15 - bit)) & 1) << 1) | ((word >> (7 - bit)) & 1);
+                (acc << 2) | pair
+            });
+            // Entry 0 in each palette is transparent.
+            if palette_i == 0 {
+                continue;
+            }
+            let palette_offset = if sprite { 0x80 } else { 0x00 };
+            let palette_entry = self.cgram[palette_offset
+                + ((1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize)
+                    % self.cgram.len()];
+            let pixel = [
+                ((palette_entry & 0x1F) as u8) << 3,
+                (((palette_entry >> 5) & 0x1F) as u8) << 3,
+                (((palette_entry >> 10) & 0x1F) as u8) << 3,
+            ];
+            result[bit_i] = Some(pixel);
+        }
+        result
     }
 
     fn debug_render_sprites(&mut self, scanline: u16) {
@@ -331,37 +357,29 @@ impl PPU {
                 .io_reg
                 .obj_size_base
                 .calculate_vram_addr(attr.nametable_select(), chr_n as u8);
-            let tile_line = line % 8;
-            let planes_0_1 = self.vram[(tile_chr_base + tile_line) as usize];
-            let planes_2_3 = self.vram[(8 + tile_chr_base + tile_line) as usize];
+            let line_offset = line % 8;
+            let tile_line_pixels = self.render_tile_line(
+                tile_chr_base as usize,
+                line_offset as usize,
+                palette_n as u16,
+                4,
+                attr.flip_x(),
+                attr.flip_y(),
+                true,
+            );
             for bit_i in 0..8 {
                 let pixel_x = {
-                    let x = (x_lo8 as u16 + col_i * 8 + bit_i) as i16 - (x_hi1 as i16 * 256);
+                    let x = (x_lo8 as u16 + col_i * 8 + bit_i as u16) as i16 - (x_hi1 as i16 * 256);
                     if x >= 255 || x < 0 {
                         continue;
                     }
                     x as usize
                 };
-                let bit = if attr.flip_x() { 7 - bit_i } else { bit_i };
-                let palette_i = {
-                    let pair_lo =
-                        (((planes_0_1 >> (15 - bit)) & 1) << 1) | ((planes_0_1 >> (7 - bit)) & 1);
-                    let pair_hi =
-                        (((planes_2_3 >> (15 - bit)) & 1) << 1) | ((planes_2_3 >> (7 - bit)) & 1);
-                    (pair_hi << 2) | pair_lo
-                };
-                // Entry 0 in each OBJ palette is transparent.
-                if palette_i == 0 {
-                    continue;
+                // Explicitly ignore transparent pixels, so as not to override other sprites with one's transparency
+                if tile_line_pixels[bit_i].is_some() {
+                    self.scanline_buffs.obj_buff[attr.priority() as usize][pixel_x] =
+                        tile_line_pixels[bit_i];
                 }
-                let palette_entry =
-                    self.cgram[0x80 + 16 * (palette_n as usize) + palette_i as usize];
-                let pixel = [
-                    ((palette_entry & 0x1F) as u8) << 3,
-                    (((palette_entry >> 5) & 0x1F) as u8) << 3,
-                    (((palette_entry >> 10) & 0x1F) as u8) << 3,
-                ];
-                self.scanline_buffs.obj_buff[attr.priority() as usize][pixel_x] = Some(pixel);
             }
         }
     }
