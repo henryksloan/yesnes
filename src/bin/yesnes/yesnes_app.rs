@@ -22,6 +22,7 @@ struct YesnesApp {
     cpu_debugger_window: DebuggerWindow<DebugCpu>,
     smp_debugger_window: DebuggerWindow<DebugSmp>,
     cpu_memory_view_window: MemoryViewWindow<DebugCpu>,
+    smp_memory_view_window: MemoryViewWindow<DebugSmp>,
     screen_window: ScreenWindow,
     frame_history: FrameHistory,
 }
@@ -66,9 +67,13 @@ impl Default for YesnesApp {
             emu_paused.clone(),
             sender.clone(),
         );
-        let memory_view_window = MemoryViewWindow::new(
+        let cpu_memory_view_window = MemoryViewWindow::new(
             "CPU Memory Viewer".to_string(),
             snes.lock().unwrap().make_debug_cpu(),
+        );
+        let smp_memory_view_window = MemoryViewWindow::new(
+            "SMP Memory Viewer".to_string(),
+            snes.lock().unwrap().make_debug_smp(),
         );
         let screen_window =
             ScreenWindow::new("Screen".to_string(), snes.clone(), frame_ready.clone());
@@ -78,7 +83,8 @@ impl Default for YesnesApp {
             active_window_id: None,
             cpu_debugger_window,
             smp_debugger_window,
-            cpu_memory_view_window: memory_view_window,
+            cpu_memory_view_window,
+            smp_memory_view_window,
             screen_window,
             frame_history: FrameHistory::new(),
         }
@@ -107,6 +113,8 @@ impl eframe::App for YesnesApp {
             .show_with_shortcuts(ctx, paused, self.active_window_id);
         self.cpu_memory_view_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
+        self.smp_memory_view_window
+            .show_with_shortcuts(ctx, paused, self.active_window_id);
         self.screen_window.show(ctx, paused, self.active_window_id);
 
         ctx.memory_mut(|memory| {
@@ -126,7 +134,7 @@ impl eframe::App for YesnesApp {
 
 pub fn run() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1260.0, 1000.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1600.0, 1000.0]),
         ..Default::default()
     };
     eframe::run_native(
