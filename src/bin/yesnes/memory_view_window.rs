@@ -9,6 +9,8 @@ use yesnes::disassembler::DebugProcessor;
 
 use egui_extras::{Column, TableBuilder};
 
+// TODO: This really begs for a Memory abstraction more than DebugProcessor,
+// as e.g. PPU has multiple memories
 pub struct MemoryViewWindow<D: DebugProcessor> {
     id: egui::Id,
     title: String,

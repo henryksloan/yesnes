@@ -211,8 +211,8 @@ impl PPU {
         let row = (render_line / 8) % screen_rows;
         let v_screen = row / 32;
         let line_offset = render_line % 8;
-        let start_col = (self.io_reg.bg_scroll[0].h.val / 8) as usize;
-        let start_pixel_x = (self.io_reg.bg_scroll[0].h.val % 8) as usize;
+        let start_col = (self.io_reg.bg_scroll[bg_i].h.val / 8) as usize;
+        let start_pixel_x = (self.io_reg.bg_scroll[bg_i].h.val % 8) as usize;
         let n_cols = 32 + (start_pixel_x > 0) as usize;
         for col_i in 0..n_cols {
             // TODO: Would be nice to use a bitfield for these

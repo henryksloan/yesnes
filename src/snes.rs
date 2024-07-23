@@ -63,6 +63,7 @@ impl SNES {
         self.scheduler.run();
     }
 
+    // TODO: This is kind of a nonsense function
     pub fn run_instruction(&mut self) {
         self.scheduler.run_instruction();
     }
@@ -73,10 +74,6 @@ impl SNES {
 
     pub fn take_frame(&mut self) -> Option<[[[u8; 3]; 256]; 224]> {
         self.cpu.borrow_mut().debug_frame.take()
-    }
-
-    pub fn debug_draw_frame(&self) -> [[[u8; 3]; 256]; 224] {
-        self.ppu.borrow().debug_get_frame()
     }
 
     pub fn set_controller_state(&mut self, controller_i: usize, data: u16) {
@@ -104,7 +101,8 @@ mod tests {
     #[bench]
     fn bench_1_frame(b: &mut Bencher) {
         let mut snes = SNES::new();
-        snes.load_cart("/home/henry/roms/snes/Harvest Moon (USA).sfc");
+        // TODO: Fill in some local testdata
+        snes.load_cart("");
         snes.reset();
         b.iter(move || while !snes.run_instruction_debug(Device::CPU).1 {});
     }
@@ -112,7 +110,7 @@ mod tests {
     // #[bench]
     // fn bench_600_frame(b: &mut Bencher) {
     //     let mut snes = SNES::new();
-    //     snes.load_cart("/home/henry/roms/snes/Harvest Moon (USA).sfc");
+    //     snes.load_cart("");
     //     snes.reset();
     //     b.iter(move || {
     //         for _ in 0..600 {
