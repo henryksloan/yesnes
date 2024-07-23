@@ -93,11 +93,9 @@ pub fn run_emu_thread(
                         break;
                     }
                     let mut snes = snes.lock().unwrap();
-                    // TODO: It would be best if 1) we could just use D::Registers, D::pc, and
-                    // 2) if D::Registers somehow returned a reference, not a clone
                     let pc: usize = match device {
-                        Device::CPU => snes.cpu.borrow().registers().pc.into(),
-                        Device::SMP => snes.smp.borrow().registers().pc.into(),
+                        Device::CPU => DebugCpu::pc(&DebugCpu::registers(&snes)).into(),
+                        Device::SMP => DebugSmp::pc(&DebugSmp::registers(&snes)).into(),
                         _ => panic!(),
                     };
                     if pc == addr {

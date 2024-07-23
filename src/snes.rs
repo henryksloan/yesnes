@@ -1,3 +1,4 @@
+use crate::disassembler::{DebugCpu, DebugSmp};
 use crate::scheduler::Device;
 use crate::u24::u24;
 use crate::{apu::SMP, bus::Bus, cpu::CPU, ppu::PPU, scheduler::Scheduler};
@@ -6,10 +7,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct SNES {
-    pub cpu: Rc<RefCell<CPU>>,
-    pub bus: Rc<RefCell<Bus>>,
-    ppu: Rc<RefCell<PPU>>,
-    pub smp: Rc<RefCell<SMP>>,
+    pub(crate) cpu: Rc<RefCell<CPU>>,
+    pub(crate) bus: Rc<RefCell<Bus>>,
+    pub(crate) ppu: Rc<RefCell<PPU>>,
+    pub(crate) smp: Rc<RefCell<SMP>>,
 
     scheduler: Scheduler,
 }
@@ -71,8 +72,18 @@ impl SNES {
         self.scheduler.run_instruction_debug(run_device)
     }
 
-    pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
+    pub fn take_frame(&mut self) -> Option<[[[u8; 3]; 256]; 224]> {
+        self.cpu.borrow_mut().debug_frame.take()
+    }
+
+    pub fn debug_draw_frame(&self) -> [[[u8; 3]; 256]; 224] {
         self.ppu.borrow().debug_get_frame()
+    }
+
+    pub fn set_controller_state(&mut self, controller_i: usize, data: u16) {
+        if controller_i < 4 {
+            self.cpu.borrow_mut().controller_states[controller_i] = data;
+        }
     }
 
     pub fn device_peak_u8(&self, device: Device, addr: u24) -> u8 {
@@ -81,6 +92,14 @@ impl SNES {
             // TODO: Peaking SMP, etc.
             _ => 0,
         }
+    }
+
+    pub fn make_debug_cpu(&self) -> DebugCpu {
+        DebugCpu::new(self.bus.clone())
+    }
+
+    pub fn make_debug_smp(&self) -> DebugSmp {
+        DebugSmp::new(self.smp.clone())
     }
 }
 

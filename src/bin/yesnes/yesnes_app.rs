@@ -30,13 +30,13 @@ impl Default for YesnesApp {
         let cart_path = std::env::args().nth(1).expect("Expected a rom file");
         snes.lock().unwrap().load_cart(&cart_path);
         snes.lock().unwrap().reset();
-        let cpu_disassembler = Arc::new(Mutex::new(Disassembler::new(DebugCpu::new(
-            snes.lock().unwrap().bus.clone(),
-        ))));
+        let cpu_disassembler = Arc::new(Mutex::new(Disassembler::new(
+            snes.lock().unwrap().make_debug_cpu(),
+        )));
         cpu_disassembler.lock().unwrap().disassemble();
-        let smp_disassembler = Arc::new(Mutex::new(Disassembler::new(DebugSmp::new(
-            snes.lock().unwrap().smp.clone(),
-        ))));
+        let smp_disassembler = Arc::new(Mutex::new(Disassembler::new(
+            snes.lock().unwrap().make_debug_smp(),
+        )));
         smp_disassembler.lock().unwrap().disassemble();
         let (sender, receiver) = channel::bounded(1024);
         // TODO: This should be a smarter cancellation mechanism. As a start, could use an atomic bool.

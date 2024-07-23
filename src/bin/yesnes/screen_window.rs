@@ -49,8 +49,8 @@ impl AppWindow for ScreenWindow {
         {
             // TODO: Much of this need not happen under the lock
             let mut frame = None;
-            if let Ok(snes) = self.snes.lock() {
-                frame = snes.cpu.borrow_mut().debug_frame.take();
+            if let Ok(mut snes) = self.snes.lock() {
+                frame = snes.take_frame();
                 if focused && !paused {
                     let controller_state = ctx.input(|input_state| {
                         const KEYS: &[egui::Key] = &[
@@ -73,7 +73,7 @@ impl AppWindow for ScreenWindow {
                         }
                         controller_state
                     });
-                    snes.cpu.borrow_mut().controller_states[0] = controller_state;
+                    snes.set_controller_state(0, controller_state);
                 }
             }
             if let Some(frame) = frame {

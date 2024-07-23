@@ -61,10 +61,10 @@ impl eframe::App for YesnesApp {
             }
             controller_state
         });
-        self.snes.cpu.borrow_mut().controller_states[0] = controller_state;
+        self.snes.set_controller_state(0, controller_state);
         while !self.snes.run_instruction_debug(Device::CPU).1 {}
 
-        let frame = self.snes.cpu.borrow_mut().debug_frame.take();
+        let frame = self.snes.take_frame();
         if let Some(frame) = frame {
             let now = Instant::now();
             let delta = self
