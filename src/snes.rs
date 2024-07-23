@@ -1,4 +1,5 @@
 use crate::scheduler::Device;
+use crate::u24::u24;
 use crate::{apu::SMP, bus::Bus, cpu::CPU, ppu::PPU, scheduler::Scheduler};
 
 use std::cell::RefCell;
@@ -73,10 +74,20 @@ impl SNES {
     pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
         self.ppu.borrow().debug_get_frame()
     }
+
+    pub fn device_peak_u8(&self, device: Device, addr: u24) -> u8 {
+        match device {
+            Device::CPU => Bus::peak_u8(self.bus.clone(), addr),
+            // TODO: Peaking SMP, etc.
+            _ => 0,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
+
     use super::*;
     use test::Bencher;
 

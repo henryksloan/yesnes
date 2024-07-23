@@ -5,9 +5,9 @@ use shortcuts::*;
 use super::app_window::{AppWindow, ShortcutWindow};
 use super::line_input_window::*;
 
-use crate::bus::Bus;
-use crate::snes::SNES;
-use crate::u24::u24;
+use yesnes::snes::SNES;
+use yesnes::u24::u24;
+use yesnes::Device;
 
 use egui_extras::{Column, TableBuilder};
 
@@ -44,10 +44,10 @@ impl MemoryViewWindow {
         self.memory_stale |= !paused;
         if self.memory_stale && paused {
             self.memory_stale = false;
-            let bus = &self.snes.lock().unwrap().bus;
+            let snes = self.snes.lock().unwrap();
             // TODO: This is very inefficient
             for i in 0..0x100_0000 {
-                self.memory_mirror[i] = Bus::peak_u8(bus.clone(), u24(i as u32));
+                self.memory_mirror[i] = snes.device_peak_u8(Device::CPU, u24(i as u32));
             }
         }
     }

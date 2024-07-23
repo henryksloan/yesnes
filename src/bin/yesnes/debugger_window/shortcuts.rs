@@ -1,4 +1,4 @@
-use crate::frontend::app_window::ToEguiShortcut;
+use crate::app_window::ToEguiShortcut;
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 

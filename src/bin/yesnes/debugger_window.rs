@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 use crossbeam::channel;
 use egui_extras::{Column, TableBuilder};
 
-use crate::disassembler::{DebugProcessor, DisassembledInstruction, Disassembler};
-use crate::snes::SNES;
+use yesnes::disassembler::{DebugProcessor, DisassembledInstruction, Disassembler};
+use yesnes::snes::SNES;
 
 pub struct DebuggerWindow<D: DebugProcessor> {
     id: egui::Id,

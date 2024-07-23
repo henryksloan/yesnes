@@ -1,7 +1,7 @@
 //! GUI elements to display and edit processer registers.
-use crate::apu::smp;
-use crate::cpu;
-use crate::disassembler::{DebugCpu, DebugProcessor, DebugSmp};
+use yesnes::debug_cpu;
+use yesnes::debug_smp;
+use yesnes::disassembler::{DebugCpu, DebugProcessor, DebugSmp};
 
 // TODO: It's not actually great to not show some of the nybbles; maybe just gray them out?
 /// Adds an editable view of the given CPU register, masked to its bottom `hex_digits` nybbles.
@@ -36,7 +36,7 @@ pub trait RegisterArea: DebugProcessor {
 }
 
 /// Adds editable view of all CPU registers.
-fn cpu_registers_panel(ui: &mut egui::Ui, registers: &mut cpu::Registers) {
+fn cpu_registers_panel(ui: &mut egui::Ui, registers: &mut debug_cpu::Registers) {
     let x_y_16_bits = registers.index_reg_16_bits();
     let x_y_width = if x_y_16_bits { 4 } else { 2 };
     let a_16_bits = registers.accumulator_16_bits();
@@ -54,7 +54,7 @@ fn cpu_registers_panel(ui: &mut egui::Ui, registers: &mut cpu::Registers) {
 }
 
 /// Adds checkboxes for the bits of the CPU status register.
-fn cpu_status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::StatusRegister) {
+fn cpu_status_register_panel(ui: &mut egui::Ui, status_register: &mut debug_cpu::StatusRegister) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.checkbox(&mut status_register.n, "N");
@@ -73,7 +73,7 @@ fn cpu_status_register_panel(ui: &mut egui::Ui, status_register: &mut cpu::Statu
 }
 
 impl RegisterArea for DebugCpu {
-    fn registers_area(ui: &mut egui::Ui, registers: &mut cpu::Registers) {
+    fn registers_area(ui: &mut egui::Ui, registers: &mut debug_cpu::Registers) {
         ui.vertical(|ui| {
             egui::Frame::group(ui.style())
                 .outer_margin(egui::Margin {
@@ -100,7 +100,7 @@ impl RegisterArea for DebugCpu {
 }
 
 /// Adds editable view of all SMP registers.
-fn smp_registers_panel(ui: &mut egui::Ui, registers: &mut smp::Registers) {
+fn smp_registers_panel(ui: &mut egui::Ui, registers: &mut debug_smp::Registers) {
     register_drag_value(ui, &mut registers.a, "A=", 2);
     register_drag_value(ui, &mut registers.x, "X=", 2);
     register_drag_value(ui, &mut registers.y, "Y=", 2);
@@ -110,7 +110,7 @@ fn smp_registers_panel(ui: &mut egui::Ui, registers: &mut smp::Registers) {
 }
 
 /// Adds checkboxes for the bits of the SMP status register.
-fn smp_status_register_panel(ui: &mut egui::Ui, status_register: &mut smp::StatusRegister) {
+fn smp_status_register_panel(ui: &mut egui::Ui, status_register: &mut debug_smp::StatusRegister) {
     ui.vertical(|ui| {
         ui.checkbox(&mut status_register.n, "N");
         ui.checkbox(&mut status_register.v, "V");
@@ -124,7 +124,7 @@ fn smp_status_register_panel(ui: &mut egui::Ui, status_register: &mut smp::Statu
 }
 
 impl RegisterArea for DebugSmp {
-    fn registers_area(ui: &mut egui::Ui, registers: &mut smp::Registers) {
+    fn registers_area(ui: &mut egui::Ui, registers: &mut debug_smp::Registers) {
         ui.vertical(|ui| {
             egui::Frame::group(ui.style())
                 .outer_margin(egui::Margin {

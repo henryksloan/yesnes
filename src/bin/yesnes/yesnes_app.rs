@@ -1,12 +1,12 @@
 use super::app_window::{AppWindow, ShortcutWindow};
 use super::debugger_window::DebuggerWindow;
 use super::emu_thread::run_emu_thread;
-use super::frame_history::FrameHistory;
 use super::memory_view_window::MemoryViewWindow;
 use super::screen_window::ScreenWindow;
 
-use crate::disassembler::{DebugCpu, DebugSmp, Disassembler};
-use crate::snes::SNES;
+use yesnes::disassembler::{DebugCpu, DebugSmp, Disassembler};
+use yesnes::frame_history::FrameHistory;
+use yesnes::snes::SNES;
 
 use crossbeam::channel;
 use eframe::egui;

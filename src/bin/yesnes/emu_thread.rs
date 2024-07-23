@@ -1,6 +1,6 @@
-use crate::disassembler::{DebugCpu, DebugProcessor, DebugSmp, Disassembler};
-use crate::scheduler::Device;
-use crate::snes::SNES;
+use yesnes::disassembler::{DebugCpu, DebugProcessor, DebugSmp, Disassembler};
+use yesnes::snes::SNES;
+use yesnes::Device;
 
 use crossbeam::channel;
 
