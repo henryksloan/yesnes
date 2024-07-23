@@ -17,9 +17,11 @@ use std::sync::{Arc, Mutex};
 struct YesnesApp {
     emu_paused: Arc<AtomicBool>,
     active_window_id: Option<egui::Id>,
+    // TODO: Maybe own e.g. a DebugCPU here and use Rc in e.g. Disassembler... actually,
+    // it would make sense to have them behind mutexes! Right now the only mutual exclusion is disabling fields :|
     cpu_debugger_window: DebuggerWindow<DebugCpu>,
     smp_debugger_window: DebuggerWindow<DebugSmp>,
-    memory_view_window: MemoryViewWindow,
+    cpu_memory_view_window: MemoryViewWindow<DebugCpu>,
     screen_window: ScreenWindow,
     frame_history: FrameHistory,
 }
@@ -64,8 +66,10 @@ impl Default for YesnesApp {
             emu_paused.clone(),
             sender.clone(),
         );
-        let memory_view_window =
-            MemoryViewWindow::new("CPU Memory Viewer".to_string(), snes.clone());
+        let memory_view_window = MemoryViewWindow::new(
+            "CPU Memory Viewer".to_string(),
+            snes.lock().unwrap().make_debug_cpu(),
+        );
         let screen_window =
             ScreenWindow::new("Screen".to_string(), snes.clone(), frame_ready.clone());
         Self {
@@ -74,7 +78,7 @@ impl Default for YesnesApp {
             active_window_id: None,
             cpu_debugger_window,
             smp_debugger_window,
-            memory_view_window,
+            cpu_memory_view_window: memory_view_window,
             screen_window,
             frame_history: FrameHistory::new(),
         }
@@ -101,7 +105,7 @@ impl eframe::App for YesnesApp {
             .show_with_shortcuts(ctx, paused, self.active_window_id);
         self.smp_debugger_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
-        self.memory_view_window
+        self.cpu_memory_view_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
         self.screen_window.show(ctx, paused, self.active_window_id);
 

@@ -1,6 +1,5 @@
 use crate::disassembler::{DebugCpu, DebugSmp};
 use crate::scheduler::Device;
-use crate::u24::u24;
 use crate::{apu::SMP, bus::Bus, cpu::CPU, ppu::PPU, scheduler::Scheduler};
 
 use std::cell::RefCell;
@@ -83,14 +82,6 @@ impl SNES {
     pub fn set_controller_state(&mut self, controller_i: usize, data: u16) {
         if controller_i < 4 {
             self.cpu.borrow_mut().controller_states[controller_i] = data;
-        }
-    }
-
-    pub fn device_peak_u8(&self, device: Device, addr: u24) -> u8 {
-        match device {
-            Device::CPU => Bus::peak_u8(self.bus.clone(), addr),
-            // TODO: Peaking SMP, etc.
-            _ => 0,
         }
     }
 

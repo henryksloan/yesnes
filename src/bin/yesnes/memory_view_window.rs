@@ -5,18 +5,14 @@ use shortcuts::*;
 use super::app_window::{AppWindow, ShortcutWindow};
 use super::line_input_window::*;
 
-use yesnes::snes::SNES;
-use yesnes::u24::u24;
-use yesnes::Device;
+use yesnes::disassembler::DebugProcessor;
 
 use egui_extras::{Column, TableBuilder};
 
-use std::sync::{Arc, Mutex};
-
-pub struct MemoryViewWindow {
+pub struct MemoryViewWindow<D: DebugProcessor> {
     id: egui::Id,
     title: String,
-    snes: Arc<Mutex<SNES>>,
+    debug_processor: D,
     // TODO: Consider a smarter scheme than occasionally copying the whole memory
     memory_mirror: Vec<u8>,
     memory_stale: bool,
@@ -24,13 +20,13 @@ pub struct MemoryViewWindow {
     go_to_address_window: LineInputWindow,
 }
 
-impl MemoryViewWindow {
-    pub fn new(title: String, snes: Arc<Mutex<SNES>>) -> Self {
+impl<D: DebugProcessor> MemoryViewWindow<D> {
+    pub fn new(title: String, debug_processor: D) -> Self {
         let id = egui::Id::new(&title);
         Self {
             id,
             title,
-            snes,
+            debug_processor,
             memory_mirror: vec![0; 0x100_0000],
             memory_stale: true,
             scroll_to_row: None,
@@ -44,10 +40,14 @@ impl MemoryViewWindow {
         self.memory_stale |= !paused;
         if self.memory_stale && paused {
             self.memory_stale = false;
-            let snes = self.snes.lock().unwrap();
             // TODO: This is very inefficient
             for i in 0..0x100_0000 {
-                self.memory_mirror[i] = snes.device_peak_u8(Device::CPU, u24(i as u32));
+                if let Ok(addr) = i.try_into() {
+                    self.memory_mirror[i] = self.debug_processor.peak_u8(addr);
+                } else {
+                    // TODO: There are other ways to handle address space size
+                    break;
+                }
             }
         }
     }
@@ -114,7 +114,7 @@ impl MemoryViewWindow {
     }
 }
 
-impl AppWindow for MemoryViewWindow {
+impl<D: DebugProcessor> AppWindow for MemoryViewWindow<D> {
     fn id(&self) -> egui::Id {
         self.id
     }
@@ -135,7 +135,7 @@ impl AppWindow for MemoryViewWindow {
     }
 }
 
-impl ShortcutWindow for MemoryViewWindow {
+impl<D: DebugProcessor> ShortcutWindow for MemoryViewWindow<D> {
     type Shortcut = MemoryViewShortcut;
 
     const WINDOW_SHORTCUTS: &'static [Self::Shortcut] = MEMORY_VIEW_SHORTCUTS;
