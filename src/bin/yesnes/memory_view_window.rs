@@ -34,20 +34,25 @@ impl<D: DebugProcessor> MemoryViewWindow<D> {
         }
     }
 
-    fn refresh_stale_memory(&mut self, paused: bool) {
+    fn refresh_memory_if_stale(&mut self, paused: bool) {
         // TODO: A more dynamic mechanism for refreshing,
-        // e.g. events (reset, new frame, etc.) rather than pausing and unpausing
+        // e.g. events (reset, new frame, step, etc.) rather than pausing and unpausing
+        // and eventually fine-grained cache invalidation
         self.memory_stale |= !paused;
         if self.memory_stale && paused {
             self.memory_stale = false;
-            // TODO: This is very inefficient
-            for i in 0..0x100_0000 {
-                if let Ok(addr) = i.try_into() {
-                    self.memory_mirror[i] = self.debug_processor.peak_u8(addr);
-                } else {
-                    // TODO: There are other ways to handle address space size
-                    break;
-                }
+            self.refresh_memory();
+        }
+    }
+
+    fn refresh_memory(&mut self) {
+        // TODO: This is very inefficient
+        for i in 0..0x100_0000 {
+            if let Ok(addr) = i.try_into() {
+                self.memory_mirror[i] = self.debug_processor.peak_u8(addr);
+            } else {
+                // TODO: There are other ways to handle address space size
+                break;
             }
         }
     }
@@ -64,7 +69,7 @@ impl<D: DebugProcessor> MemoryViewWindow<D> {
     }
 
     fn memory_viewer_table(&mut self, ui: &mut egui::Ui, paused: bool) {
-        self.refresh_stale_memory(paused);
+        self.refresh_memory_if_stale(paused);
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         let mut table = TableBuilder::new(ui)
             .striped(true)
@@ -77,7 +82,9 @@ impl<D: DebugProcessor> MemoryViewWindow<D> {
         }
         table
             .header(20.0, |mut header| {
-                header.col(|_ui| {});
+                header.col(|ui| {
+                    self.button_with_shortcut(ui, MemoryViewShortcut::Refresh, "⟳");
+                });
                 for low_nybble in 0x00..=0x0F {
                     // Left label column
                     header.col(|ui| {
@@ -145,6 +152,7 @@ impl<D: DebugProcessor> ShortcutWindow for MemoryViewWindow<D> {
             Self::Shortcut::GoToAddress => {
                 self.go_to_address_window.open();
             }
+            Self::Shortcut::Refresh => self.refresh_memory(),
         }
     }
 
