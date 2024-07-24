@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct SNES {
+    // TODO: This encapsulation is nice, but pub(crate) might make frontend API too clunky
     pub(crate) cpu: Rc<RefCell<CPU>>,
     pub(crate) bus: Rc<RefCell<Bus>>,
     pub(crate) ppu: Rc<RefCell<PPU>>,
@@ -74,6 +75,16 @@ impl SNES {
 
     pub fn take_frame(&mut self) -> Option<[[[u8; 3]; 256]; 224]> {
         self.cpu.borrow_mut().debug_frame.take()
+    }
+
+    pub fn debug_compute_tile(
+        &self,
+        tile_chr_base: usize,
+        bits_per_pixel: usize,
+    ) -> [[Option<[u8; 3]>; 8]; 8] {
+        self.ppu
+            .borrow()
+            .debug_compute_tile(tile_chr_base, bits_per_pixel)
     }
 
     pub fn set_controller_state(&mut self, controller_i: usize, data: u16) {

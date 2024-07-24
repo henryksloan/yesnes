@@ -5,6 +5,7 @@ mod line_input_window;
 mod memory_view_window;
 mod registers;
 mod screen_window;
+mod tile_view_window;
 mod yesnes_app;
 
 fn main() -> Result<(), eframe::Error> {

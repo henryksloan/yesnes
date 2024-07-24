@@ -14,6 +14,7 @@ use egui_extras::{Column, TableBuilder};
 pub struct MemoryViewWindow<D: DebugProcessor> {
     id: egui::Id,
     title: String,
+    // TODO: This really needs to be behind an Arc<Mutex>, otherwise e.g. refreshing can cause a borrowmut error
     debug_processor: D,
     // TODO: Consider a smarter scheme than occasionally copying the whole memory
     memory_mirror: Vec<u8>,

@@ -232,7 +232,7 @@ impl PPU {
             let (flip_x, flip_y) = ((tile >> 14) & 1 == 1, (tile >> 15) & 1 == 1);
             let start_bit = if col_i == 0 { start_pixel_x } else { 0 };
             let end_bit = if col_i == 32 { start_pixel_x } else { 8 };
-            let tile_line_pixels = self.render_tile_line(
+            let tile_line_pixels = self.compute_tile_line(
                 tile_chr_base,
                 line_offset,
                 palette_n,
@@ -249,7 +249,7 @@ impl PPU {
         }
     }
 
-    fn render_tile_line(
+    fn compute_tile_line(
         &self,
         tile_chr_base: usize,
         line_offset: usize,
@@ -284,6 +284,26 @@ impl PPU {
                 (((palette_entry >> 10) & 0x1F) as u8) << 3,
             ];
             result[bit_i] = Some(pixel);
+        }
+        result
+    }
+
+    pub fn debug_compute_tile(
+        &self,
+        tile_chr_base: usize,
+        bits_per_pixel: usize,
+    ) -> [[Option<[u8; 3]>; 8]; 8] {
+        let mut result = [[None; 8]; 8];
+        for line_offset in 0..8 {
+            result[line_offset] = self.compute_tile_line(
+                tile_chr_base,
+                line_offset,
+                0, // TODO: Frontend should probably be able to select from CGRAM palettes
+                bits_per_pixel,
+                false,
+                false,
+                false,
+            );
         }
         result
     }
@@ -358,7 +378,7 @@ impl PPU {
                 .obj_size_base
                 .calculate_vram_addr(attr.nametable_select(), chr_n as u8);
             let line_offset = line % 8;
-            let tile_line_pixels = self.render_tile_line(
+            let tile_line_pixels = self.compute_tile_line(
                 tile_chr_base as usize,
                 line_offset as usize,
                 palette_n as u16,
@@ -401,7 +421,6 @@ impl PPU {
                 if oam_addr < 0x200 {
                     self.oam_lo[oam_addr % self.oam_lo.len()]
                 } else {
-                    // self.oam_hi[oam_addr - 0x200]
                     self.oam_hi[(oam_addr - 0x200) % self.oam_hi.len()]
                 }
             }

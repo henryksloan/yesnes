@@ -3,6 +3,7 @@ use super::debugger_window::DebuggerWindow;
 use super::emu_thread::run_emu_thread;
 use super::memory_view_window::MemoryViewWindow;
 use super::screen_window::ScreenWindow;
+use super::tile_view_window::TileViewWindow;
 
 use yesnes::disassembler::{DebugCpu, DebugSmp, Disassembler};
 use yesnes::frame_history::FrameHistory;
@@ -23,6 +24,7 @@ struct YesnesApp {
     smp_debugger_window: DebuggerWindow<DebugSmp>,
     cpu_memory_view_window: MemoryViewWindow<DebugCpu>,
     smp_memory_view_window: MemoryViewWindow<DebugSmp>,
+    tile_view_window: TileViewWindow,
     screen_window: ScreenWindow,
     frame_history: FrameHistory,
 }
@@ -75,6 +77,7 @@ impl Default for YesnesApp {
             "SMP Memory Viewer".to_string(),
             snes.lock().unwrap().make_debug_smp(),
         );
+        let tile_view_window = TileViewWindow::new("Tile Viewer".to_string(), snes.clone());
         let screen_window =
             ScreenWindow::new("Screen".to_string(), snes.clone(), frame_ready.clone());
         Self {
@@ -85,6 +88,7 @@ impl Default for YesnesApp {
             smp_debugger_window,
             cpu_memory_view_window,
             smp_memory_view_window,
+            tile_view_window,
             screen_window,
             frame_history: FrameHistory::new(),
         }
@@ -115,6 +119,8 @@ impl eframe::App for YesnesApp {
             .show_with_shortcuts(ctx, paused, self.active_window_id);
         self.smp_memory_view_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
+        self.tile_view_window
+            .show(ctx, paused, self.active_window_id);
         self.screen_window.show(ctx, paused, self.active_window_id);
 
         ctx.memory_mut(|memory| {
