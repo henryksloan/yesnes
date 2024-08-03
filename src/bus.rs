@@ -140,7 +140,7 @@ impl Bus {
                             .upgrade()
                             .unwrap()
                             .borrow_mut()
-                            .io_peak(addr),
+                            .io_read(addr),
                         0x2100..=0x213F => {
                             // TODO: Uncomment once PPU actually does stuff
                             // yield YieldReason::Sync(Device::PPU);

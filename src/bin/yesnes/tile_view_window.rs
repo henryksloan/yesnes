@@ -43,7 +43,8 @@ impl TileViewWindow {
         // TODO: Unwrapping this lock exposes us to poisoning... consider making such checks safe
         let snes = self.snes.lock().unwrap();
         for i in 0..256 {
-            let tile = snes.debug_compute_tile(0x6000 + 0x10 * i, 4);
+            // let tile = snes.debug_compute_tile(0x6000 + 0x10 * i, 4);
+            let tile = snes.debug_compute_tile(0x3000 + 0x10 * i, 4);
             // let tile = snes.debug_compute_tile(0x2000 + 0x10 * i, 4);
             for row in 0..8 {
                 for col in 0..8 {
