@@ -235,7 +235,7 @@ impl PPU {
             let tile_line_pixels = self.compute_tile_line(
                 tile_chr_base,
                 line_offset,
-                palette_n,
+                Some(palette_n),
                 bits_per_pixel,
                 flip_x,
                 flip_y,
@@ -253,7 +253,7 @@ impl PPU {
         &self,
         tile_chr_base: usize,
         line_offset: usize,
-        palette_n: u16,
+        palette_n: Option<u16>,
         bits_per_pixel: usize,
         flip_x: bool,
         flip_y: bool,
@@ -275,9 +275,16 @@ impl PPU {
                 continue;
             }
             let palette_offset = if sprite { 0x80 } else { 0x00 };
-            let palette_entry = self.cgram[palette_offset
-                + ((1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize)
-                    % self.cgram.len()];
+            let palette_entry = if let Some(palette_n) = palette_n {
+                self.cgram[palette_offset
+                    + ((1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize)
+                        % self.cgram.len()]
+            } else {
+                [
+                    0x0000, 0x7FDD, 0x3A49, 0x428B, 0x4ACD, 0x530F, 0x5B51, 0x6393, 0x7393, 0x0000,
+                    0x0CFB, 0x2FEB, 0x7393, 0x0000, 0x7FDD, 0x2D7F,
+                ][palette_i as usize % 16]
+            };
             let pixel = [
                 ((palette_entry & 0x1F) as u8) << 3,
                 (((palette_entry >> 5) & 0x1F) as u8) << 3,
@@ -298,7 +305,7 @@ impl PPU {
             result[line_offset] = self.compute_tile_line(
                 tile_chr_base,
                 line_offset,
-                0, // TODO: Frontend should probably be able to select from CGRAM palettes
+                None, // TODO: Frontend should probably be able to select from CGRAM palettes
                 bits_per_pixel,
                 false,
                 false,
@@ -381,7 +388,7 @@ impl PPU {
             let tile_line_pixels = self.compute_tile_line(
                 tile_chr_base as usize,
                 line_offset as usize,
-                palette_n as u16,
+                Some(palette_n as u16),
                 4,
                 attr.flip_x(),
                 attr.flip_y(),
