@@ -753,9 +753,9 @@ impl CPU {
             0x4212 => {
                 let hblank = {
                     let h_count = self.ppu_counter.borrow().h_ticks / 4;
-                    h_count >= 22 && h_count <= 277
+                    h_count < 22 || h_count > 277
                 };
-                let vblank = self.ppu_counter.borrow().scanline <= 224;
+                let vblank = self.ppu_counter.borrow().scanline > 224;
                 ((vblank as u8) << 7) | ((hblank as u8) << 6)
             } // 0xC0,
             0x4218..=0x421F => {
