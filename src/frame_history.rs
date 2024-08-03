@@ -1,4 +1,5 @@
 /// Based on egui/crates/egui_demo_app/src/frame_history.rs
+// TODO: If/when we split into multiple lib/bin crates, move this such that the emu lib doesn't depend on egui
 use eframe::egui::util::History;
 
 pub struct FrameHistory {

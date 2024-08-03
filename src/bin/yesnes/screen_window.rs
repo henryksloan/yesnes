@@ -1,8 +1,8 @@
 use super::app_window::AppWindow;
-use super::frame_history::FrameHistory;
 use std::time::Instant;
 
-use crate::snes::SNES;
+use yesnes::frame_history::FrameHistory;
+use yesnes::snes::SNES;
 
 use eframe::egui::{Color32, ColorImage, TextureHandle};
 
@@ -18,18 +18,6 @@ pub struct ScreenWindow {
     frame_ready: Arc<AtomicBool>,
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
-
-    title_bar: bool,
-    closable: bool,
-    collapsible: bool,
-    resizable: bool,
-    constrain: bool,
-    scroll2: egui::Vec2b,
-    disabled_time: f64,
-
-    anchored: bool,
-    anchor: egui::Align2,
-    anchor_offset: egui::Vec2,
 }
 
 impl ScreenWindow {
@@ -45,17 +33,6 @@ impl ScreenWindow {
             frame_ready,
             frame_history: FrameHistory::new(),
             previous_frame_instant: None,
-
-            title_bar: true,
-            closable: true,
-            collapsible: true,
-            resizable: true,
-            constrain: true,
-            scroll2: egui::Vec2b::TRUE,
-            disabled_time: f64::NEG_INFINITY,
-            anchored: false,
-            anchor: egui::Align2::RIGHT_TOP,
-            anchor_offset: egui::Vec2::ZERO,
         }
     }
 }
@@ -72,8 +49,8 @@ impl AppWindow for ScreenWindow {
         {
             // TODO: Much of this need not happen under the lock
             let mut frame = None;
-            if let Ok(snes) = self.snes.lock() {
-                frame = snes.cpu.borrow_mut().debug_frame.take();
+            if let Ok(mut snes) = self.snes.lock() {
+                frame = snes.take_frame();
                 if focused && !paused {
                     let controller_state = ctx.input(|input_state| {
                         const KEYS: &[egui::Key] = &[
@@ -96,7 +73,7 @@ impl AppWindow for ScreenWindow {
                         }
                         controller_state
                     });
-                    snes.cpu.borrow_mut().controller_states[0] = controller_state;
+                    snes.set_controller_state(0, controller_state);
                 }
             }
             if let Some(frame) = frame {

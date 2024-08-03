@@ -17,7 +17,6 @@ pub struct IoRegisters {
     pub bg_tilemap_addr_size: [TilemapAddrSize; 4],
     pub bg_chr_addr: BackgroundChrAddr,
     pub bg_scroll: [BackgroundScroll; 4],
-    pub bg_scroll_access_latch: bool,
     pub vram_addr_incr_mode: VramAddrIncrMode,
     // 2116h - VMADDL - VRAM Address (lower 8bit) (W)
     // 2117h - VMADDH - VRAM Address (upper 8bit) (W)

@@ -12,15 +12,20 @@ mod apu;
 mod bus;
 mod cartridge;
 mod cpu;
-mod disassembler;
-mod frontend;
-mod memory;
+pub mod disassembler;
+pub mod frame_history;
+pub mod numeric_types;
 mod ppu;
 mod scheduler;
-mod snes;
-mod u24;
+pub mod snes;
+pub mod u24;
 
-fn main() -> Result<(), eframe::Error> {
-    env_logger::init();
-    frontend::run()
+pub use scheduler::Device;
+
+pub mod debug_cpu {
+    pub use crate::cpu::{Registers, StatusRegister};
+}
+
+pub mod debug_smp {
+    pub use crate::apu::smp::{Registers, StatusRegister};
 }

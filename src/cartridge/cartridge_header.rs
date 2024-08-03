@@ -30,7 +30,8 @@ impl CartridgeHeader {
         let checksum = u16::from_le_bytes(data[0x1E..=0x1F].try_into().unwrap());
 
         if !checksum != checksum_complement {
-            return None;
+            // DO NOT SUBMIT
+            // return None;
         }
 
         Some(Self {

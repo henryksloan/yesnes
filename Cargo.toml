@@ -3,14 +3,6 @@ name = "yesnes"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "headless"
-path = "src/headless_test.rs"
-
-[[bin]]
-name = "screen"
-path = "src/screen_test.rs"
-
 [profile.release]
 debug = 2
 

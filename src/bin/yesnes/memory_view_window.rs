@@ -5,18 +5,17 @@ use shortcuts::*;
 use super::app_window::{AppWindow, ShortcutWindow};
 use super::line_input_window::*;
 
-use crate::bus::Bus;
-use crate::snes::SNES;
-use crate::u24::u24;
+use yesnes::disassembler::DebugProcessor;
 
 use egui_extras::{Column, TableBuilder};
 
-use std::sync::{Arc, Mutex};
-
-pub struct MemoryViewWindow {
+// TODO: This really begs for a Memory abstraction more than DebugProcessor,
+// as e.g. PPU has multiple memories
+pub struct MemoryViewWindow<D: DebugProcessor> {
     id: egui::Id,
     title: String,
-    snes: Arc<Mutex<SNES>>,
+    // TODO: This really needs to be behind an Arc<Mutex>, otherwise e.g. refreshing can cause a borrowmut error
+    debug_processor: D,
     // TODO: Consider a smarter scheme than occasionally copying the whole memory
     memory_mirror: Vec<u8>,
     memory_stale: bool,
@@ -24,13 +23,13 @@ pub struct MemoryViewWindow {
     go_to_address_window: LineInputWindow,
 }
 
-impl MemoryViewWindow {
-    pub fn new(title: String, snes: Arc<Mutex<SNES>>) -> Self {
+impl<D: DebugProcessor> MemoryViewWindow<D> {
+    pub fn new(title: String, debug_processor: D) -> Self {
         let id = egui::Id::new(&title);
         Self {
             id,
             title,
-            snes,
+            debug_processor,
             memory_mirror: vec![0; 0x100_0000],
             memory_stale: true,
             scroll_to_row: None,
@@ -38,16 +37,25 @@ impl MemoryViewWindow {
         }
     }
 
-    fn refresh_stale_memory(&mut self, paused: bool) {
+    fn refresh_memory_if_stale(&mut self, paused: bool) {
         // TODO: A more dynamic mechanism for refreshing,
-        // e.g. events (reset, new frame, etc.) rather than pausing and unpausing
+        // e.g. events (reset, new frame, step, etc.) rather than pausing and unpausing
+        // and eventually fine-grained cache invalidation
         self.memory_stale |= !paused;
         if self.memory_stale && paused {
             self.memory_stale = false;
-            let bus = &self.snes.lock().unwrap().bus;
-            // TODO: This is very inefficient
-            for i in 0..0x100_0000 {
-                self.memory_mirror[i] = Bus::peak_u8(bus.clone(), u24(i as u32));
+            self.refresh_memory();
+        }
+    }
+
+    fn refresh_memory(&mut self) {
+        // TODO: This is very inefficient
+        for i in 0..0x100_0000 {
+            if let Ok(addr) = i.try_into() {
+                self.memory_mirror[i] = self.debug_processor.peak_u8(addr);
+            } else {
+                // TODO: There are other ways to handle address space size
+                break;
             }
         }
     }
@@ -64,7 +72,7 @@ impl MemoryViewWindow {
     }
 
     fn memory_viewer_table(&mut self, ui: &mut egui::Ui, paused: bool) {
-        self.refresh_stale_memory(paused);
+        self.refresh_memory_if_stale(paused);
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         let mut table = TableBuilder::new(ui)
             .striped(true)
@@ -77,7 +85,9 @@ impl MemoryViewWindow {
         }
         table
             .header(20.0, |mut header| {
-                header.col(|_ui| {});
+                header.col(|ui| {
+                    self.button_with_shortcut(ui, MemoryViewShortcut::Refresh, "⟳");
+                });
                 for low_nybble in 0x00..=0x0F {
                     // Left label column
                     header.col(|ui| {
@@ -114,7 +124,7 @@ impl MemoryViewWindow {
     }
 }
 
-impl AppWindow for MemoryViewWindow {
+impl<D: DebugProcessor> AppWindow for MemoryViewWindow<D> {
     fn id(&self) -> egui::Id {
         self.id
     }
@@ -135,7 +145,7 @@ impl AppWindow for MemoryViewWindow {
     }
 }
 
-impl ShortcutWindow for MemoryViewWindow {
+impl<D: DebugProcessor> ShortcutWindow for MemoryViewWindow<D> {
     type Shortcut = MemoryViewShortcut;
 
     const WINDOW_SHORTCUTS: &'static [Self::Shortcut] = MEMORY_VIEW_SHORTCUTS;
@@ -145,6 +155,7 @@ impl ShortcutWindow for MemoryViewWindow {
             Self::Shortcut::GoToAddress => {
                 self.go_to_address_window.open();
             }
+            Self::Shortcut::Refresh => self.refresh_memory(),
         }
     }
 

@@ -1,4 +1,5 @@
 //! Implements the emath `Numeric` trait for various processor types.
+// TODO: If/when we split into multiple lib/bin crates, move this such that the emu lib doesn't depend on egui
 use crate::apu::smp;
 use crate::cpu;
 use crate::u24::u24;

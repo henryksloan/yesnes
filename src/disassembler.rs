@@ -148,6 +148,7 @@ impl<D: DebugProcessor> Disassembler<D> {
     }
 
     pub fn get_line(&self, line_i: usize) -> (usize, D::Disassembled) {
+        // TODO: This can lead to some OOBs, in particular with "step"
         self.disassembly_result[line_i]
     }
 

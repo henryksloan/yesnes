@@ -297,6 +297,8 @@ pub struct CPU {
     do_hdmas_this_line: [bool; 8],
     nmi_enqueued: bool,
     irq_enqueued: bool,
+    timer_irq_flag: bool,
+    vblank_nmi_flag: bool,
     // TODO: Should change most instances of "tick" to "clock"
     ticks_run: u64,
     // Some events like interrupt polling happen every 4 ticks. This tracks the
@@ -330,6 +332,8 @@ impl CPU {
             do_hdmas_this_line: [false; 8],
             nmi_enqueued: false,
             irq_enqueued: false,
+            timer_irq_flag: false,
+            vblank_nmi_flag: false,
             ticks_run: 0,
             ticks_mod_4: 0,
             debug_frame: None,
@@ -356,6 +360,8 @@ impl CPU {
         // TODO: This reset function is very obviously incomplete, but modularizing e.g. interrupts will make it easier
         self.nmi_enqueued = false;
         self.irq_enqueued = false;
+        self.timer_irq_flag = false;
+        self.vblank_nmi_flag = false;
 
         self.io_reg.waitstate_control.0 = 0;
         self.io_reg.interrupt_control.0 = 0;
@@ -613,6 +619,7 @@ impl CPU {
                 cpu.borrow_mut().hdma_triggered_this_line = false;
             }
             if cpu.borrow().ppu_counter.borrow().scanline == 0 {
+                cpu.borrow_mut().vblank_nmi_flag = false;
                 let hdmas_enqueued = cpu.borrow_mut().hdmas_enqueued.take();
                 if let Some(hdmas_enqueued) = hdmas_enqueued {
                     cpu.borrow_mut().hdmas_ongoing = Some(hdmas_enqueued);
@@ -640,6 +647,7 @@ impl CPU {
                 if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {
                     cpu.borrow_mut().nmi_enqueued = true;
                 }
+                cpu.borrow_mut().vblank_nmi_flag = true;
                 let frame = cpu.borrow().bus.borrow().debug_get_frame();
                 cpu.borrow_mut().debug_frame = Some(frame);
                 yield YieldReason::FrameReady;
@@ -681,6 +689,7 @@ impl CPU {
                         2 => scanline == v_scan_count && h_dot == 0,
                         3 | _ => scanline == v_scan_count && h_dot == h_scan_count,
                     };
+                    cpu.timer_irq_flag |= cpu.irq_enqueued;
                 }
             }
             let mut cpu = cpu.borrow_mut();
@@ -728,30 +737,26 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
-            // TODO: Remove debugging value; once this is real, read should also ACK
             // TODO: Games seem to write this; why?
-            // This has bit6 set to simulate some weird open bus behavior for testing
-            // 0x4210 => 0xC0,
             0x4210 => {
-                static mut DEBUG_LATCH: bool = false;
-                unsafe {
-                    DEBUG_LATCH = !DEBUG_LATCH;
-                }
-                if unsafe { DEBUG_LATCH } {
-                    0x80
-                } else {
-                    0x0
-                }
-            } // 0xC0,
-            0x4211 => 0, // TODO: IRQ stuff
-            // TODO: Remove debugging value
-            // TODO: Games see to write this; why? Should probably just do thing?
+                let old_flag = self.vblank_nmi_flag;
+                self.vblank_nmi_flag = false;
+                (old_flag as u8) << 7
+            }
+            0x4211 => {
+                // DO NOT SUBMIT: Check this IRQ logic
+                let old_flag = self.timer_irq_flag;
+                self.timer_irq_flag = false;
+                (old_flag as u8) << 7
+            }
+            // TODO: Games seem to write this; why? Should probably just do thing?
             0x4212 => {
-                static mut DEBUG_LATCH: u8 = 0;
-                unsafe {
-                    DEBUG_LATCH = (DEBUG_LATCH + 1) % 4;
-                }
-                unsafe { DEBUG_LATCH << 6 }
+                let hblank = {
+                    let h_count = self.ppu_counter.borrow().h_ticks / 4;
+                    h_count < 22 || h_count > 277
+                };
+                let vblank = self.ppu_counter.borrow().scanline > 224;
+                ((vblank as u8) << 7) | ((hblank as u8) << 6)
             } // 0xC0,
             0x4218..=0x421F => {
                 let reg_off = addr.lo16() as usize - 0x4218;
@@ -788,18 +793,19 @@ impl CPU {
             }
             0x213C => {
                 let data = if self.ppu_h_count_flipflop {
-                    self.ppu_h_count_latch as u8
-                } else {
                     (self.ppu_h_count_latch >> 8) as u8
+                } else {
+                    self.ppu_h_count_latch as u8
                 };
                 self.ppu_h_count_flipflop = !self.ppu_h_count_flipflop;
                 data
             }
             0x213D => {
                 let data = if self.ppu_v_count_flipflop {
-                    self.ppu_v_count_latch as u8
-                } else {
+                    // TODO: The upper 7 bits of these latches are actually open bus?
                     (self.ppu_v_count_latch >> 8) as u8
+                } else {
+                    self.ppu_v_count_latch as u8
                 };
                 self.ppu_v_count_flipflop = !self.ppu_v_count_flipflop;
                 data
@@ -822,7 +828,12 @@ impl CPU {
 
     pub fn io_write(&mut self, addr: u24, data: u8) {
         match addr.lo16() {
-            0x4200 => self.io_reg.interrupt_control.0 = data,
+            0x4200 => {
+                self.io_reg.interrupt_control.0 = data;
+                if self.io_reg.interrupt_control.h_v_irq() == 0 {
+                    self.timer_irq_flag = false;
+                }
+            }
             0x4207 => self.io_reg.h_scan_count.set_lo_byte(data),
             0x4208 => self.io_reg.h_scan_count.set_hi_byte(data),
             0x4209 => self.io_reg.v_scan_count.set_lo_byte(data),

@@ -1,26 +1,10 @@
-#![feature(coroutines, coroutine_trait)]
-#![feature(type_alias_impl_trait)]
-#![feature(trait_alias)]
-#![feature(never_type)]
-#![feature(test)]
-
-mod apu;
-mod bus;
-mod cartridge;
-mod cpu;
-mod disassembler;
-mod frontend;
-mod memory;
-mod ppu;
-mod scheduler;
-mod snes;
-mod u24;
+extern crate yesnes;
 
 use std::time::Instant;
 
-use crate::frontend::frame_history::FrameHistory;
-use crate::scheduler::Device;
-use crate::snes::SNES;
+use yesnes::frame_history::FrameHistory;
+use yesnes::snes::SNES;
+use yesnes::Device;
 
 use eframe::egui::{Color32, ColorImage, TextureHandle};
 
@@ -77,10 +61,10 @@ impl eframe::App for YesnesApp {
             }
             controller_state
         });
-        self.snes.cpu.borrow_mut().controller_states[0] = controller_state;
+        self.snes.set_controller_state(0, controller_state);
         while !self.snes.run_instruction_debug(Device::CPU).1 {}
 
-        let frame = self.snes.cpu.borrow_mut().debug_frame.take();
+        let frame = self.snes.take_frame();
         if let Some(frame) = frame {
             let now = Instant::now();
             let delta = self
@@ -117,18 +101,11 @@ impl eframe::App for YesnesApp {
                 "SNES Mean frame time: {:.2}ms",
                 1e3 * self.snes_frame_history.mean_frame_time()
             ));
-            let rect_size = ui.available_rect_before_wrap().size();
             ui.add(
                 egui::Image::new(self.texture.as_ref().unwrap())
                     .maintain_aspect_ratio(true)
-                    .shrink_to_fit(), // .fit_to_exact_size([rect_size.x, rect_size.x * (224. / 255.)].into()),
+                    .shrink_to_fit(),
             );
-            // egui::Image::new(self.texture.as_ref().unwrap())
-            //     .paint_at(ui, ui.available_rect_before_wrap());
-            // ui.image(
-            //     self.texture.as_ref().unwrap(),
-            //     // [rect_size.x, rect_size.x * (224. / 255.)],
-            // );
         });
 
         // Effectively puts egui in "continuous mode", where we repaint as quickly as possible (up to refresh rate)

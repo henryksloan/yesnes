@@ -1,12 +1,13 @@
 use super::app_window::{AppWindow, ShortcutWindow};
 use super::debugger_window::DebuggerWindow;
 use super::emu_thread::run_emu_thread;
-use super::frame_history::FrameHistory;
 use super::memory_view_window::MemoryViewWindow;
 use super::screen_window::ScreenWindow;
+use super::tile_view_window::TileViewWindow;
 
-use crate::disassembler::{DebugCpu, DebugSmp, Disassembler};
-use crate::snes::SNES;
+use yesnes::disassembler::{DebugCpu, DebugSmp, Disassembler};
+use yesnes::frame_history::FrameHistory;
+use yesnes::snes::SNES;
 
 use crossbeam::channel;
 use eframe::egui;
@@ -17,9 +18,13 @@ use std::sync::{Arc, Mutex};
 struct YesnesApp {
     emu_paused: Arc<AtomicBool>,
     active_window_id: Option<egui::Id>,
+    // TODO: Maybe own e.g. a DebugCPU here and use Rc in e.g. Disassembler... actually,
+    // it would make sense to have them behind mutexes! Right now the only mutual exclusion is disabling fields :|
     cpu_debugger_window: DebuggerWindow<DebugCpu>,
     smp_debugger_window: DebuggerWindow<DebugSmp>,
-    memory_view_window: MemoryViewWindow,
+    cpu_memory_view_window: MemoryViewWindow<DebugCpu>,
+    smp_memory_view_window: MemoryViewWindow<DebugSmp>,
+    tile_view_window: TileViewWindow,
     screen_window: ScreenWindow,
     frame_history: FrameHistory,
 }
@@ -30,13 +35,13 @@ impl Default for YesnesApp {
         let cart_path = std::env::args().nth(1).expect("Expected a rom file");
         snes.lock().unwrap().load_cart(&cart_path);
         snes.lock().unwrap().reset();
-        let cpu_disassembler = Arc::new(Mutex::new(Disassembler::new(DebugCpu::new(
-            snes.lock().unwrap().bus.clone(),
-        ))));
+        let cpu_disassembler = Arc::new(Mutex::new(Disassembler::new(
+            snes.lock().unwrap().make_debug_cpu(),
+        )));
         cpu_disassembler.lock().unwrap().disassemble();
-        let smp_disassembler = Arc::new(Mutex::new(Disassembler::new(DebugSmp::new(
-            snes.lock().unwrap().smp.clone(),
-        ))));
+        let smp_disassembler = Arc::new(Mutex::new(Disassembler::new(
+            snes.lock().unwrap().make_debug_smp(),
+        )));
         smp_disassembler.lock().unwrap().disassemble();
         let (sender, receiver) = channel::bounded(1024);
         // TODO: This should be a smarter cancellation mechanism. As a start, could use an atomic bool.
@@ -64,8 +69,15 @@ impl Default for YesnesApp {
             emu_paused.clone(),
             sender.clone(),
         );
-        let memory_view_window =
-            MemoryViewWindow::new("CPU Memory Viewer".to_string(), snes.clone());
+        let cpu_memory_view_window = MemoryViewWindow::new(
+            "CPU Memory Viewer".to_string(),
+            snes.lock().unwrap().make_debug_cpu(),
+        );
+        let smp_memory_view_window = MemoryViewWindow::new(
+            "SMP Memory Viewer".to_string(),
+            snes.lock().unwrap().make_debug_smp(),
+        );
+        let tile_view_window = TileViewWindow::new("Tile Viewer".to_string(), snes.clone());
         let screen_window =
             ScreenWindow::new("Screen".to_string(), snes.clone(), frame_ready.clone());
         Self {
@@ -74,7 +86,9 @@ impl Default for YesnesApp {
             active_window_id: None,
             cpu_debugger_window,
             smp_debugger_window,
-            memory_view_window,
+            cpu_memory_view_window,
+            smp_memory_view_window,
+            tile_view_window,
             screen_window,
             frame_history: FrameHistory::new(),
         }
@@ -101,8 +115,12 @@ impl eframe::App for YesnesApp {
             .show_with_shortcuts(ctx, paused, self.active_window_id);
         self.smp_debugger_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
-        self.memory_view_window
+        self.cpu_memory_view_window
             .show_with_shortcuts(ctx, paused, self.active_window_id);
+        self.smp_memory_view_window
+            .show_with_shortcuts(ctx, paused, self.active_window_id);
+        self.tile_view_window
+            .show(ctx, paused, self.active_window_id);
         self.screen_window.show(ctx, paused, self.active_window_id);
 
         ctx.memory_mut(|memory| {
@@ -122,7 +140,7 @@ impl eframe::App for YesnesApp {
 
 pub fn run() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1260.0, 1000.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1600.0, 1000.0]),
         ..Default::default()
     };
     eframe::run_native(
