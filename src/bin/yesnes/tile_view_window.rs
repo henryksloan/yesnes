@@ -11,12 +11,13 @@ pub struct TileViewWindow {
     title: String,
     snes: Arc<Mutex<SNES>>,
     base_word_addr: usize,
-    images: [ColorImage; 256],
-    textures: [Option<TextureHandle>; 256],
+    images: Vec<ColorImage>,
+    textures: Vec<Option<TextureHandle>>,
     // TODO: A more dynamic mechanism for refreshing,
     // e.g. events (reset, new frame, step, etc.) rather than pausing and unpausing
     // and eventually fine-grained cache invalidation
     vram_stale: bool,
+    refreshed: bool,
 }
 
 impl TileViewWindow {
@@ -27,9 +28,10 @@ impl TileViewWindow {
             title,
             snes,
             base_word_addr: 0,
-            images: core::array::from_fn(|_| ColorImage::new([8, 8], Color32::BLACK)),
-            textures: core::array::from_fn(|_| None),
+            images: vec![ColorImage::new([8, 8], Color32::BLACK); 2048],
+            textures: vec![None; 2048],
             vram_stale: true,
+            refreshed: false,
         }
     }
 
@@ -44,9 +46,10 @@ impl TileViewWindow {
     fn refresh_vram(&mut self) {
         // TODO: Unwrapping this lock exposes us to poisoning... consider making such checks safe
         // TODO: Also, locking regardless of pause is dangerous/wrong, can cause deadlocks
+        self.refreshed = true;
         let snes = self.snes.lock().unwrap();
-        for i in 0..256 {
-            let tile = snes.debug_compute_tile(self.base_word_addr + 0x10 * i, 4);
+        for i in 0..2048 {
+            let tile = snes.debug_compute_tile(0x10 * i, 4);
             for row in 0..8 {
                 for col in 0..8 {
                     let pixel = tile[row][col];
@@ -68,17 +71,20 @@ impl AppWindow for TileViewWindow {
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
         self.refresh_vram_if_stale(paused);
-        for i in 0..256 {
-            match &mut self.textures[i] {
-                Some(t) => t.set(self.images[i].clone(), egui::TextureOptions::NEAREST),
-                None => {
-                    self.textures[i] = Some(ctx.load_texture(
-                        format!("tile{}", i),
-                        self.images[i].clone(),
-                        egui::TextureOptions::NEAREST,
-                    ))
-                }
-            };
+        if self.refreshed {
+            self.refreshed = false;
+            for i in 0..2048 {
+                match &mut self.textures[i] {
+                    Some(t) => t.set(self.images[i].clone(), egui::TextureOptions::NEAREST),
+                    None => {
+                        self.textures[i] = Some(ctx.load_texture(
+                            format!("tile{}", i),
+                            self.images[i].clone(),
+                            egui::TextureOptions::NEAREST,
+                        ))
+                    }
+                };
+            }
         }
 
         egui::Window::new(&self.title)
@@ -106,21 +112,23 @@ impl AppWindow for TileViewWindow {
                             }),
                     );
                 });
-                ui.vertical(|ui| {
-                    ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 0.0);
-                    let tile_width = ui.available_width() / 16.;
-                    for i in 0..16 {
-                        ui.horizontal(|ui| {
-                            for j in 0..16 {
-                                ui.add(
-                                    egui::Image::new(self.textures[i * 16 + j].as_ref().unwrap())
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 0.0);
+                        let tile_width = ui.available_width() / 16.;
+                        for i in 0..128 {
+                            ui.horizontal(|ui| {
+                                for j in 0..16 {
+                                    ui.add(
+                                        egui::Image::new(
+                                            self.textures[i * 16 + j].as_ref().unwrap(),
+                                        )
                                         .fit_to_exact_size(egui::vec2(tile_width, tile_width)),
-                                    // .fit_to_exact_size(egui::vec2(32., 32.)),
-                                    // .fit_to_exact_size(egui::vec2(16., 16.)),
-                                );
-                            }
-                        });
-                    }
+                                    );
+                                }
+                            });
+                        }
+                    });
                 });
             });
     }
