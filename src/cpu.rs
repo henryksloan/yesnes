@@ -5,6 +5,7 @@ pub use registers::{IoRegisters, Registers, StatusRegister};
 use crate::{bus::Bus, ppu::PpuCounter, scheduler::*, u24::u24};
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::ops::{Coroutine, CoroutineState};
 use std::pin::Pin;
 use std::rc::Rc;
@@ -308,6 +309,7 @@ pub struct CPU {
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
     pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
     pub controller_states: [u16; 4],
+    pub breakpoint_addrs: HashSet<u24>,
 }
 
 impl CPU {
@@ -338,6 +340,7 @@ impl CPU {
             ticks_mod_4: 0,
             debug_frame: None,
             controller_states: [0; 4],
+            breakpoint_addrs: HashSet::new(),
         }
     }
 
@@ -380,6 +383,9 @@ impl CPU {
         // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         #[coroutine]
         move || loop {
+            if cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc) {
+                yield (YieldReason::Debug(DebugPoint::Breakpoint), 0);
+            }
             // print!("CPU {:#010X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             // TODO: Need to go through and use wrapping arithmetic where appropriate

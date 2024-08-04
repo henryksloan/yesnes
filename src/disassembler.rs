@@ -8,6 +8,8 @@ pub use debug_smp::DebugSmp;
 
 use crate::{scheduler::Device, snes::SNES};
 
+use std::hash::Hash;
+
 pub enum AnalysisStep<Address> {
     Break,
     BranchAndContinue(Address),
@@ -29,7 +31,7 @@ pub trait DisassembledInstruction<State, Data: InstructionData<State>> {
 
 // TODO: Figure out a way to make this not public
 pub trait DebugProcessor {
-    type Address: Into<usize> + TryFrom<usize> + Copy + Default;
+    type Address: Into<usize> + TryFrom<usize> + Copy + Default + Hash;
     type AnalysisState: Default + Clone;
     type Decoded: InstructionData<Self::AnalysisState> + Copy;
     type Disassembled: DisassembledInstruction<Self::AnalysisState, Self::Decoded> + Clone + Copy;
@@ -49,6 +51,8 @@ pub trait DebugProcessor {
     fn set_registers(snes: &SNES, registers: &Self::Registers);
     fn pc(registers: &Self::Registers) -> Self::Address;
     fn to_analysis_state(registers: &Self::Registers) -> Self::AnalysisState;
+    fn breakpoint_at(snes: &SNES, addr: Self::Address) -> bool;
+    fn toggle_breakpoint_at(snes: &SNES, addr: Self::Address);
 }
 
 pub struct Disassembler<D: DebugProcessor> {
@@ -147,6 +151,7 @@ impl<D: DebugProcessor> Disassembler<D> {
         0
     }
 
+    // TODO: This should probably use D::Address instead of usize
     pub fn get_line(&self, line_i: usize) -> (usize, D::Disassembled) {
         // TODO: This can lead to some OOBs, in particular with "step"
         self.disassembly_result[line_i]

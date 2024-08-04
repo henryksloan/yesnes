@@ -6,6 +6,7 @@ use crate::cpu::yield_ticks;
 use crate::scheduler::*;
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::ops::{Coroutine, CoroutineState};
 use std::pin::Pin;
 use std::rc::Rc;
@@ -370,6 +371,7 @@ pub struct SMP {
     io_reg: IoRegisters,
     ticks_run: u64,
     ram: Vec<u8>,
+    pub breakpoint_addrs: HashSet<u16>,
     debug_log: bool, // TODO: Remove this debugging tool
 }
 
@@ -380,6 +382,7 @@ impl SMP {
             io_reg: IoRegisters::new(),
             ticks_run: 0,
             ram: vec![0; 0x10000],
+            breakpoint_addrs: HashSet::new(),
             debug_log: false,
         }
     }
@@ -413,9 +416,9 @@ impl SMP {
     pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceCoroutine + 'a {
         #[coroutine]
         move || loop {
-            // if smp.borrow().reg.pc == 0x08C5 {
-            //     smp.borrow_mut().debug_log = true;
-            // }
+            if smp.borrow().breakpoint_addrs.contains(&smp.borrow().reg.pc) {
+                yield (YieldReason::Debug(DebugPoint::Breakpoint), 0);
+            }
             if smp.borrow().debug_log {
                 print!("SMP {:#06X}", smp.borrow().reg.pc);
             }

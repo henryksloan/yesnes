@@ -197,4 +197,14 @@ impl DebugProcessor for DebugSmp {
     fn to_analysis_state(_registers: &Self::Registers) -> Self::AnalysisState {
         SmpAnalysisState
     }
+
+    fn breakpoint_at(snes: &SNES, addr: u16) -> bool {
+        snes.smp.borrow().breakpoint_addrs.contains(&addr)
+    }
+
+    fn toggle_breakpoint_at(snes: &SNES, addr: u16) {
+        if !snes.smp.borrow_mut().breakpoint_addrs.remove(&addr) {
+            snes.smp.borrow_mut().breakpoint_addrs.insert(addr);
+        }
+    }
 }

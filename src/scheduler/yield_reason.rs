@@ -23,9 +23,10 @@ pub struct Access {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DebugPoint {
-    UnimplementedAccess(Access),
     CodeBreakpoint,
-    // TODO: Should be per-device?
+    UnimplementedAccess(Access),
+    // TODO: Should these be per-device?
+    Breakpoint,
     StartedInterrupt,
     FinishedInterrupt,
 }

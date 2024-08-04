@@ -9,7 +9,7 @@ use super::registers::*;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crossbeam::channel;
 use egui_extras::{Column, TableBuilder};
@@ -175,7 +175,8 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         disassembler: &Disassembler<D>,
         paused: bool,
         registers_mirror: &D::Registers,
-        breakpoint_addrs: &HashSet<usize>,
+        breakpoint_addrs: &mut HashSet<usize>,
+        maybe_snes_guard: &Option<MutexGuard<SNES>>,
         prev_top_row: &mut Option<usize>,
         prev_bottom_row: &mut Option<usize>,
         row_index: usize,
@@ -189,6 +190,15 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         let disassembly_line = disassembler.get_line(row_index);
         let row_addr = disassembly_line.0;
         row.col(|ui| {
+            // DO NOT SUBMIT: The CPU itself can't invalidate this, though this technically makes sense if we e.g.
+            // have another window (like a breakpoint editor) that can modify this; at least add a comment
+            if let Some(snes) = maybe_snes_guard {
+                if D::breakpoint_at(snes, D::Address::try_from(row_addr).unwrap_or_default()) {
+                    breakpoint_addrs.insert(row_addr);
+                } else {
+                    breakpoint_addrs.remove(&row_addr);
+                }
+            }
             if breakpoint_addrs.contains(&row_addr) {
                 let max_rect = ui.available_rect_before_wrap();
                 let item_spacing = ui.spacing().item_spacing;
@@ -246,20 +256,34 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             })
             .body(|body| {
                 let disassembler = self.disassembler.lock().unwrap();
+                // DO NOT SUBMIT: Ouch, lock() totally breaks, since pause can be invalidated earlier in the frame (namely by control_area)
+                let maybe_snes_guard = if paused {
+                    self.snes.try_lock().ok()
+                } else {
+                    None
+                };
                 body.rows(text_height, total_lines, |row| {
                     let clicked_addr = Self::disassembly_row(
                         &disassembler,
                         paused,
                         &self.registers_mirror,
-                        &self.breakpoint_addrs,
+                        &mut self.breakpoint_addrs,
+                        &maybe_snes_guard,
                         &mut self.prev_top_row,
                         &mut self.prev_bottom_row,
                         row.index(),
                         row,
                     );
                     if let Some(clicked_addr) = clicked_addr {
-                        if !self.breakpoint_addrs.remove(&clicked_addr) {
-                            self.breakpoint_addrs.insert(clicked_addr);
+                        // TODO: Breakpoints only requires paused because of the sync design; would be great to loosen that
+                        if paused {
+                            if !self.breakpoint_addrs.remove(&clicked_addr) {
+                                self.breakpoint_addrs.insert(clicked_addr);
+                            }
+                            D::toggle_breakpoint_at(
+                                &maybe_snes_guard.as_ref().unwrap(),
+                                D::Address::try_from(clicked_addr).unwrap_or_default(),
+                            );
                         }
                     }
                 });

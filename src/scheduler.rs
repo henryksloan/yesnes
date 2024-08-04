@@ -160,6 +160,10 @@ impl Scheduler {
                         YieldReason::FrameReady => {
                             frame_ready = true;
                         }
+                        // TODO: Should this special case also apply to CodeBreakpoint?
+                        YieldReason::Debug(DebugPoint::Breakpoint) => {
+                            return (true, frame_ready);
+                        }
                         YieldReason::Debug(debug_point) => {
                             if stop_condition
                                 .is_some_and(|stop_condition| stop_condition == debug_point)
