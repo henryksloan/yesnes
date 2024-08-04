@@ -10,6 +10,7 @@ pub struct TileViewWindow {
     id: egui::Id,
     title: String,
     snes: Arc<Mutex<SNES>>,
+    base_word_addr: usize,
     images: [ColorImage; 256],
     textures: [Option<TextureHandle>; 256],
     // TODO: A more dynamic mechanism for refreshing,
@@ -25,6 +26,7 @@ impl TileViewWindow {
             id,
             title,
             snes,
+            base_word_addr: 0,
             images: core::array::from_fn(|_| ColorImage::new([8, 8], Color32::BLACK)),
             textures: core::array::from_fn(|_| None),
             vram_stale: true,
@@ -41,11 +43,10 @@ impl TileViewWindow {
 
     fn refresh_vram(&mut self) {
         // TODO: Unwrapping this lock exposes us to poisoning... consider making such checks safe
+        // TODO: Also, locking regardless of pause is dangerous/wrong, can cause deadlocks
         let snes = self.snes.lock().unwrap();
         for i in 0..256 {
-            // let tile = snes.debug_compute_tile(0x6000 + 0x10 * i, 4);
-            let tile = snes.debug_compute_tile(0x3000 + 0x10 * i, 4);
-            // let tile = snes.debug_compute_tile(0x2000 + 0x10 * i, 4);
+            let tile = snes.debug_compute_tile(self.base_word_addr + 0x10 * i, 4);
             for row in 0..8 {
                 for col in 0..8 {
                     let pixel = tile[row][col];
@@ -81,25 +82,40 @@ impl AppWindow for TileViewWindow {
         }
 
         egui::Window::new(&self.title)
-            .default_width(256.0)
-            .default_height(256.0)
+            .default_width(320.0)
             .resizable(true)
             .scroll2(egui::Vec2b::FALSE)
             .show(ctx, |ui| {
                 if !focused {
                     ui.set_enabled(false);
                 }
-                if ui.button("⟳").clicked() {
-                    self.refresh_vram();
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("⟳").clicked() {
+                        self.refresh_vram();
+                    }
+                    ui.add(
+                        egui::DragValue::new(&mut self.base_word_addr)
+                            .prefix("Base word=0x")
+                            .speed(0)
+                            .clamp_range(0..=0xFE00)
+                            .hexadecimal(4, false, true)
+                            .custom_parser(|s| {
+                                u32::from_str_radix(s, 16)
+                                    .map(|n| (n as usize & 0xFFFF) as f64)
+                                    .ok()
+                            }),
+                    );
+                });
                 ui.vertical(|ui| {
                     ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 0.0);
+                    let tile_width = ui.available_width() / 16.;
                     for i in 0..16 {
                         ui.horizontal(|ui| {
                             for j in 0..16 {
                                 ui.add(
                                     egui::Image::new(self.textures[i * 16 + j].as_ref().unwrap())
-                                        .fit_to_exact_size(egui::vec2(32., 32.)),
+                                        .fit_to_exact_size(egui::vec2(tile_width, tile_width)),
+                                    // .fit_to_exact_size(egui::vec2(32., 32.)),
                                     // .fit_to_exact_size(egui::vec2(16., 16.)),
                                 );
                             }

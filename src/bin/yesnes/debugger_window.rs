@@ -367,6 +367,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                     }
                 }
             }
+            // DO NOT SUBMIT: Consider removing this feature since we have breakpoints
             Self::Shortcut::RunToAddress => {
                 self.run_to_address_window.open();
             }
