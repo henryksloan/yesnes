@@ -136,7 +136,7 @@ impl<D: DebugProcessor> AppWindow for MemoryViewWindow<D> {
             .default_height(640.0)
             .show(ctx, |ui| {
                 if !focused {
-                    ui.set_enabled(false);
+                    ui.disable();
                 }
                 egui::TopBottomPanel::top(self.id.with("menu_bar"))
                     .show_inside(ui, |ui| self.menu_bar(ui));

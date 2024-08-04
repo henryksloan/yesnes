@@ -146,6 +146,6 @@ pub fn run() -> Result<(), eframe::Error> {
     eframe::run_native(
         "yesnes",
         options,
-        Box::new(|_cc| Box::<YesnesApp>::default()),
+        Box::new(|_cc| Ok(Box::<YesnesApp>::default())),
     )
 }

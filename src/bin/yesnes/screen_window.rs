@@ -107,10 +107,10 @@ impl AppWindow for ScreenWindow {
             .default_width(512.0)
             .default_height(512.0)
             .resizable(true)
-            .scroll2(egui::Vec2b::FALSE)
+            .scroll(egui::Vec2b::FALSE)
             .show(ctx, |ui| {
                 if !focused {
-                    ui.set_enabled(false);
+                    ui.disable();
                 }
                 ui.vertical(|ui| {
                     ui.label(format!(

@@ -111,7 +111,9 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             maybe_snes_guard = Some(snes);
         }
         ui.horizontal(|ui| {
-            ui.set_enabled(paused);
+            if !paused {
+                ui.disable();
+            }
             D::registers_area(ui, &mut self.registers_mirror);
         });
         if let Some(snes) = maybe_snes_guard {
@@ -304,7 +306,7 @@ impl<D: DebugProcessor + RegisterArea> AppWindow for DebuggerWindow<D> {
             .default_height(640.0)
             .show(ctx, |ui| {
                 if !focused {
-                    ui.set_enabled(false);
+                    ui.disable();
                 }
                 egui::TopBottomPanel::top(self.id.with("menu_bar"))
                     .show_inside(ui, |ui| self.menu_bar(ui));

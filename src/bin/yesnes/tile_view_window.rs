@@ -90,20 +90,21 @@ impl AppWindow for TileViewWindow {
         egui::Window::new(&self.title)
             .default_width(320.0)
             .resizable(true)
-            .scroll2(egui::Vec2b::FALSE)
+            .scroll(egui::Vec2b::FALSE)
             .show(ctx, |ui| {
                 if !focused {
-                    ui.set_enabled(false);
+                    ui.disable();
                 }
                 ui.horizontal(|ui| {
                     if ui.button("⟳").clicked() {
                         self.refresh_vram();
                     }
+                    // DO NOT SUBMIT: Make this work again
                     ui.add(
                         egui::DragValue::new(&mut self.base_word_addr)
                             .prefix("Base word=0x")
                             .speed(0)
-                            .clamp_range(0..=0xFE00)
+                            .range(0..=0xFE00)
                             .hexadecimal(4, false, true)
                             .custom_parser(|s| {
                                 u32::from_str_radix(s, 16)
