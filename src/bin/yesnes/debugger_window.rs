@@ -7,6 +7,7 @@ use super::emu_thread::{run_instruction_and_disassemble, EmuThreadMessage};
 use super::line_input_window::*;
 use super::registers::*;
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -30,6 +31,8 @@ pub struct DebuggerWindow<D: DebugProcessor> {
     go_to_address_window: LineInputWindow,
     run_to_address_window: LineInputWindow,
     emu_message_sender: channel::Sender<EmuThreadMessage>,
+    // TODO: A BTreeSet might help if we use sorted traversal
+    breakpoint_addrs: HashSet<usize>,
 }
 
 impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
@@ -54,6 +57,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             go_to_address_window: LineInputWindow::new("Go to address".to_string(), Some(id)),
             run_to_address_window: LineInputWindow::new("Run to address".to_string(), Some(id)),
             emu_message_sender,
+            breakpoint_addrs: HashSet::new(),
         };
         window.scroll_pc_near_top();
         window
@@ -166,15 +170,18 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         });
     }
 
+    // If clicked, returns the address of the row
     fn disassembly_row(
         disassembler: &Disassembler<D>,
         paused: bool,
         registers_mirror: &D::Registers,
+        breakpoint_addrs: &HashSet<usize>,
         prev_top_row: &mut Option<usize>,
         prev_bottom_row: &mut Option<usize>,
         row_index: usize,
         mut row: egui_extras::TableRow,
-    ) {
+    ) -> Option<usize> {
+        let mut clicked = false;
         if prev_top_row.is_none() {
             *prev_top_row = Some(row_index);
         }
@@ -182,10 +189,26 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         let disassembly_line = disassembler.get_line(row_index);
         let row_addr = disassembly_line.0;
         row.col(|ui| {
+            if breakpoint_addrs.contains(&row_addr) {
+                let max_rect = ui.available_rect_before_wrap();
+                let item_spacing = ui.spacing().item_spacing;
+                let gapless_rect = max_rect
+                    .expand2(0.5 * item_spacing)
+                    .expand2(egui::vec2(1., 1.05));
+                ui.painter()
+                    .rect_filled(gapless_rect, egui::Rounding::ZERO, egui::Color32::RED);
+                ui.style_mut().visuals.override_text_color = Some(egui::Color32::WHITE);
+            }
             if paused && row_addr == D::pc(&registers_mirror).into() {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }
-            ui.label(format!("{:08X}", row_addr));
+            let label = ui.label(format!("{:06X}", row_addr));
+            if label.contains_pointer() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if label.clicked() {
+                clicked = true;
+            }
         });
         row.col(|ui| {
             ui.label(format!(
@@ -194,6 +217,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
                 disassembly_line.1.mode_str(),
             ));
         });
+        clicked.then_some(row_addr)
     }
 
     fn disassembly_table(&mut self, ui: &mut egui::Ui, paused: bool) {
@@ -202,7 +226,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         let mut table = TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::exact(60.0))
+            .column(Column::exact(45.0))
             .column(Column::remainder())
             .min_scrolled_height(0.0);
         if let Some((row_nr, align)) = self.scroll_to_row.take() {
@@ -223,15 +247,21 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             .body(|body| {
                 let disassembler = self.disassembler.lock().unwrap();
                 body.rows(text_height, total_lines, |row| {
-                    Self::disassembly_row(
+                    let clicked_addr = Self::disassembly_row(
                         &disassembler,
                         paused,
                         &self.registers_mirror,
+                        &self.breakpoint_addrs,
                         &mut self.prev_top_row,
                         &mut self.prev_bottom_row,
                         row.index(),
                         row,
-                    )
+                    );
+                    if let Some(clicked_addr) = clicked_addr {
+                        if !self.breakpoint_addrs.remove(&clicked_addr) {
+                            self.breakpoint_addrs.insert(clicked_addr);
+                        }
+                    }
                 });
             });
     }
