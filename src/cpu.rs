@@ -2125,6 +2125,7 @@ impl CPU {
             cpu.borrow_mut().reg.p.i = true;
             cpu.borrow_mut().reg.p.d = false;
             cpu.borrow_mut().reg.pc = u24(yield_all!(CPU::read_u16(cpu.clone(), vector)) as u32);
+            yield YieldReason::Debug(DebugPoint::StartedInterrupt);
         }
     }
 
@@ -2319,6 +2320,7 @@ impl CPU {
                 let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;
                 u24((pb << 16) | addr)
             };
+            yield YieldReason::Debug(DebugPoint::FinishedInterrupt);
         }
     }
 

@@ -29,3 +29,7 @@ pub mod debug_cpu {
 pub mod debug_smp {
     pub use crate::apu::smp::{Registers, StatusRegister};
 }
+
+pub mod debug_point {
+    pub use crate::scheduler::yield_reason::{Access, AccessType, DebugPoint};
+}

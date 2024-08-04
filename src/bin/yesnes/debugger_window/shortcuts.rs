@@ -10,6 +10,8 @@ pub enum DisassemblerShortcut {
     Pause,
     Trace,
     RunToAddress,
+    UntilInterrupt,
+    FinishInterrupt,
     Reset,
 }
 
@@ -23,6 +25,8 @@ pub const DISASSEMBLER_SHORTCUTS: &'static [DisassemblerShortcut] = &[
     Pause,
     Trace,
     RunToAddress,
+    UntilInterrupt,
+    FinishInterrupt,
     Reset,
 ];
 
@@ -32,6 +36,8 @@ const CONTINUE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F
 const PAUSE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F6);
 const TRACE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F7);
 const RUN_TO_ADDRESS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::T);
+const UNTIL_INTERRUPT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::I);
+const FINISH_INTERRUPT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::J);
 const RESET: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::R);
 
 impl ToEguiShortcut for DisassemblerShortcut {
@@ -43,6 +49,8 @@ impl ToEguiShortcut for DisassemblerShortcut {
             Pause => &PAUSE,
             Trace => &TRACE,
             RunToAddress => &RUN_TO_ADDRESS,
+            UntilInterrupt => &UNTIL_INTERRUPT,
+            FinishInterrupt => &FINISH_INTERRUPT,
             Reset => &RESET,
         }
     }

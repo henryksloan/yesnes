@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use crossbeam::channel;
 use egui_extras::{Column, TableBuilder};
 
+use yesnes::debug_point::DebugPoint;
 use yesnes::disassembler::{DebugProcessor, DisassembledInstruction, Disassembler};
 use yesnes::snes::SNES;
 
@@ -75,10 +76,14 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         egui::menu::bar(ui, |ui| {
             use DisassemblerShortcut::*;
             ui.menu_button("Run", |ui| {
+                // TODO: Not necessarily a fan of duplicating these in the UI/menu.
                 self.menu_button_with_shortcut(ui, Continue, "Continue");
                 self.menu_button_with_shortcut(ui, Pause, "Pause");
                 self.menu_button_with_shortcut(ui, Trace, "Trace");
                 self.menu_button_with_shortcut(ui, RunToAddress, "To address...");
+                self.menu_button_with_shortcut(ui, UntilInterrupt, "Until interrupt");
+                self.menu_button_with_shortcut(ui, FinishInterrupt, "Finish interrupt");
+                ui.separator();
                 self.menu_button_with_shortcut(ui, Reset, "Reset");
             });
             ui.menu_button("Search", |ui| {
@@ -152,6 +157,8 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             if let Ok(addr) = parsed_addr {
                 // TODO: I think we should somehow recenter once we get to the right place.
                 // Probably worth making that a message from emu thread to this thread.
+                // TODO: This should work like a do-while; if we start on the right address, run until we hit it again
+                // (FWIW this whole feature could be replaced with breakpoints, for which the above is more obvious)
                 let _ = self
                     .emu_message_sender
                     .send(EmuThreadMessage::RunToAddress(D::DEVICE, addr as usize));
@@ -289,7 +296,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
             Self::Shortcut::Trace => {
                 self.emu_paused.store(true, Ordering::SeqCst);
                 if let Ok(mut snes) = self.snes.lock() {
-                    run_instruction_and_disassemble(&mut snes, &self.disassembler);
+                    run_instruction_and_disassemble(&mut snes, &self.disassembler, None);
                     let pc = D::pc(&D::registers(&snes));
                     let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
                     if let Some(prev_top_row) = self.prev_top_row {
@@ -309,6 +316,22 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
             Self::Shortcut::RunToAddress => {
                 self.run_to_address_window.open();
             }
+            Self::Shortcut::UntilInterrupt => {
+                let _ = self
+                    .emu_message_sender
+                    .send(EmuThreadMessage::UntilDebugPoint(
+                        D::DEVICE,
+                        DebugPoint::StartedInterrupt,
+                    ));
+            }
+            Self::Shortcut::FinishInterrupt => {
+                let _ = self
+                    .emu_message_sender
+                    .send(EmuThreadMessage::UntilDebugPoint(
+                        D::DEVICE,
+                        DebugPoint::FinishedInterrupt,
+                    ));
+            }
             Self::Shortcut::Reset => {
                 self.emu_paused.store(true, Ordering::SeqCst);
                 if let Ok(mut snes) = self.snes.lock() {
@@ -321,9 +344,10 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
 
     fn shortcut_enabled(&mut self, shortcut: &Self::Shortcut) -> bool {
         let paused = self.emu_paused.load(Ordering::Acquire);
+        use DisassemblerShortcut::*;
         match *shortcut {
-            Self::Shortcut::Continue => paused,
-            Self::Shortcut::Pause => !paused,
+            Continue | UntilInterrupt | FinishInterrupt => paused,
+            Pause => !paused,
             _ => true,
         }
     }

@@ -9,22 +9,25 @@ pub enum YieldReason {
     FrameReady,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AccessType {
     Read,
     Write,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Access {
     pub access_type: AccessType,
     pub addr: u24,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DebugPoint {
     UnimplementedAccess(Access),
     CodeBreakpoint,
+    // TODO: Should be per-device?
+    StartedInterrupt,
+    FinishedInterrupt,
 }
 
 pub type YieldTicks = (YieldReason, u64);

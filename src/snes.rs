@@ -1,5 +1,5 @@
 use crate::disassembler::{DebugCpu, DebugSmp};
-use crate::scheduler::Device;
+use crate::scheduler::{DebugPoint, Device};
 use crate::{apu::SMP, bus::Bus, cpu::CPU, ppu::PPU, scheduler::Scheduler};
 
 use std::cell::RefCell;
@@ -69,8 +69,13 @@ impl SNES {
         self.scheduler.run_instruction();
     }
 
-    pub fn run_instruction_debug(&mut self, run_device: Device) -> (bool, bool) {
-        self.scheduler.run_instruction_debug(run_device)
+    pub fn run_instruction_debug(
+        &mut self,
+        run_device: Device,
+        stop_condition: Option<DebugPoint>,
+    ) -> (bool, bool) {
+        self.scheduler
+            .run_instruction_debug(run_device, stop_condition)
     }
 
     pub fn take_frame(&mut self) -> Option<[[[u8; 3]; 256]; 224]> {
@@ -115,7 +120,7 @@ mod tests {
         // TODO: Fill in some local testdata
         snes.load_cart("");
         snes.reset();
-        b.iter(move || while !snes.run_instruction_debug(Device::CPU).1 {});
+        b.iter(move || while !snes.run_instruction_debug(Device::CPU, None).1 {});
     }
 
     // #[bench]

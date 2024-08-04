@@ -138,7 +138,11 @@ impl Scheduler {
         }
     }
 
-    pub fn run_instruction_debug(&mut self, run_device: Device) -> (bool, bool) {
+    pub fn run_instruction_debug(
+        &mut self,
+        run_device: Device,
+        stop_condition: Option<DebugPoint>,
+    ) -> (bool, bool) {
         let mut hit_debug = false;
         let mut frame_ready = false;
         loop {
@@ -157,10 +161,13 @@ impl Scheduler {
                             frame_ready = true;
                         }
                         YieldReason::Debug(debug_point) => {
-                            hit_debug = true;
+                            if stop_condition
+                                .is_some_and(|stop_condition| stop_condition == debug_point)
+                                || debug_point == DebugPoint::CodeBreakpoint
+                            {
+                                hit_debug = true;
+                            }
                             if let DebugPoint::UnimplementedAccess(access) = debug_point {
-                                // TODO: Will want more control over which debug points stop execution, etc. in the future
-                                hit_debug = false;
                                 log::debug!(
                                     "Unimplemented {:?} of {:#08}",
                                     access.access_type,

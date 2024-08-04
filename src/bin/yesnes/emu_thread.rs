@@ -1,3 +1,4 @@
+use yesnes::debug_point::DebugPoint;
 use yesnes::disassembler::{DebugCpu, DebugProcessor, DebugSmp, Disassembler};
 use yesnes::snes::SNES;
 use yesnes::Device;
@@ -14,8 +15,9 @@ use std::thread;
 pub fn run_instruction_and_disassemble<D: DebugProcessor>(
     snes: &mut SNES,
     disassembler: &Mutex<Disassembler<D>>,
+    stop_condition: Option<DebugPoint>,
 ) -> bool {
-    let (breakpoint, _) = snes.run_instruction_debug(D::DEVICE);
+    let (breakpoint, _) = snes.run_instruction_debug(D::DEVICE, stop_condition);
     let registers = D::registers(snes);
     disassembler
         .lock()
@@ -31,7 +33,7 @@ pub fn run_frame_and_disassemble<D: DebugProcessor>(
     let mut breakpoint = false;
     let mut frame_ready = false;
     while !frame_ready {
-        (breakpoint, frame_ready) = snes.run_instruction_debug(D::DEVICE);
+        (breakpoint, frame_ready) = snes.run_instruction_debug(D::DEVICE, None);
         let registers = D::registers(snes);
         disassembler
             .lock()
@@ -47,6 +49,8 @@ pub fn run_frame_and_disassemble<D: DebugProcessor>(
 pub enum EmuThreadMessage {
     Continue(Device),
     RunToAddress(Device, usize),
+    // DO NOT SUBMIT: Generalize this to running until an arbitrary debug reason.
+    UntilDebugPoint(Device, DebugPoint),
 }
 
 pub fn run_emu_thread(
@@ -85,7 +89,7 @@ pub fn run_emu_thread(
                     }
                 }
             }
-            // TODO: This should correctly handle mirrored PC addresses
+            // TODO: This should correctly handle mirrored PC addresses (?)
             EmuThreadMessage::RunToAddress(device, addr) => {
                 paused.store(false, Ordering::SeqCst);
                 loop {
@@ -104,16 +108,41 @@ pub fn run_emu_thread(
                     } else {
                         let should_break = match device {
                             Device::CPU => {
-                                run_instruction_and_disassemble(&mut snes, &cpu_disassembler)
+                                run_instruction_and_disassemble(&mut snes, &cpu_disassembler, None)
                             }
                             Device::SMP => {
-                                run_instruction_and_disassemble(&mut snes, &smp_disassembler)
+                                run_instruction_and_disassemble(&mut snes, &smp_disassembler, None)
                             }
                             _ => panic!(),
                         };
                         if should_break {
                             paused.store(true, Ordering::SeqCst);
                         }
+                    }
+                }
+            }
+            EmuThreadMessage::UntilDebugPoint(device, debug_point) => {
+                paused.store(false, Ordering::SeqCst);
+                loop {
+                    if paused.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let mut snes = snes.lock().unwrap();
+                    let should_break = match device {
+                        Device::CPU => run_instruction_and_disassemble(
+                            &mut snes,
+                            &cpu_disassembler,
+                            Some(debug_point),
+                        ),
+                        Device::SMP => run_instruction_and_disassemble(
+                            &mut snes,
+                            &smp_disassembler,
+                            Some(debug_point),
+                        ),
+                        _ => panic!(),
+                    };
+                    if should_break {
+                        paused.store(true, Ordering::SeqCst);
                     }
                 }
             }
