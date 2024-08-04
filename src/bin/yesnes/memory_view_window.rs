@@ -96,7 +96,7 @@ impl<D: DebugProcessor> MemoryViewWindow<D> {
                 }
             })
             .body(|body| {
-                body.rows(text_height, 0x10_0000, |mut row| {
+                body.rows(text_height, D::ADDR_SPACE_SIZE / 16, |mut row| {
                     let row_addr = row.index() * 0x10;
                     row.col(|ui| {
                         ui.strong(format!("{:06X}", row_addr));

@@ -105,7 +105,7 @@ impl DebugProcessor for DebugSmp {
     type Disassembled = SmpDisassembledInstruction;
     type Registers = smp::Registers;
 
-    const ADDR_SPACE_SIZE: usize = 1 << 24;
+    const ADDR_SPACE_SIZE: usize = 1 << 16;
     const INSTRUCTION_DATA: [Self::Decoded; 256] = SMP_INSTRUCTION_DATA;
     const DEVICE: Device = Device::SMP;
 

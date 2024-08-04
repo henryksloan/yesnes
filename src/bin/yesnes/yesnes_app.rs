@@ -105,7 +105,7 @@ impl eframe::App for YesnesApp {
         // TODO: We also might want to handle panics from the emulator on the frontend thread (e.g. trace)
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.label(format!(
-                "Mean frame time: {:.2}ms",
+                "Mean frame CPU time: {:.2}ms",
                 1e3 * self.frame_history.mean_frame_time()
             ));
         });

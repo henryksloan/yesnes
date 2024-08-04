@@ -93,6 +93,7 @@ impl AppWindow for TileViewWindow {
 
         egui::Window::new(&self.title)
             .default_width(320.0)
+            .default_height(340.0)
             .resizable(true)
             .scroll(egui::Vec2b::FALSE)
             .show(ctx, |ui| {
