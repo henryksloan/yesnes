@@ -18,6 +18,8 @@ pub struct TileViewWindow {
     // and eventually fine-grained cache invalidation
     vram_stale: bool,
     refreshed: bool,
+    prev_scroll: f32,
+    top_scroll_row: usize,
 }
 
 impl TileViewWindow {
@@ -32,6 +34,8 @@ impl TileViewWindow {
             textures: vec![None; 2048],
             vram_stale: true,
             refreshed: false,
+            prev_scroll: 0.,
+            top_scroll_row: 0,
         }
     }
 
@@ -95,13 +99,16 @@ impl AppWindow for TileViewWindow {
                 if !focused {
                     ui.disable();
                 }
+                let mut new_base_addr = None;
                 ui.horizontal(|ui| {
                     if ui.button("⟳").clicked() {
                         self.refresh_vram();
                     }
                     // DO NOT SUBMIT: Make this work again
+                    let old_base_addr = 0x200 * self.top_scroll_row;
+                    let mut base_addr = old_base_addr;
                     ui.add(
-                        egui::DragValue::new(&mut self.base_word_addr)
+                        egui::DragValue::new(&mut base_addr)
                             .prefix("Base word=0x")
                             .speed(0)
                             .range(0..=0xFE00)
@@ -110,15 +117,24 @@ impl AppWindow for TileViewWindow {
                                 u32::from_str_radix(s, 16)
                                     .map(|n| (n as usize & 0xFFFF) as f64)
                                     .ok()
-                            }),
+                            })
+                            .update_while_editing(false),
                     );
+                    if base_addr != old_base_addr {
+                        new_base_addr = Some(base_addr);
+                    }
                 });
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    let tile_width = ui.available_width() / 16.;
+                    let margin = ui.visuals().clip_rect_margin;
+                    let current_scroll =
+                        (ui.clip_rect().top() - ui.min_rect().top() + margin) / tile_width;
+                    self.prev_scroll = current_scroll;
+
                     ui.vertical(|ui| {
                         ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 0.0);
-                        let tile_width = ui.available_width() / 16.;
                         for i in 0..128 {
-                            ui.horizontal(|ui| {
+                            let horiz = ui.horizontal(|ui| {
                                 for j in 0..16 {
                                     ui.add(
                                         egui::Image::new(
@@ -128,6 +144,15 @@ impl AppWindow for TileViewWindow {
                                     );
                                 }
                             });
+                            if let Some(new_base_addr) = new_base_addr {
+                                if new_base_addr / 0x200 == i {
+                                    println!("scrolling to {i}");
+                                    self.top_scroll_row = i;
+                                    horiz.response.scroll_to_me(Some(egui::Align::TOP));
+                                }
+                            } else if current_scroll.round() as usize == i {
+                                self.top_scroll_row = i;
+                            }
                         }
                     });
                 });

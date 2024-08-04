@@ -23,7 +23,8 @@ pub fn register_drag_value<T: eframe::emath::Numeric>(
                 u32::from_str_radix(s, 16)
                     .map(|n| (n as usize & mask) as f64)
                     .ok()
-            }),
+            })
+            .update_while_editing(false),
     );
     let mut reg_val = register.to_f64() as usize;
     reg_val &= !mask;
