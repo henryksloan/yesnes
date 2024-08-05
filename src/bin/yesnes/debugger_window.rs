@@ -151,7 +151,15 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
                 let addr = D::Address::try_from(addr as usize).unwrap_or_default();
-                let addr_line = self.disassembler.lock().unwrap().get_line_index(addr);
+                // DO NOT SUBMIT: try_lock here means this *might* work even if we're not paused... maybe just block that?
+                // (should still be able to scroll, just not try to update disassembly)
+                // DO NOT SUBMIT: And what about locking disassembler??
+                let mut disassembler = self.disassembler.lock().unwrap();
+                if let Ok(snes) = self.snes.try_lock() {
+                    let registers = D::registers(&snes);
+                    disassembler.update_disassembly_at(addr, D::to_analysis_state(&registers));
+                }
+                let addr_line = disassembler.get_line_index(addr);
                 self.scroll_to_row = Some((addr_line, egui::Align::Center));
             }
         });
@@ -336,6 +344,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                 }
             }
             Self::Shortcut::Continue => {
+                // TODO: Should this recenter/put-to-top the PC if we are force-paused?
                 let _ = self
                     .emu_message_sender
                     .send(EmuThreadMessage::Continue(D::DEVICE));
@@ -360,9 +369,10 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                             if (pc_line < prev_top_row) || (pc_line > prev_bottom_row) {
                                 // Recenter PC if it jumped off-screen
                                 self.scroll_to_row = Some((pc_line, egui::Align::Center));
-                            } else if pc_line >= (prev_bottom_row - 1) {
+                                // DO NOT SUBMIT: Upgrading egui broke trace cursor; investigate why this neeed to change from -1 to -3
+                            } else if pc_line >= (prev_bottom_row - 3) {
                                 // Keep the PC just above the bottom of the disassembly output
-                                let new_bottom_line = pc_line + 1;
+                                let new_bottom_line = pc_line + 3;
                                 self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
                             }
                         }
@@ -374,6 +384,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                 self.run_to_address_window.open();
             }
             Self::Shortcut::UntilInterrupt => {
+                // TODO: Should these recenter the PC? (or put it to the top?)
                 let _ = self
                     .emu_message_sender
                     .send(EmuThreadMessage::UntilDebugPoint(

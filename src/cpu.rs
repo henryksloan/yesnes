@@ -14,7 +14,7 @@ use paste::paste;
 
 // Emulation mode (6502) vectors
 pub const RESET_VECTOR: u24 = u24(0xFFFC);
-pub const COP_VECTOR: u24 = u24(0xFFE4);
+pub const COP_VECTOR_E: u24 = u24(0xFFF4);
 pub const NMI_VECTOR_E: u24 = u24(0xFFFA);
 pub const IRQ_VECTOR_E: u24 = u24(0xFFFE);
 pub const ABORT_VECTOR_E: u24 = u24(0xFFF8);
@@ -23,6 +23,7 @@ pub const BRK_VECTOR_E: u24 = u24(0xFFFE);
 // 65C816 mode vectors
 pub const NMI_VECTOR: u24 = u24(0xFFEA);
 pub const IRQ_VECTOR: u24 = u24(0xFFEE);
+pub const COP_VECTOR: u24 = u24(0xFFE4);
 pub const ABORT_VECTOR: u24 = u24(0xFFF8);
 pub const BRK_VECTOR: u24 = u24(0xFFE6);
 
@@ -763,7 +764,7 @@ impl CPU {
                 };
                 let vblank = self.ppu_counter.borrow().scanline > 224;
                 ((vblank as u8) << 7) | ((hblank as u8) << 6)
-            } // 0xC0,
+            }
             0x4218..=0x421F => {
                 let reg_off = addr.lo16() as usize - 0x4218;
                 let controller_state = self.controller_states[reg_off / 4];
@@ -788,7 +789,7 @@ impl CPU {
                     _ => 0, // TODO: Open bus (maybe handle this in Bus)
                 }
             }
-            // TODO: These PPU registers should probably belong to the PPU eventually
+            // TODO: These PPU registers should probably belong to the PPU eventually (?)
             0x2137 => {
                 // TODO: This is technically wrong since there are shorter and longer lines, and some dots are 5 cycles long
                 self.ppu_h_count_latch = self.ppu_counter.borrow().h_ticks / 4;
@@ -846,7 +847,6 @@ impl CPU {
             0x420A => self.io_reg.v_scan_count.set_hi_byte(data),
             0x420B => self.dmas_enqueued = Some(data),
             0x420C => {
-                // log::debug!("TODO: Start HDMA transfer: {addr} {data:02X}");
                 self.hdmas_enqueued = Some(data);
             }
             0x4300..=0x437A => {
@@ -900,7 +900,7 @@ impl CPU {
                         let data = yield_all!(CPU::read_u8(cpu.clone(), cpu_addr));
                         yield_all!(CPU::write_u8(cpu.clone(), io_reg_addr, data));
                     }
-                    cpu_addr = cpu_addr.wrapping_add_signed(cpu_addr_step);
+                    cpu_addr = cpu_addr.wrapping_add_lo16(cpu_addr_step as i16);
                 }
             }
         }
@@ -2149,7 +2149,11 @@ impl CPU {
 
     fn cop<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         // TODO: Need to set emulation mode B flag, I think
-        let vector = COP_VECTOR;
+        let vector = if cpu.borrow().reg.p.e {
+            COP_VECTOR_E
+        } else {
+            COP_VECTOR
+        };
         cpu.borrow_mut().progress_pc(1);
         CPU::interrupt(cpu, vector)
     }

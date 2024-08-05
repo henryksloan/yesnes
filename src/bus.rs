@@ -126,8 +126,6 @@ impl Bus {
     pub fn read_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u8> + 'a {
         #[coroutine]
         move || {
-            // TODO: Some generalized mapper logic
-            // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
             match addr.bank() {
                 0x00..=0x3F | 0x80..=0xBF if (0x0000..=0x5FFF).contains(&addr.lo16()) => {
                     match addr.lo16() {
@@ -153,6 +151,7 @@ impl Bus {
                         }
                         0x2180 => {
                             let wram_port_addr = bus.borrow().wram_port_addr;
+                            bus.borrow_mut().wram_port_addr = wram_port_addr.wrapping_add_signed(1);
                             bus.borrow().wram[wram_port_addr.0 as usize]
                         }
                         0x4016 => {
@@ -241,6 +240,7 @@ impl Bus {
                         }
                         0x2180 => {
                             let wram_port_addr = bus.borrow().wram_port_addr;
+                            bus.borrow_mut().wram_port_addr = wram_port_addr.wrapping_add_signed(1);
                             bus.borrow_mut().wram[wram_port_addr.0 as usize] = data;
                         }
                         0x2181 => bus.borrow_mut().wram_port_addr.set_lo_byte(data),
@@ -294,6 +294,11 @@ impl Bus {
                     }
                 }
                 0x7E..=0x7F => {
+                    // DO NOT SUBMIT
+                    // if addr == u24(0x7eae68) {
+                    //     log::info!("{data:02X}");
+                    //     yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
+                    // }
                     bus.borrow_mut().wram
                         [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize] = data
                 }

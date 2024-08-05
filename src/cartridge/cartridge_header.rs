@@ -30,7 +30,7 @@ impl CartridgeHeader {
         let checksum = u16::from_le_bytes(data[0x1E..=0x1F].try_into().unwrap());
 
         if !checksum != checksum_complement {
-            // DO NOT SUBMIT
+            // DO NOT SUBMIT: This forces everything to LoROM, and allows carts with bad checksums
             // return None;
         }
 
