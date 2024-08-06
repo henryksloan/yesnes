@@ -17,13 +17,14 @@ pub fn register_drag_value<T: eframe::emath::Numeric>(
         egui::DragValue::new(&mut reg_ui_val)
             .prefix(prefix)
             .speed(0)
-            .clamp_range(0..=mask)
+            .range(0..=mask)
             .hexadecimal(hex_digits, false, true)
             .custom_parser(|s| {
                 u32::from_str_radix(s, 16)
                     .map(|n| (n as usize & mask) as f64)
                     .ok()
-            }),
+            })
+            .update_while_editing(false),
     );
     let mut reg_val = register.to_f64() as usize;
     reg_val &= !mask;

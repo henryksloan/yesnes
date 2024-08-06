@@ -279,4 +279,14 @@ impl DebugProcessor for DebugCpu {
     fn to_analysis_state(registers: &Self::Registers) -> Self::AnalysisState {
         Self::AnalysisState::from(&registers.p)
     }
+
+    fn breakpoint_at(snes: &SNES, addr: u24) -> bool {
+        snes.cpu.borrow().breakpoint_addrs.contains(&addr)
+    }
+
+    fn toggle_breakpoint_at(snes: &SNES, addr: u24) {
+        if !snes.cpu.borrow_mut().breakpoint_addrs.remove(&addr) {
+            snes.cpu.borrow_mut().breakpoint_addrs.insert(addr);
+        }
+    }
 }

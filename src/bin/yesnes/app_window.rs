@@ -38,6 +38,7 @@ pub trait ShortcutWindow: AppWindow {
         text: impl Into<egui::WidgetText>,
         is_menu_button: bool,
     ) {
+        // TODO: Non-menu buttons should support hover tooltips with description and shortcut keys.
         let enabled = self.shortcut_enabled(&shortcut);
         let mut button = egui::Button::new(text);
         if is_menu_button {

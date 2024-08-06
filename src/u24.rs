@@ -5,7 +5,7 @@ use std::fmt;
 use std::ops::*;
 
 // A faux primative to store 24-bit addresses
-#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Hash)]
 #[allow(non_camel_case_types)]
 pub struct u24(pub u32);
 

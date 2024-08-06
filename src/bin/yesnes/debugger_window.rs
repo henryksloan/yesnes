@@ -7,12 +7,14 @@ use super::emu_thread::{run_instruction_and_disassemble, EmuThreadMessage};
 use super::line_input_window::*;
 use super::registers::*;
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crossbeam::channel;
 use egui_extras::{Column, TableBuilder};
 
+use yesnes::debug_point::DebugPoint;
 use yesnes::disassembler::{DebugProcessor, DisassembledInstruction, Disassembler};
 use yesnes::snes::SNES;
 
@@ -29,6 +31,8 @@ pub struct DebuggerWindow<D: DebugProcessor> {
     go_to_address_window: LineInputWindow,
     run_to_address_window: LineInputWindow,
     emu_message_sender: channel::Sender<EmuThreadMessage>,
+    // TODO: A BTreeSet might help if we use sorted traversal
+    breakpoint_addrs: HashSet<usize>,
 }
 
 impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
@@ -53,6 +57,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             go_to_address_window: LineInputWindow::new("Go to address".to_string(), Some(id)),
             run_to_address_window: LineInputWindow::new("Run to address".to_string(), Some(id)),
             emu_message_sender,
+            breakpoint_addrs: HashSet::new(),
         };
         window.scroll_pc_near_top();
         window
@@ -75,10 +80,14 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         egui::menu::bar(ui, |ui| {
             use DisassemblerShortcut::*;
             ui.menu_button("Run", |ui| {
+                // TODO: Not necessarily a fan of duplicating these in the UI/menu.
                 self.menu_button_with_shortcut(ui, Continue, "Continue");
                 self.menu_button_with_shortcut(ui, Pause, "Pause");
                 self.menu_button_with_shortcut(ui, Trace, "Trace");
                 self.menu_button_with_shortcut(ui, RunToAddress, "To address...");
+                self.menu_button_with_shortcut(ui, UntilInterrupt, "Until interrupt");
+                self.menu_button_with_shortcut(ui, FinishInterrupt, "Finish interrupt");
+                ui.separator();
                 self.menu_button_with_shortcut(ui, Reset, "Reset");
             });
             ui.menu_button("Search", |ui| {
@@ -102,7 +111,9 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             maybe_snes_guard = Some(snes);
         }
         ui.horizontal(|ui| {
-            ui.set_enabled(paused);
+            if !paused {
+                ui.disable();
+            }
             D::registers_area(ui, &mut self.registers_mirror);
         });
         if let Some(snes) = maybe_snes_guard {
@@ -140,7 +151,13 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
                 let addr = D::Address::try_from(addr as usize).unwrap_or_default();
-                let addr_line = self.disassembler.lock().unwrap().get_line_index(addr);
+                // TODO: try_lock() and lock() here are awkward; improve synchronization strategy
+                let mut disassembler = self.disassembler.lock().unwrap();
+                if let Ok(snes) = self.snes.try_lock() {
+                    let registers = D::registers(&snes);
+                    disassembler.update_disassembly_at(addr, D::to_analysis_state(&registers));
+                }
+                let addr_line = disassembler.get_line_index(addr);
                 self.scroll_to_row = Some((addr_line, egui::Align::Center));
             }
         });
@@ -152,6 +169,9 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             if let Ok(addr) = parsed_addr {
                 // TODO: I think we should somehow recenter once we get to the right place.
                 // Probably worth making that a message from emu thread to this thread.
+                // TODO: This should work like a do-while; if we start on the right address, run until we hit it again
+                // (FWIW this whole feature could be replaced with breakpoints, for which the above is more obvious)
+                // TODO: This behaves very strangely when already unpaused
                 let _ = self
                     .emu_message_sender
                     .send(EmuThreadMessage::RunToAddress(D::DEVICE, addr as usize));
@@ -159,15 +179,19 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         });
     }
 
+    // If clicked, returns the address of the row
     fn disassembly_row(
         disassembler: &Disassembler<D>,
         paused: bool,
         registers_mirror: &D::Registers,
+        breakpoint_addrs: &mut HashSet<usize>,
+        maybe_snes_guard: &Option<MutexGuard<SNES>>,
         prev_top_row: &mut Option<usize>,
         prev_bottom_row: &mut Option<usize>,
         row_index: usize,
         mut row: egui_extras::TableRow,
-    ) {
+    ) -> Option<usize> {
+        let mut clicked = false;
         if prev_top_row.is_none() {
             *prev_top_row = Some(row_index);
         }
@@ -175,10 +199,34 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         let disassembly_line = disassembler.get_line(row_index);
         let row_addr = disassembly_line.0;
         row.col(|ui| {
+            // The CPU itself can't invalidate the set of breakpoints, but other frontend elements could
+            if let Some(snes) = maybe_snes_guard {
+                if D::breakpoint_at(snes, D::Address::try_from(row_addr).unwrap_or_default()) {
+                    breakpoint_addrs.insert(row_addr);
+                } else {
+                    breakpoint_addrs.remove(&row_addr);
+                }
+            }
+            if breakpoint_addrs.contains(&row_addr) {
+                let max_rect = ui.available_rect_before_wrap();
+                let item_spacing = ui.spacing().item_spacing;
+                let gapless_rect = max_rect
+                    .expand2(0.5 * item_spacing)
+                    .expand2(egui::vec2(1., 1.05));
+                ui.painter()
+                    .rect_filled(gapless_rect, egui::Rounding::ZERO, egui::Color32::RED);
+                ui.style_mut().visuals.override_text_color = Some(egui::Color32::WHITE);
+            }
             if paused && row_addr == D::pc(&registers_mirror).into() {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }
-            ui.label(format!("{:08X}", row_addr));
+            let label = ui.label(format!("{:06X}", row_addr));
+            if label.contains_pointer() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if label.clicked() {
+                clicked = true;
+            }
         });
         row.col(|ui| {
             ui.label(format!(
@@ -187,6 +235,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
                 disassembly_line.1.mode_str(),
             ));
         });
+        clicked.then_some(row_addr)
     }
 
     fn disassembly_table(&mut self, ui: &mut egui::Ui, paused: bool) {
@@ -195,7 +244,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         let mut table = TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::exact(60.0))
+            .column(Column::exact(45.0))
             .column(Column::remainder())
             .min_scrolled_height(0.0);
         if let Some((row_nr, align)) = self.scroll_to_row.take() {
@@ -215,16 +264,36 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             })
             .body(|body| {
                 let disassembler = self.disassembler.lock().unwrap();
+                // TODO: try_lock is necessary due to the hacky `paused` mechanism
+                let maybe_snes_guard = if paused {
+                    self.snes.try_lock().ok()
+                } else {
+                    None
+                };
                 body.rows(text_height, total_lines, |row| {
-                    Self::disassembly_row(
+                    let clicked_addr = Self::disassembly_row(
                         &disassembler,
                         paused,
                         &self.registers_mirror,
+                        &mut self.breakpoint_addrs,
+                        &maybe_snes_guard,
                         &mut self.prev_top_row,
                         &mut self.prev_bottom_row,
                         row.index(),
                         row,
-                    )
+                    );
+                    if let Some(clicked_addr) = clicked_addr {
+                        // TODO: Breakpoints only requires paused because of the sync design; would be great to loosen that
+                        if paused {
+                            if !self.breakpoint_addrs.remove(&clicked_addr) {
+                                self.breakpoint_addrs.insert(clicked_addr);
+                            }
+                            D::toggle_breakpoint_at(
+                                &maybe_snes_guard.as_ref().unwrap(),
+                                D::Address::try_from(clicked_addr).unwrap_or_default(),
+                            );
+                        }
+                    }
                 });
             });
     }
@@ -243,7 +312,7 @@ impl<D: DebugProcessor + RegisterArea> AppWindow for DebuggerWindow<D> {
             .default_height(640.0)
             .show(ctx, |ui| {
                 if !focused {
-                    ui.set_enabled(false);
+                    ui.disable();
                 }
                 egui::TopBottomPanel::top(self.id.with("menu_bar"))
                     .show_inside(ui, |ui| self.menu_bar(ui));
@@ -273,6 +342,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                 }
             }
             Self::Shortcut::Continue => {
+                // TODO: Should this recenter/put-to-top the PC if we are force-paused?
                 let _ = self
                     .emu_message_sender
                     .send(EmuThreadMessage::Continue(D::DEVICE));
@@ -289,7 +359,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
             Self::Shortcut::Trace => {
                 self.emu_paused.store(true, Ordering::SeqCst);
                 if let Ok(mut snes) = self.snes.lock() {
-                    run_instruction_and_disassemble(&mut snes, &self.disassembler);
+                    run_instruction_and_disassemble(&mut snes, &self.disassembler, None);
                     let pc = D::pc(&D::registers(&snes));
                     let pc_line = self.disassembler.lock().unwrap().get_line_index(pc);
                     if let Some(prev_top_row) = self.prev_top_row {
@@ -297,17 +367,36 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                             if (pc_line < prev_top_row) || (pc_line > prev_bottom_row) {
                                 // Recenter PC if it jumped off-screen
                                 self.scroll_to_row = Some((pc_line, egui::Align::Center));
-                            } else if pc_line >= (prev_bottom_row - 1) {
+                                // TODO: Upgrading egui broke trace cursor; investigate why this neeed to change from -1 to -3
+                            } else if pc_line >= (prev_bottom_row - 3) {
                                 // Keep the PC just above the bottom of the disassembly output
-                                let new_bottom_line = pc_line + 1;
+                                let new_bottom_line = pc_line + 3;
                                 self.scroll_to_row = Some((new_bottom_line, egui::Align::BOTTOM));
                             }
                         }
                     }
                 }
             }
+            // TODO: Consider removing this feature since we have breakpoints
             Self::Shortcut::RunToAddress => {
                 self.run_to_address_window.open();
+            }
+            Self::Shortcut::UntilInterrupt => {
+                // TODO: Should these recenter the PC? (or put it to the top?)
+                let _ = self
+                    .emu_message_sender
+                    .send(EmuThreadMessage::UntilDebugPoint(
+                        D::DEVICE,
+                        DebugPoint::StartedInterrupt,
+                    ));
+            }
+            Self::Shortcut::FinishInterrupt => {
+                let _ = self
+                    .emu_message_sender
+                    .send(EmuThreadMessage::UntilDebugPoint(
+                        D::DEVICE,
+                        DebugPoint::FinishedInterrupt,
+                    ));
             }
             Self::Shortcut::Reset => {
                 self.emu_paused.store(true, Ordering::SeqCst);
@@ -321,9 +410,10 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
 
     fn shortcut_enabled(&mut self, shortcut: &Self::Shortcut) -> bool {
         let paused = self.emu_paused.load(Ordering::Acquire);
+        use DisassemblerShortcut::*;
         match *shortcut {
-            Self::Shortcut::Continue => paused,
-            Self::Shortcut::Pause => !paused,
+            Continue | UntilInterrupt | FinishInterrupt => paused,
+            Pause => !paused,
             _ => true,
         }
     }

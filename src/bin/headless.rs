@@ -11,7 +11,7 @@ fn main() {
         const FRAMES_PER_CHECK: u32 = 60;
         let now = Instant::now();
         for _ in 0..FRAMES_PER_CHECK {
-            while !snes.run_instruction_debug(Device::CPU).1 {}
+            while !snes.run_instruction_debug(Device::CPU, None).1 {}
         }
         let elapsed = now.elapsed();
         println!(

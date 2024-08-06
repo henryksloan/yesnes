@@ -252,6 +252,7 @@ bitfield! {
   pub struct VramAddrIncrMode(u8);
   impl Debug;
   pub step, _: 1, 0;
+  // TODO: Implement VRAM address translation
   pub translation, _: 3, 2;
   pub incr_byte, _: 7;
 }

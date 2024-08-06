@@ -62,7 +62,7 @@ impl eframe::App for YesnesApp {
             controller_state
         });
         self.snes.set_controller_state(0, controller_state);
-        while !self.snes.run_instruction_debug(Device::CPU).1 {}
+        while !self.snes.run_instruction_debug(Device::CPU, None).1 {}
 
         let frame = self.snes.take_frame();
         if let Some(frame) = frame {
@@ -121,6 +121,6 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "yesnes",
         options,
-        Box::new(|_cc| Box::<YesnesApp>::default()),
+        Box::new(|_cc| Ok(Box::<YesnesApp>::default())),
     )
 }
