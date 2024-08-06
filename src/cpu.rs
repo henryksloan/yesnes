@@ -381,7 +381,6 @@ impl CPU {
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceCoroutine + 'a {
-        // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         #[coroutine]
         move || loop {
             if cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc) {
@@ -1158,7 +1157,8 @@ impl CPU {
 
     // TODO: Stuff like this can OBVIOUSLY be modified to take &self
     fn bank_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
-        u24((cpu.borrow().reg.b as u32) << 16) | addr
+        // DO NOT SUBMIT: It seems like this would have to be wrapping?
+        u24((cpu.borrow().reg.b as u32) << 16) + addr
     }
 
     fn stack_pull_u8<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u8> + 'a {
@@ -2404,11 +2404,6 @@ mod tests {
 
     #[test]
     fn tom_harte() {
-        // DO NOT SUBMIT: The test folder is enormous and should be a git submodule (if anything)
-        // let mut test_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        // test_file.push("testdata/65816/v1/65.n.json");
-        // let contents = fs::read_to_string(test_file).unwrap();
-        // let tests = json::parse(&contents).unwrap();
         let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_dir.push("testdata/65816/v1/");
         let test_files = fs::read_dir(test_dir).unwrap();
@@ -2417,9 +2412,8 @@ mod tests {
         let cpu = snes.cpu.clone();
         let bus = snes.bus.clone();
         bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
-        for test_file in test_files {
+        'file_loop: for test_file in test_files {
             let test_path = test_file.unwrap().path();
-            println!("{:?}", test_path);
             let contents = fs::read_to_string(test_path).unwrap();
             let tests = json::parse(&contents).unwrap();
             for test in tests.members() {
@@ -2444,7 +2438,7 @@ mod tests {
                 cpu.borrow_mut().reg.p.e = initial["e"].as_u8().unwrap() != 0;
                 // DO NOT SUBMIT: Skipping emu mode tests
                 if cpu.borrow().reg.p.e {
-                    continue;
+                    continue 'file_loop;
                 }
                 cpu.borrow_mut().reg.sp = initial["s"].as_u16().unwrap();
                 cpu.borrow_mut().reg.a = initial["a"].as_u16().unwrap();
