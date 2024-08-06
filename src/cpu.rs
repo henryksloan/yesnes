@@ -1351,8 +1351,8 @@ impl CPU {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
                 let addr_mid = fetch!(cpu) as u32;
-                u24((((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
-                    + cpu.borrow().reg.get_x() as u32)
+                u24(((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
+                    + u24(cpu.borrow().reg.get_x() as u32)
             };
             Pointer { addr, long }
         }
@@ -1511,7 +1511,8 @@ impl CPU {
     ) -> impl Yieldable<Pointer> + 'a {
         #[coroutine]
         move || {
-            let stack_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_sp() as u32);
+            let offset = fetch!(cpu) as i16;
+            let stack_addr = u24(cpu.borrow().reg.get_sp() as u32).wrapping_add_lo16(offset);
             let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), stack_addr)) as u32;
             // TODO: Normalize wrapping behavior/functions for 16 bit accesses throughout
             let addr_hi = yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32;
@@ -2176,7 +2177,7 @@ impl CPU {
                 temp & !carry_mask
             }
         };
-        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
         cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
@@ -2414,6 +2415,7 @@ mod tests {
         bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
         'file_loop: for test_file in test_files {
             let test_path = test_file.unwrap().path();
+            // println!("{test_path:?}");
             let contents = fs::read_to_string(test_path).unwrap();
             let tests = json::parse(&contents).unwrap();
             for test in tests.members() {
