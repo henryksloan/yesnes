@@ -329,7 +329,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($smp_rc, $instr_f, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc - 1),
+            // _ => panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc - 1),
         }
     };
 }
@@ -371,6 +371,7 @@ pub struct SMP {
     io_reg: IoRegisters,
     ticks_run: u64,
     ram: Vec<u8>,
+    stopped: bool,
     // DO NOT SUBMIT: Once again, clunky
     test_mode: bool,
     pub breakpoint_addrs: HashSet<u16>,
@@ -384,6 +385,7 @@ impl SMP {
             io_reg: IoRegisters::new(),
             ticks_run: 0,
             ram: vec![0; 0x10000],
+            stopped: false,
             test_mode: false,
             breakpoint_addrs: HashSet::new(),
             debug_log: false,
@@ -414,11 +416,16 @@ impl SMP {
         // TODO: Simplify
         smp.borrow_mut().reg.pc = ignore_yields!(Self::read_u16(smp.clone(), RESET_VECTOR));
         smp.borrow_mut().reg.sp = 0xEF;
+        smp.borrow_mut().stopped = false;
     }
 
     pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceCoroutine + 'a {
         #[coroutine]
         move || loop {
+            if smp.borrow().stopped {
+                yield (YieldReason::FinishedInstruction(Device::SMP), 0);
+                continue;
+            }
             if smp.borrow().breakpoint_addrs.contains(&smp.borrow().reg.pc) {
                 yield (YieldReason::Debug(DebugPoint::Breakpoint), 0);
             }
@@ -600,7 +607,8 @@ impl SMP {
                 (set_flag_i; 0xA0=>implied)
                 (clear_flag_i; 0xC0=>implied)
                 (nop; 0x00=>implied)
-                (stp; 0xFF=>implied)
+                // 0xEF is SLEEP
+                (stp; 0xEF=>implied, 0xFF=>implied)
             );
 
             yield (YieldReason::FinishedInstruction(Device::SMP), 0);
@@ -1669,9 +1677,7 @@ impl SMP {
     fn stp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            // TODO: There's probably a more useful way to do STP
-            let old_pc = smp.borrow().reg.pc;
-            smp.borrow_mut().reg.pc = (old_pc & 0xFF00) | (old_pc.wrapping_sub(1) & 0xFF);
+            smp.borrow_mut().stopped = true;
         }
     }
 
@@ -1707,6 +1713,11 @@ mod tests {
         for test_file in test_files {
             let test_path = test_file.unwrap().path();
             // println!("{test_path:?}");
+            match test_path.extension() {
+                None => continue,
+                Some(extension) if extension != ".json" => continue,
+                _ => {}
+            }
             let contents = fs::read_to_string(test_path).unwrap();
             let tests = json::parse(&contents).unwrap();
             for test in tests.members() {
