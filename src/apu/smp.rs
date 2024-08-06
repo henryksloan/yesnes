@@ -903,7 +903,7 @@ impl SMP {
         move || {
             let operand = fetch_u16!(smp) as u16;
             AddressBit {
-                addr: operand & 0xFFF,
+                addr: operand & 0x1FFF,
                 bit: (operand >> 13) as u8,
                 invert: false,
             }
@@ -915,7 +915,7 @@ impl SMP {
         move || {
             let operand = fetch_u16!(smp) as u16;
             AddressBit {
-                addr: operand & 0xFFF,
+                addr: operand & 0x1FFF,
                 bit: (operand >> 13) as u8,
                 invert: true,
             }
@@ -958,7 +958,7 @@ impl SMP {
                 )) as u16;
                 (addr_hi << 8) | addr_lo
             };
-            indirect_addr + smp.borrow().reg.y as u16
+            indirect_addr.wrapping_add(smp.borrow().reg.y as u16)
         }
     }
 
@@ -1126,7 +1126,7 @@ impl SMP {
             let temp = dest_data as i16 + src_data as i16 + carry;
             smp.borrow_mut().reg.psw.c = temp > 0xFF;
             smp.borrow_mut().reg.psw.h = ((dest_data & 0xF) + (src_data & 0xF) + carry as u8) > 0xF;
-            smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
+            smp.borrow_mut().reg.psw.n = (temp >> 7) & 1 == 1;
             smp.borrow_mut().reg.psw.z = (temp & 0xFF) == 0;
             temp as u8
         };
@@ -1533,9 +1533,9 @@ impl SMP {
     fn tcall<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(SMP::push_pc(smp.clone()));
             // TODO: Might be a bit nicer to express this as a peculiarly parameterized procedure
-            let n = (smp.borrow().peak_u8(smp.borrow().reg.pc - 1) as u16) >> 4;
+            let n = (smp.borrow().peak_u8(smp.borrow().reg.pc.wrapping_sub(1)) as u16) >> 4;
+            yield_all!(SMP::push_pc(smp.clone()));
             let dest_pc = yield_all!(Self::read_u16(smp.clone(), 0xFFDE - (2 * n)));
             smp.borrow_mut().reg.pc = dest_pc;
             // TODO: Need to look into how many cycles branch can take
