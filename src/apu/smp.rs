@@ -371,6 +371,8 @@ pub struct SMP {
     io_reg: IoRegisters,
     ticks_run: u64,
     ram: Vec<u8>,
+    // DO NOT SUBMIT: Once again, clunky
+    test_mode: bool,
     pub breakpoint_addrs: HashSet<u16>,
     debug_log: bool, // TODO: Remove this debugging tool
 }
@@ -382,6 +384,7 @@ impl SMP {
             io_reg: IoRegisters::new(),
             ticks_run: 0,
             ram: vec![0; 0x10000],
+            test_mode: false,
             breakpoint_addrs: HashSet::new(),
             debug_log: false,
         }
@@ -672,6 +675,9 @@ impl SMP {
     }
 
     pub fn peak_u8(&self, addr: u16) -> u8 {
+        if self.test_mode {
+            return self.ram[addr as usize];
+        }
         let data = match addr {
             0x0000..=0x00EF => self.ram[addr as usize],
             0x00F0..=0x00FF => self.peak_io_reg(addr),
@@ -695,6 +701,9 @@ impl SMP {
     fn read_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
         #[coroutine]
         move || {
+            if smp.borrow().test_mode {
+                return smp.borrow().ram[addr as usize];
+            }
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
             let data = match addr {
@@ -740,24 +749,12 @@ impl SMP {
     fn write_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u8) -> impl Yieldable<()> + 'a {
         #[coroutine]
         move || {
+            if smp.borrow().test_mode {
+                smp.borrow_mut().ram[addr as usize] = data;
+            }
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
-            if addr == 0x0001 {
-                // println!("SMP 0001 <- {:02X}", data);
-                // yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
-                static mut NOW_BREAK: bool = false;
-                if unsafe { NOW_BREAK } {
-                    yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
-                }
-                if data == 0x02 {
-                    // unsafe {
-                    //     NOW_BREAK = true;
-                    // }
-                    // yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
-                }
-            }
             // All writes always go to ram, even if they also go to e.g. IO
-            // println!("APU Write {:#08x} <- {:#04x}", addr, data);
             smp.borrow_mut().ram[addr as usize] = data;
             match addr {
                 0x00F0..=0x00FF => yield_all!(SMP::write_io_reg(smp.clone(), addr, data)),
@@ -971,14 +968,12 @@ impl SMP {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr =
                 direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16;
+            // let direct_addr = direct_page_base | (fetch!(smp) as u16 + smp.borrow().reg.x as u16);
             let indirect_addr = {
-                let addr_lo = yield_all!(SMP::read_u8(
-                    smp.clone(),
-                    direct_page_base + direct_addr as u16
-                )) as u16;
+                let addr_lo = yield_all!(SMP::read_u8(smp.clone(), direct_addr as u16)) as u16;
                 let addr_hi = yield_all!(SMP::read_u8(
                     smp.clone(),
-                    direct_page_base + direct_addr.wrapping_add(1) as u16
+                    (direct_addr & 0xFF00) | (direct_addr.wrapping_add(1) & 0xFF)
                 )) as u16;
                 (addr_hi << 8) | addr_lo
             };
@@ -1119,10 +1114,6 @@ impl SMP {
     }
 
     fn cmp_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) {
-        // smp.borrow_mut().reg.psw.c = dest_data >= src_data;
-        // smp.borrow_mut().reg.psw.n = src_data > dest_data;
-        // smp.borrow_mut().reg.psw.z = src_data == dest_data;
-        // TODO: NOTE: This is a critical bug fix
         let diff: i8 = (dest_data as i8).wrapping_sub(src_data as i8);
         smp.borrow_mut().reg.psw.c = (dest_data as i16 - src_data as i16) >= 0;
         smp.borrow_mut().reg.psw.n = (diff as u8 & 0x80) != 0;
@@ -1687,5 +1678,89 @@ impl SMP {
     fn nop<'a>(_: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scheduler::Device;
+    use crate::snes::SNES;
+    use json;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn tom_harte() {
+        let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        test_dir.push("testdata/spc700/v1/");
+        let test_files = fs::read_dir(test_dir).unwrap();
+
+        let mut snes = SNES::new_test();
+        // DO NOT SUBMIT: Some of this might be unnecessary
+        let cpu = snes.cpu.clone();
+        let bus = snes.bus.clone();
+        let smp = snes.smp.clone();
+        // DO NOT SUBMIT: Is this the best place to set this?
+        smp.borrow_mut().test_mode = true;
+        bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
+        for test_file in test_files {
+            let test_path = test_file.unwrap().path();
+            // println!("{test_path:?}");
+            let contents = fs::read_to_string(test_path).unwrap();
+            let tests = json::parse(&contents).unwrap();
+            for test in tests.members() {
+                // println!("{}", test);
+                let initial = &test["initial"];
+                // DO NOT SUBMIT: Hah, I think clearing RAM is too slow...
+                // smp.borrow_mut().reset();
+                smp.borrow_mut().reg.pc = initial["pc"].as_u16().unwrap();
+                smp.borrow_mut()
+                    .reg
+                    .psw
+                    .set(initial["psw"].as_u8().unwrap());
+                smp.borrow_mut().reg.sp = initial["sp"].as_u8().unwrap();
+                smp.borrow_mut().reg.a = initial["a"].as_u8().unwrap();
+                smp.borrow_mut().reg.x = initial["x"].as_u8().unwrap();
+                smp.borrow_mut().reg.y = initial["y"].as_u8().unwrap();
+                for entry in initial["ram"].members() {
+                    let members: Vec<_> = entry.members().collect();
+                    smp.borrow_mut().ram[members[0].as_usize().unwrap()] =
+                        members[1].as_u8().unwrap();
+                }
+                snes.run_instruction_debug(Device::SMP, None);
+                let after = &test["final"];
+                assert_eq!(
+                    smp.borrow().reg.pc,
+                    after["pc"].as_u16().unwrap(),
+                    "{}",
+                    test
+                );
+                assert_eq!(
+                    smp.borrow().reg.psw.get(),
+                    after["psw"].as_u8().unwrap(),
+                    "{}",
+                    test
+                );
+                assert_eq!(
+                    smp.borrow().reg.sp,
+                    after["sp"].as_u8().unwrap(),
+                    "{}",
+                    test
+                );
+                assert_eq!(smp.borrow().reg.a, after["a"].as_u8().unwrap(), "{}", test);
+                assert_eq!(smp.borrow().reg.x, after["x"].as_u8().unwrap(), "{}", test);
+                assert_eq!(smp.borrow().reg.y, after["y"].as_u8().unwrap(), "{}", test);
+                for entry in after["ram"].members() {
+                    let members: Vec<_> = entry.members().collect();
+                    assert_eq!(
+                        smp.borrow().ram[members[0].as_usize().unwrap()],
+                        members[1].as_u8().unwrap(),
+                        "{}",
+                        test
+                    );
+                }
+            }
+        }
     }
 }

@@ -36,6 +36,7 @@ impl SNES {
         }
     }
 
+    // DO NOT SUBMIT: This works, but the API is a little ugly
     pub fn new_test() -> Self {
         let ppu = Rc::new(RefCell::new(PPU::new()));
         let smp = Rc::new(RefCell::new(SMP::new()));

@@ -2458,6 +2458,7 @@ mod tests {
                 }
                 snes.run_instruction_debug(Device::CPU, None);
                 let after = &test["final"];
+                // DO NOT SUBMIT: Factor out these "{}" things
                 assert_eq!(
                     cpu.borrow().reg.pc.lo16(),
                     after["pc"].as_u16().unwrap(),
