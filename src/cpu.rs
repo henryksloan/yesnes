@@ -1500,8 +1500,7 @@ impl CPU {
     fn stack_relative<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         #[coroutine]
         move || {
-            let bank_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_sp() as u32);
-            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
+            let addr = u24(fetch!(cpu) as u32).wrapping_add_lo16(cpu.borrow().reg.get_sp() as i16);
             Pointer { addr, long }
         }
     }
@@ -2225,7 +2224,7 @@ impl CPU {
         let check_mask = if left { 1 << (n_bits - 1) } else { 0x01 };
         cpu.borrow_mut().reg.p.c = (data & check_mask) == check_mask;
         let result = if left { data << 1 } else { data >> 1 };
-        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
         cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
@@ -2392,4 +2391,130 @@ impl CPU {
     push_instrs!();
     transfer_instrs!();
     branch_instrs!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scheduler::Device;
+    use crate::snes::SNES;
+    use json;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn tom_harte() {
+        // DO NOT SUBMIT: The test folder is enormous and should be a git submodule (if anything)
+        // let mut test_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        // test_file.push("testdata/65816/v1/65.n.json");
+        // let contents = fs::read_to_string(test_file).unwrap();
+        // let tests = json::parse(&contents).unwrap();
+        let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        test_dir.push("testdata/65816/v1/");
+        let test_files = fs::read_dir(test_dir).unwrap();
+
+        let mut snes = SNES::new_test();
+        let cpu = snes.cpu.clone();
+        let bus = snes.bus.clone();
+        bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
+        for test_file in test_files {
+            let test_path = test_file.unwrap().path();
+            println!("{:?}", test_path);
+            let contents = fs::read_to_string(test_path).unwrap();
+            let tests = json::parse(&contents).unwrap();
+            for test in tests.members() {
+                // println!("{}", test);
+                let initial = &test["initial"];
+                // DO NOT SUBMIT: Hah, I think clearing RAM is too slow...
+                // cpu.borrow_mut().reset();
+                // bus.borrow_mut().reset();
+                cpu.borrow_mut()
+                    .reg
+                    .pc
+                    .set_lo16(initial["pc"].as_u16().unwrap());
+                cpu.borrow_mut()
+                    .reg
+                    .pc
+                    .set_bank(initial["pbr"].as_u8().unwrap());
+                cpu.borrow_mut().reg.p.set(initial["p"].as_u8().unwrap());
+                // DO NOT SUBMIT: Skipping decimal mode tests
+                if cpu.borrow().reg.p.d {
+                    continue;
+                }
+                cpu.borrow_mut().reg.p.e = initial["e"].as_u8().unwrap() != 0;
+                // DO NOT SUBMIT: Skipping emu mode tests
+                if cpu.borrow().reg.p.e {
+                    continue;
+                }
+                cpu.borrow_mut().reg.sp = initial["s"].as_u16().unwrap();
+                cpu.borrow_mut().reg.a = initial["a"].as_u16().unwrap();
+                cpu.borrow_mut().reg.x = initial["x"].as_u16().unwrap();
+                cpu.borrow_mut().reg.y = initial["y"].as_u16().unwrap();
+                cpu.borrow_mut().reg.b = initial["dbr"].as_u8().unwrap();
+                cpu.borrow_mut().reg.d = initial["d"].as_u16().unwrap();
+                for entry in initial["ram"].members() {
+                    let members: Vec<_> = entry.members().collect();
+                    ignore_yields!(Bus::write_u8(
+                        bus.clone(),
+                        u24(members[0].as_u32().unwrap()),
+                        members[1].as_u8().unwrap(),
+                    ));
+                }
+                snes.run_instruction_debug(Device::CPU, None);
+                let after = &test["final"];
+                assert_eq!(
+                    cpu.borrow().reg.pc.lo16(),
+                    after["pc"].as_u16().unwrap(),
+                    "{}",
+                    test
+                );
+                assert_eq!(
+                    cpu.borrow().reg.pc.bank(),
+                    after["pbr"].as_u8().unwrap(),
+                    "{}",
+                    test
+                );
+                assert_eq!(
+                    cpu.borrow().reg.p.get(),
+                    after["p"].as_u8().unwrap(),
+                    "{}",
+                    test
+                );
+                assert_eq!(
+                    cpu.borrow().reg.p.e,
+                    after["e"].as_u8().unwrap() != 0,
+                    "{}",
+                    test
+                );
+                assert_eq!(
+                    cpu.borrow().reg.sp,
+                    after["s"].as_u16().unwrap(),
+                    "{}",
+                    test
+                );
+                assert_eq!(cpu.borrow().reg.a, after["a"].as_u16().unwrap(), "{}", test);
+                assert_eq!(cpu.borrow().reg.x, after["x"].as_u16().unwrap(), "{}", test);
+                assert_eq!(cpu.borrow().reg.y, after["y"].as_u16().unwrap(), "{}", test);
+                assert_eq!(
+                    cpu.borrow().reg.b,
+                    after["dbr"].as_u8().unwrap(),
+                    "{}",
+                    test
+                );
+                assert_eq!(cpu.borrow().reg.d, after["d"].as_u16().unwrap(), "{}", test);
+                for entry in after["ram"].members() {
+                    let members: Vec<_> = entry.members().collect();
+                    assert_eq!(
+                        ignore_yields!(Bus::read_u8(
+                            bus.clone(),
+                            u24(members[0].as_u32().unwrap())
+                        )),
+                        members[1].as_u8().unwrap(),
+                        "{}",
+                        test
+                    );
+                }
+            }
+        }
+    }
 }

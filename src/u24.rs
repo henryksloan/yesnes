@@ -25,6 +25,7 @@ impl u24 {
     }
 
     pub fn wrapping_add_lo16(&self, other: i16) -> u24 {
+        // DO NOT SUBMIT: Is there a function difference between signed and unsigned here?
         let new_lo16 = self.lo16().wrapping_add_signed(other);
         u24(((self.bank() as u32) << 16) | (new_lo16 as u32))
     }

@@ -337,7 +337,7 @@ macro_rules! instrs {
 macro_rules! fetch {
     ($smp_rc: ident) => {{
         let data = yield_all!(SMP::read_u8($smp_rc.clone(), $smp_rc.borrow().reg.pc));
-        $smp_rc.borrow_mut().reg.pc += 1;
+        $smp_rc.borrow_mut().progress_pc(1);
         data
     }};
 }
@@ -423,7 +423,7 @@ impl SMP {
                 print!("SMP {:#06X}", smp.borrow().reg.pc);
             }
             let opcode = yield_ticks!(smp, SMP::read_u8(smp.clone(), smp.borrow().reg.pc));
-            smp.borrow_mut().reg.pc += 1;
+            smp.borrow_mut().progress_pc(1);
             if smp.borrow().debug_log {
                 let reg = &smp.borrow().reg;
                 println!(
@@ -602,6 +602,10 @@ impl SMP {
 
             yield (YieldReason::FinishedInstruction(Device::SMP), 0);
         }
+    }
+
+    fn progress_pc(&mut self, bytes: i16) {
+        self.reg.pc = self.reg.pc.wrapping_add_signed(bytes);
     }
 
     fn step(&mut self, n_clocks: u64) {
@@ -827,7 +831,7 @@ impl SMP {
         move || {
             let addr = smp.borrow().reg.pc;
             // TODO: Need to use wrapping adds for PC increments and most addressing mode adds
-            smp.borrow_mut().reg.pc += 1;
+            smp.borrow_mut().progress_pc(1);
             addr
         }
     }
