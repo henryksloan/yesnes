@@ -1715,7 +1715,7 @@ mod tests {
             // println!("{test_path:?}");
             match test_path.extension() {
                 None => continue,
-                Some(extension) if extension != ".json" => continue,
+                Some(extension) if extension != "json" => continue,
                 _ => {}
             }
             let contents = fs::read_to_string(test_path).unwrap();
@@ -1734,6 +1734,7 @@ mod tests {
                 smp.borrow_mut().reg.a = initial["a"].as_u8().unwrap();
                 smp.borrow_mut().reg.x = initial["x"].as_u8().unwrap();
                 smp.borrow_mut().reg.y = initial["y"].as_u8().unwrap();
+                smp.borrow_mut().stopped = false;
                 for entry in initial["ram"].members() {
                     let members: Vec<_> = entry.members().collect();
                     smp.borrow_mut().ram[members[0].as_usize().unwrap()] =
