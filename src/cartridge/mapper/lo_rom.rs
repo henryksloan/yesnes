@@ -25,8 +25,7 @@ impl Mapper for LoROM {
                     | (addr.lo16() as usize - 0x8000))
                     % self.rom.len()],
             ),
-            // DO NOT SUBMIT: Where does this 0xF0..=0xFF come from? Is it correct?
-            0x70..=0x7D | 0xF0..=0xFF => {
+            0x70..=0x7D | 0xF0..=0xFF if (0x0000..=0x7FFF).contains(&addr.lo16()) => {
                 let sram_size = self.sram.len();
                 if sram_size > 0 {
                     Some(

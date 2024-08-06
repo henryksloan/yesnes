@@ -294,11 +294,6 @@ impl Bus {
                     }
                 }
                 0x7E..=0x7F => {
-                    // DO NOT SUBMIT
-                    // if addr == u24(0x7eae68) {
-                    //     log::info!("{data:02X}");
-                    //     yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
-                    // }
                     bus.borrow_mut().wram
                         [0x10000 * (addr.bank() as usize - 0x7E) + addr.lo16() as usize] = data
                 }

@@ -751,7 +751,6 @@ impl CPU {
                 (old_flag as u8) << 7
             }
             0x4211 => {
-                // DO NOT SUBMIT: Check this IRQ logic
                 let old_flag = self.timer_irq_flag;
                 self.timer_irq_flag = false;
                 (old_flag as u8) << 7

@@ -49,7 +49,6 @@ pub fn run_frame_and_disassemble<D: DebugProcessor>(
 pub enum EmuThreadMessage {
     Continue(Device),
     RunToAddress(Device, usize),
-    // DO NOT SUBMIT: Generalize this to running until an arbitrary debug reason.
     UntilDebugPoint(Device, DebugPoint),
 }
 

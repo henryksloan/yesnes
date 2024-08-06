@@ -151,9 +151,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             let parsed_addr = u32::from_str_radix(trimmed_input, 16);
             if let Ok(addr) = parsed_addr {
                 let addr = D::Address::try_from(addr as usize).unwrap_or_default();
-                // DO NOT SUBMIT: try_lock here means this *might* work even if we're not paused... maybe just block that?
-                // (should still be able to scroll, just not try to update disassembly)
-                // DO NOT SUBMIT: And what about locking disassembler??
+                // TODO: try_lock() and lock() here are awkward; improve synchronization strategy
                 let mut disassembler = self.disassembler.lock().unwrap();
                 if let Ok(snes) = self.snes.try_lock() {
                     let registers = D::registers(&snes);
@@ -173,6 +171,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
                 // Probably worth making that a message from emu thread to this thread.
                 // TODO: This should work like a do-while; if we start on the right address, run until we hit it again
                 // (FWIW this whole feature could be replaced with breakpoints, for which the above is more obvious)
+                // TODO: This behaves very strangely when already unpaused
                 let _ = self
                     .emu_message_sender
                     .send(EmuThreadMessage::RunToAddress(D::DEVICE, addr as usize));
@@ -200,8 +199,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         let disassembly_line = disassembler.get_line(row_index);
         let row_addr = disassembly_line.0;
         row.col(|ui| {
-            // DO NOT SUBMIT: The CPU itself can't invalidate this, though this technically makes sense if we e.g.
-            // have another window (like a breakpoint editor) that can modify this; at least add a comment
+            // The CPU itself can't invalidate the set of breakpoints, but other frontend elements could
             if let Some(snes) = maybe_snes_guard {
                 if D::breakpoint_at(snes, D::Address::try_from(row_addr).unwrap_or_default()) {
                     breakpoint_addrs.insert(row_addr);
@@ -266,7 +264,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             })
             .body(|body| {
                 let disassembler = self.disassembler.lock().unwrap();
-                // DO NOT SUBMIT: Ouch, lock() totally breaks, since pause can be invalidated earlier in the frame (namely by control_area)
+                // TODO: try_lock is necessary due to the hacky `paused` mechanism
                 let maybe_snes_guard = if paused {
                     self.snes.try_lock().ok()
                 } else {
@@ -369,7 +367,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                             if (pc_line < prev_top_row) || (pc_line > prev_bottom_row) {
                                 // Recenter PC if it jumped off-screen
                                 self.scroll_to_row = Some((pc_line, egui::Align::Center));
-                                // DO NOT SUBMIT: Upgrading egui broke trace cursor; investigate why this neeed to change from -1 to -3
+                                // TODO: Upgrading egui broke trace cursor; investigate why this neeed to change from -1 to -3
                             } else if pc_line >= (prev_bottom_row - 3) {
                                 // Keep the PC just above the bottom of the disassembly output
                                 let new_bottom_line = pc_line + 3;
@@ -379,7 +377,7 @@ impl<D: DebugProcessor + RegisterArea> ShortcutWindow for DebuggerWindow<D> {
                     }
                 }
             }
-            // DO NOT SUBMIT: Consider removing this feature since we have breakpoints
+            // TODO: Consider removing this feature since we have breakpoints
             Self::Shortcut::RunToAddress => {
                 self.run_to_address_window.open();
             }

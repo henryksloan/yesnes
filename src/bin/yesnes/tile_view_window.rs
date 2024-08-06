@@ -103,7 +103,6 @@ impl AppWindow for TileViewWindow {
                     if ui.button("⟳").clicked() {
                         self.refresh_vram();
                     }
-                    // DO NOT SUBMIT: Make this work again
                     let old_base_addr = 0x200 * self.top_scroll_row;
                     let mut base_addr = old_base_addr;
                     ui.add(
