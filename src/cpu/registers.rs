@@ -213,7 +213,7 @@ impl StatusRegister {
             | ((self.c as u8) << 0)
     }
 
-    pub(self) fn set(&mut self, data: u8) {
+    pub(super) fn set(&mut self, data: u8) {
         self.n = ((data >> 7) & 1) == 1;
         self.v = ((data >> 6) & 1) == 1;
         self.m = ((data >> 5) & 1) == 1;

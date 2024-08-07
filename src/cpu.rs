@@ -276,6 +276,26 @@ fn bcd_to_bin(x: u16) -> u16 {
 struct Pointer {
     pub addr: u24,
     pub long: bool,
+    // TODO: This is only for direct modes, so it could probably be simplified
+    pub wrap_u16: bool,
+}
+
+impl Pointer {
+    pub fn new(addr: u24, long: bool) -> Self {
+        Self {
+            addr,
+            long,
+            wrap_u16: false,
+        }
+    }
+
+    pub fn new_wrap_u16(addr: u24, long: bool) -> Self {
+        Self {
+            addr,
+            long,
+            wrap_u16: true,
+        }
+    }
 }
 
 /// The 65816 microprocessor, the main CPU of the SNES
@@ -381,7 +401,6 @@ impl CPU {
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceCoroutine + 'a {
-        // TODO: How to handle interrupts from e.g. scanlines? [[yesnes Interrupts]]
         #[coroutine]
         move || loop {
             if cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc) {
@@ -1106,10 +1125,15 @@ impl CPU {
             let mut data = yield_all!(CPU::read_u8(cpu.clone(), pointer.addr)) as u16;
             if pointer.long {
                 // TODO: This is inconsistent with the other read_ functions; should figure out a consistent wrapping approach.
-                // data |= (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr.wrapping_add_lo16(1)))
-                //     as u16)
-                //     << 8;
-                data |= (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr + 1u32)) as u16) << 8;
+                if pointer.wrap_u16 {
+                    data |=
+                        (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr.wrapping_add_lo16(1)))
+                            as u16)
+                            << 8;
+                } else {
+                    data |=
+                        (yield_all!(CPU::read_u8(cpu.clone(), pointer.addr + 1u32)) as u16) << 8;
+                }
             }
             data
         }
@@ -1128,11 +1152,19 @@ impl CPU {
                 (data & 0xFF) as u8
             ));
             if pointer.long {
-                yield_all!(CPU::write_u8(
-                    cpu.clone(),
-                    pointer.addr + 1u32,
-                    (data >> 8) as u8
-                ))
+                if pointer.wrap_u16 {
+                    yield_all!(CPU::write_u8(
+                        cpu.clone(),
+                        pointer.addr.wrapping_add_lo16(1),
+                        (data >> 8) as u8
+                    ))
+                } else {
+                    yield_all!(CPU::write_u8(
+                        cpu.clone(),
+                        pointer.addr + 1u32,
+                        (data >> 8) as u8
+                    ))
+                }
             }
         }
     }
@@ -1158,7 +1190,7 @@ impl CPU {
 
     // TODO: Stuff like this can OBVIOUSLY be modified to take &self
     fn bank_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
-        u24((cpu.borrow().reg.b as u32) << 16) | addr
+        u24((cpu.borrow().reg.b as u32) << 16) + addr
     }
 
     fn stack_pull_u8<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u8> + 'a {
@@ -1261,7 +1293,7 @@ impl CPU {
         move || {
             let addr = cpu.borrow().reg.pc;
             cpu.borrow_mut().progress_pc(if long { 2 } else { 1 });
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1271,7 +1303,7 @@ impl CPU {
         move || {
             let direct_addr = u24(fetch!(cpu) as u32);
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
-            Pointer { addr, long }
+            Pointer::new_wrap_u16(addr, long)
         }
     }
 
@@ -1280,7 +1312,7 @@ impl CPU {
         move || {
             let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_x() as u32);
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
-            Pointer { addr, long }
+            Pointer::new_wrap_u16(addr, long)
         }
     }
 
@@ -1289,7 +1321,7 @@ impl CPU {
         move || {
             let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_y() as u32);
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
-            Pointer { addr, long }
+            Pointer::new_wrap_u16(addr, long)
         }
     }
 
@@ -1301,7 +1333,7 @@ impl CPU {
                 let addr_lo = fetch!(cpu) as u32;
                 CPU::bank_addr(cpu.clone(), u24(((fetch!(cpu) as u32) << 8) | addr_lo))
             };
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1315,7 +1347,7 @@ impl CPU {
                     u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_x() as u32),
                 )
             };
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1329,7 +1361,7 @@ impl CPU {
                     u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32),
                 )
             };
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1341,7 +1373,7 @@ impl CPU {
                 let addr_mid = fetch!(cpu) as u32;
                 u24(((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
             };
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1351,10 +1383,10 @@ impl CPU {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
                 let addr_mid = fetch!(cpu) as u32;
-                u24((((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
-                    + cpu.borrow().reg.get_x() as u32)
+                u24(((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
+                    + u24(cpu.borrow().reg.get_x() as u32)
             };
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1370,7 +1402,7 @@ impl CPU {
                 ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32) << 8)
                     | addr_lo
             });
-            Pointer { addr, long: true }
+            Pointer::new(addr, true)
         }
     }
 
@@ -1386,12 +1418,19 @@ impl CPU {
             };
             let addr = u24({
                 let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr)) as u32;
-                let addr_mid = yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
-                ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 2u32)) as u32) << 16)
+                let addr_mid = yield_all!(CPU::read_u8(
+                    cpu.clone(),
+                    indirect_addr.wrapping_add_lo16(1)
+                )) as u32;
+                ((yield_all!(CPU::read_u8(
+                    cpu.clone(),
+                    indirect_addr.wrapping_add_lo16(2)
+                )) as u32)
+                    << 16)
                     | (addr_mid << 8)
                     | addr_lo
             });
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1414,7 +1453,7 @@ impl CPU {
                 ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32) << 8)
                     | addr_lo
             });
-            Pointer { addr, long: true }
+            Pointer::new(addr, true)
         }
     }
 
@@ -1429,7 +1468,7 @@ impl CPU {
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 CPU::bank_addr(cpu.clone(), u24((hi << 8) | lo))
             };
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1447,7 +1486,7 @@ impl CPU {
                 u24((hi << 8) | lo)
             };
             let addr = CPU::bank_addr(cpu.clone(), bank_addr);
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1462,7 +1501,7 @@ impl CPU {
                 u24((hi << 8) | lo)
             } + offset;
             let addr = CPU::bank_addr(cpu.clone(), bank_addr);
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1477,7 +1516,7 @@ impl CPU {
                     yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 2u32)) as u32;
                 u24((bank << 16) | (hi << 8) | lo)
             };
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1493,16 +1532,15 @@ impl CPU {
                     yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 2u32)) as u32;
                 u24((bank << 16) | (hi << 8) | lo)
             } + cpu.borrow().reg.get_y() as u32;
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
     fn stack_relative<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
         #[coroutine]
         move || {
-            let bank_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_sp() as u32);
-            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
-            Pointer { addr, long }
+            let addr = u24(fetch!(cpu) as u32).wrapping_add_lo16(cpu.borrow().reg.get_sp() as i16);
+            Pointer::new(addr, long)
         }
     }
 
@@ -1512,13 +1550,15 @@ impl CPU {
     ) -> impl Yieldable<Pointer> + 'a {
         #[coroutine]
         move || {
-            let stack_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_sp() as u32);
+            let offset = fetch!(cpu) as i16;
+            let stack_addr = u24(cpu.borrow().reg.get_sp() as u32).wrapping_add_lo16(offset);
             let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), stack_addr)) as u32;
             // TODO: Normalize wrapping behavior/functions for 16 bit accesses throughout
-            let addr_hi = yield_all!(CPU::read_u8(cpu.clone(), stack_addr + 1u32)) as u32;
+            let addr_hi =
+                yield_all!(CPU::read_u8(cpu.clone(), stack_addr.wrapping_add_lo16(1))) as u32;
             let bank_addr = ((addr_hi << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32;
             let addr = CPU::bank_addr(cpu.clone(), u24(bank_addr));
-            Pointer { addr, long }
+            Pointer::new(addr, long)
         }
     }
 
@@ -2177,7 +2217,7 @@ impl CPU {
                 temp & !carry_mask
             }
         };
-        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
         cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
@@ -2225,7 +2265,7 @@ impl CPU {
         let check_mask = if left { 1 << (n_bits - 1) } else { 0x01 };
         cpu.borrow_mut().reg.p.c = (data & check_mask) == check_mask;
         let result = if left { data << 1 } else { data >> 1 };
-        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) == 1;
+        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
         cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
@@ -2392,4 +2432,111 @@ impl CPU {
     push_instrs!();
     transfer_instrs!();
     branch_instrs!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scheduler::Device;
+    use crate::snes::SNES;
+    use json;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    // TODO: Consider factoring out this test setup (and improving reporting with a custom harness, maybe parallelize)
+    fn tom_harte() {
+        let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        test_dir.push("testdata/65816/v1/");
+        let test_files = fs::read_dir(test_dir).unwrap();
+
+        let mut snes = SNES::new_test();
+        let cpu = snes.cpu.clone();
+        let bus = snes.bus.clone();
+        bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
+        'file_loop: for test_file in test_files {
+            let test_path = test_file.unwrap().path();
+            match test_path.extension() {
+                None => continue,
+                Some(extension) if extension != "json" => continue,
+                _ => {}
+            }
+            // TODO: Skipping MVP and MVN, WAI, STP
+            if let Some(file_name) = test_path.file_name().unwrap().to_str() {
+                if file_name.starts_with("44")
+                    || file_name.starts_with("54")
+                    || file_name.starts_with("cb")
+                    || file_name.starts_with("db")
+                {
+                    continue;
+                }
+            }
+            let contents = fs::read_to_string(test_path).unwrap();
+            let tests = json::parse(&contents).unwrap();
+            for test in tests.members() {
+                let initial = &test["initial"];
+                // TODO: Clearing RAM is too slow... this works for now without it, but
+                // technically a hashmap could work for testonly memory
+                cpu.borrow_mut()
+                    .reg
+                    .pc
+                    .set_lo16(initial["pc"].as_u16().unwrap());
+                cpu.borrow_mut()
+                    .reg
+                    .pc
+                    .set_bank(initial["pbr"].as_u8().unwrap());
+                cpu.borrow_mut().reg.p.set(initial["p"].as_u8().unwrap());
+                // TODO: Skipping decimal mode tests
+                if cpu.borrow().reg.p.d {
+                    continue;
+                }
+                cpu.borrow_mut().reg.p.e = initial["e"].as_u8().unwrap() != 0;
+                // TODO: Skipping emu mode tests
+                if cpu.borrow().reg.p.e {
+                    continue 'file_loop;
+                }
+                cpu.borrow_mut().reg.sp = initial["s"].as_u16().unwrap();
+                cpu.borrow_mut().reg.a = initial["a"].as_u16().unwrap();
+                cpu.borrow_mut().reg.x = initial["x"].as_u16().unwrap();
+                cpu.borrow_mut().reg.y = initial["y"].as_u16().unwrap();
+                cpu.borrow_mut().reg.b = initial["dbr"].as_u8().unwrap();
+                cpu.borrow_mut().reg.d = initial["d"].as_u16().unwrap();
+                for entry in initial["ram"].members() {
+                    let members: Vec<_> = entry.members().collect();
+                    ignore_yields!(Bus::write_u8(
+                        bus.clone(),
+                        u24(members[0].as_u32().unwrap()),
+                        members[1].as_u8().unwrap(),
+                    ));
+                }
+                snes.run_instruction_debug(Device::CPU, None);
+                let after = &test["final"];
+                {
+                    let reg = &cpu.borrow().reg;
+                    assert_eq!(reg.pc.lo16(), after["pc"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.pc.bank(), after["pbr"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.p.get(), after["p"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.p.e, after["e"].as_u8().unwrap() != 0, "{}", test);
+                    assert_eq!(reg.sp, after["s"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.a, after["a"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.x, after["x"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.y, after["y"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.b, after["dbr"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.d, after["d"].as_u16().unwrap(), "{}", test);
+                }
+                for entry in after["ram"].members() {
+                    let members: Vec<_> = entry.members().collect();
+                    assert_eq!(
+                        ignore_yields!(Bus::read_u8(
+                            bus.clone(),
+                            u24(members[0].as_u32().unwrap())
+                        )),
+                        members[1].as_u8().unwrap(),
+                        "{}",
+                        test
+                    );
+                }
+            }
+        }
+    }
 }

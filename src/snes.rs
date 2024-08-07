@@ -36,6 +36,25 @@ impl SNES {
         }
     }
 
+    // TODO: Decouple the individual processors so the tests don't depend on a modified SNES object
+    pub fn new_test() -> Self {
+        let ppu = Rc::new(RefCell::new(PPU::new()));
+        let smp = Rc::new(RefCell::new(SMP::new_test()));
+        let bus = Rc::new(RefCell::new(Bus::new_test(ppu.clone(), smp.clone())));
+        let cpu = Rc::new(RefCell::new(CPU::new(bus.clone())));
+        bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
+
+        let scheduler = Self::create_scheduler(cpu.clone(), ppu.clone(), smp.clone());
+
+        Self {
+            cpu,
+            ppu,
+            smp,
+            bus,
+            scheduler,
+        }
+    }
+
     fn create_scheduler(
         cpu: Rc<RefCell<CPU>>,
         ppu: Rc<RefCell<PPU>>,

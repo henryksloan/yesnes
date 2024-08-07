@@ -29,6 +29,8 @@ pub struct Bus {
     quotient: u16,
     // 4216h - RDMPYL and 4217h - RDMPYH; result of IO multiplication or division
     product_or_remainder: u16,
+    // Used by CPU as a RAM-only address space during tests.
+    testonly_ram: Option<Vec<u8>>,
 }
 
 impl Bus {
@@ -44,6 +46,23 @@ impl Bus {
             dividend: 0,
             quotient: 0,
             product_or_remainder: 0,
+            testonly_ram: None,
+        }
+    }
+
+    pub fn new_test(ppu: Rc<RefCell<PPU>>, smp: Rc<RefCell<SMP>>) -> Self {
+        Self {
+            cpu: Weak::new(),
+            ppu,
+            smp,
+            wram: vec![0; 0x20000],
+            wram_port_addr: u24(0),
+            cart: None,
+            multiplicand_a: 0,
+            dividend: 0,
+            quotient: 0,
+            product_or_remainder: 0,
+            testonly_ram: Some(vec![0; 0x1000000]),
         }
     }
 
@@ -52,9 +71,13 @@ impl Bus {
     }
 
     pub fn reset(&mut self) {
+        // TODO: Incomplete reset!
         self.wram.fill(0);
         self.multiplicand_a = 0;
         self.product_or_remainder = 0;
+        if let Some(testonly_ram) = &mut self.testonly_ram {
+            testonly_ram.fill(0);
+        }
     }
 
     pub fn load_cart(&mut self, cart_path: &str) {
@@ -65,8 +88,9 @@ impl Bus {
     // edit: Because we can't have multiple mutable references. Alternative is wrapping all internal data in RefCells.
     // TODO: It would probably be very beneficial to start embracing &Rc<RefCell<T>> to cut down on clones
     pub fn peak_u8(bus: Rc<RefCell<Bus>>, addr: u24) -> u8 {
-        // TODO: Some generalized mapper logic
-        // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
+        if let Some(testonly_ram) = &bus.borrow_mut().testonly_ram {
+            return testonly_ram[addr.0 as usize];
+        }
         match addr.bank() {
             0x00..=0x3F | 0x80..=0xBF if (0x0000..=0x5FFF).contains(&addr.lo16()) => {
                 match addr.lo16() {
@@ -126,6 +150,9 @@ impl Bus {
     pub fn read_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24) -> impl Yieldable<u8> + 'a {
         #[coroutine]
         move || {
+            if let Some(testonly_ram) = &bus.borrow_mut().testonly_ram {
+                return testonly_ram[addr.0 as usize];
+            }
             match addr.bank() {
                 0x00..=0x3F | 0x80..=0xBF if (0x0000..=0x5FFF).contains(&addr.lo16()) => {
                     match addr.lo16() {
@@ -221,8 +248,10 @@ impl Bus {
     pub fn write_u8<'a>(bus: Rc<RefCell<Bus>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
         #[coroutine]
         move || {
-            // TODO: Some generalized mapper logic
-            // TODO: HiROM: https://snes.nesdev.org/wiki/Memory_map
+            if let Some(testonly_ram) = &mut bus.borrow_mut().testonly_ram {
+                testonly_ram[addr.0 as usize] = data;
+                return;
+            }
             match addr.bank() {
                 0x00..=0x3F | 0x80..=0xBF if (0x0000..=0x5FFF).contains(&addr.lo16()) => {
                     match addr.lo16() {

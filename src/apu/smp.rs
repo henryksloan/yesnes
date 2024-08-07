@@ -329,7 +329,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($smp_rc, $instr_f, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc - 1),
+            // _ => panic!("Invalid SMP opcode {:#04X} at {:#06X}", opcode_val, $smp_rc.borrow().reg.pc - 1),
         }
     };
 }
@@ -337,7 +337,7 @@ macro_rules! instrs {
 macro_rules! fetch {
     ($smp_rc: ident) => {{
         let data = yield_all!(SMP::read_u8($smp_rc.clone(), $smp_rc.borrow().reg.pc));
-        $smp_rc.borrow_mut().reg.pc += 1;
+        $smp_rc.borrow_mut().progress_pc(1);
         data
     }};
 }
@@ -371,6 +371,9 @@ pub struct SMP {
     io_reg: IoRegisters,
     ticks_run: u64,
     ram: Vec<u8>,
+    stopped: bool,
+    // If true, use a flat, RAM-only address space
+    test_mode: bool,
     pub breakpoint_addrs: HashSet<u16>,
     debug_log: bool, // TODO: Remove this debugging tool
 }
@@ -382,6 +385,21 @@ impl SMP {
             io_reg: IoRegisters::new(),
             ticks_run: 0,
             ram: vec![0; 0x10000],
+            stopped: false,
+            test_mode: false,
+            breakpoint_addrs: HashSet::new(),
+            debug_log: false,
+        }
+    }
+
+    pub fn new_test() -> Self {
+        Self {
+            reg: Registers::new(),
+            io_reg: IoRegisters::new(),
+            ticks_run: 0,
+            ram: vec![0; 0x10000],
+            stopped: false,
+            test_mode: true,
             breakpoint_addrs: HashSet::new(),
             debug_log: false,
         }
@@ -411,11 +429,16 @@ impl SMP {
         // TODO: Simplify
         smp.borrow_mut().reg.pc = ignore_yields!(Self::read_u16(smp.clone(), RESET_VECTOR));
         smp.borrow_mut().reg.sp = 0xEF;
+        smp.borrow_mut().stopped = false;
     }
 
     pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceCoroutine + 'a {
         #[coroutine]
         move || loop {
+            if smp.borrow().stopped {
+                yield (YieldReason::FinishedInstruction(Device::SMP), 0);
+                continue;
+            }
             if smp.borrow().breakpoint_addrs.contains(&smp.borrow().reg.pc) {
                 yield (YieldReason::Debug(DebugPoint::Breakpoint), 0);
             }
@@ -423,7 +446,7 @@ impl SMP {
                 print!("SMP {:#06X}", smp.borrow().reg.pc);
             }
             let opcode = yield_ticks!(smp, SMP::read_u8(smp.clone(), smp.borrow().reg.pc));
-            smp.borrow_mut().reg.pc += 1;
+            smp.borrow_mut().progress_pc(1);
             if smp.borrow().debug_log {
                 let reg = &smp.borrow().reg;
                 println!(
@@ -597,11 +620,16 @@ impl SMP {
                 (set_flag_i; 0xA0=>implied)
                 (clear_flag_i; 0xC0=>implied)
                 (nop; 0x00=>implied)
-                (stp; 0xFF=>implied)
+                // 0xEF is SLEEP
+                (stp; 0xEF=>implied, 0xFF=>implied)
             );
 
             yield (YieldReason::FinishedInstruction(Device::SMP), 0);
         }
+    }
+
+    fn progress_pc(&mut self, bytes: i16) {
+        self.reg.pc = self.reg.pc.wrapping_add_signed(bytes);
     }
 
     fn step(&mut self, n_clocks: u64) {
@@ -625,10 +653,9 @@ impl SMP {
             0x00F2 => self.io_reg.dsp_addr,
             0x00F3 => self.io_reg.dsp_data,
             0x00F4..=0x00F7 => self.io_reg.external_ports[addr as usize - 0x00F4],
-            // 0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
-            0x00F8..=0x00F9 => 0,
+            0x00F8..=0x00F9 => self.ram[addr as usize],
             0x00FA..=0x00FC => self.io_reg.timer_dividers[addr as usize - 0x00FA],
-            0x00FD..=0x00FF => self.io_reg.timers[addr as usize - 0x00FD],
+            0x00FD..=0x00FF => self.io_reg.timers[addr as usize - 0x00FD] & 0xF,
             _ => panic!("Address {:#02X} is not an SMP IO register", addr),
         }
     }
@@ -638,7 +665,12 @@ impl SMP {
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             // yield YieldReason::Sync(Device::CPU);
-            smp.borrow().peak_io_reg(addr)
+            let data = smp.borrow().peak_io_reg(addr);
+            if (0x00FD..=0x00FF).contains(&addr) {
+                smp.borrow_mut().io_reg.timers[addr as usize - 0x00FD] = 0;
+            }
+
+            data
         }
     }
 
@@ -648,16 +680,17 @@ impl SMP {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             // yield YieldReason::Sync(Device::CPU);
             match addr {
+                // TODO: Testonly functions register
                 0x00F0 => {}
                 // 0x00F0 => todo!("IO reg write {addr:#06X}"),
                 0x00F1 => smp.borrow_mut().io_reg.control.0 = data,
+                // TODO: Are games getting blocked because there's no DSP?
                 0x00F2 => smp.borrow_mut().io_reg.dsp_addr = data,
                 0x00F3 => smp.borrow_mut().io_reg.dsp_data = data,
                 0x00F4..=0x00F7 => {
                     smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
                 }
-                // 0x00F8..=0x00F9 => todo!("IO reg write {addr:#06X}"),
-                0x00F8..=0x00F9 => {}
+                0x00F8..=0x00F9 => smp.borrow_mut().ram[addr as usize] = data,
                 0x00FA..=0x00FC => {
                     smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA] = data
                 }
@@ -668,6 +701,9 @@ impl SMP {
     }
 
     pub fn peak_u8(&self, addr: u16) -> u8 {
+        if self.test_mode {
+            return self.ram[addr as usize];
+        }
         let data = match addr {
             0x0000..=0x00EF => self.ram[addr as usize],
             0x00F0..=0x00FF => self.peak_io_reg(addr),
@@ -693,6 +729,10 @@ impl SMP {
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
+            if smp.borrow().test_mode {
+                smp.borrow_mut().step(2);
+                return smp.borrow().ram[addr as usize];
+            }
             let data = match addr {
                 0x0000..=0x00EF => smp.borrow().ram[addr as usize],
                 0x00F0..=0x00FF => yield_all!(SMP::read_io_reg(smp.clone(), addr)),
@@ -738,22 +778,12 @@ impl SMP {
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
-            if addr == 0x0001 {
-                // println!("SMP 0001 <- {:02X}", data);
-                // yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
-                static mut NOW_BREAK: bool = false;
-                if unsafe { NOW_BREAK } {
-                    yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
-                }
-                if data == 0x02 {
-                    // unsafe {
-                    //     NOW_BREAK = true;
-                    // }
-                    // yield YieldReason::Debug(DebugPoint::CodeBreakpoint);
-                }
+            if smp.borrow().test_mode {
+                smp.borrow_mut().ram[addr as usize] = data;
+                smp.borrow_mut().step(2);
+                return;
             }
             // All writes always go to ram, even if they also go to e.g. IO
-            // println!("APU Write {:#08x} <- {:#04x}", addr, data);
             smp.borrow_mut().ram[addr as usize] = data;
             match addr {
                 0x00F0..=0x00FF => yield_all!(SMP::write_io_reg(smp.clone(), addr, data)),
@@ -827,7 +857,7 @@ impl SMP {
         move || {
             let addr = smp.borrow().reg.pc;
             // TODO: Need to use wrapping adds for PC increments and most addressing mode adds
-            smp.borrow_mut().reg.pc += 1;
+            smp.borrow_mut().progress_pc(1);
             addr
         }
     }
@@ -902,7 +932,7 @@ impl SMP {
         move || {
             let operand = fetch_u16!(smp) as u16;
             AddressBit {
-                addr: operand & 0xFFF,
+                addr: operand & 0x1FFF,
                 bit: (operand >> 13) as u8,
                 invert: false,
             }
@@ -914,7 +944,7 @@ impl SMP {
         move || {
             let operand = fetch_u16!(smp) as u16;
             AddressBit {
-                addr: operand & 0xFFF,
+                addr: operand & 0x1FFF,
                 bit: (operand >> 13) as u8,
                 invert: true,
             }
@@ -957,7 +987,7 @@ impl SMP {
                 )) as u16;
                 (addr_hi << 8) | addr_lo
             };
-            indirect_addr + smp.borrow().reg.y as u16
+            indirect_addr.wrapping_add(smp.borrow().reg.y as u16)
         }
     }
 
@@ -967,14 +997,12 @@ impl SMP {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr =
                 direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16;
+            // let direct_addr = direct_page_base | (fetch!(smp) as u16 + smp.borrow().reg.x as u16);
             let indirect_addr = {
-                let addr_lo = yield_all!(SMP::read_u8(
-                    smp.clone(),
-                    direct_page_base + direct_addr as u16
-                )) as u16;
+                let addr_lo = yield_all!(SMP::read_u8(smp.clone(), direct_addr as u16)) as u16;
                 let addr_hi = yield_all!(SMP::read_u8(
                     smp.clone(),
-                    direct_page_base + direct_addr.wrapping_add(1) as u16
+                    (direct_addr & 0xFF00) | (direct_addr.wrapping_add(1) & 0xFF)
                 )) as u16;
                 (addr_hi << 8) | addr_lo
             };
@@ -1115,10 +1143,6 @@ impl SMP {
     }
 
     fn cmp_algorithm(smp: Rc<RefCell<SMP>>, src_data: u8, dest_data: u8) {
-        // smp.borrow_mut().reg.psw.c = dest_data >= src_data;
-        // smp.borrow_mut().reg.psw.n = src_data > dest_data;
-        // smp.borrow_mut().reg.psw.z = src_data == dest_data;
-        // TODO: NOTE: This is a critical bug fix
         let diff: i8 = (dest_data as i8).wrapping_sub(src_data as i8);
         smp.borrow_mut().reg.psw.c = (dest_data as i16 - src_data as i16) >= 0;
         smp.borrow_mut().reg.psw.n = (diff as u8 & 0x80) != 0;
@@ -1131,7 +1155,7 @@ impl SMP {
             let temp = dest_data as i16 + src_data as i16 + carry;
             smp.borrow_mut().reg.psw.c = temp > 0xFF;
             smp.borrow_mut().reg.psw.h = ((dest_data & 0xF) + (src_data & 0xF) + carry as u8) > 0xF;
-            smp.borrow_mut().reg.psw.n = (temp >> 7) == 1;
+            smp.borrow_mut().reg.psw.n = (temp >> 7) & 1 == 1;
             smp.borrow_mut().reg.psw.z = (temp & 0xFF) == 0;
             temp as u8
         };
@@ -1538,9 +1562,9 @@ impl SMP {
     fn tcall<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(SMP::push_pc(smp.clone()));
             // TODO: Might be a bit nicer to express this as a peculiarly parameterized procedure
-            let n = (smp.borrow().peak_u8(smp.borrow().reg.pc - 1) as u16) >> 4;
+            let n = (smp.borrow().peak_u8(smp.borrow().reg.pc.wrapping_sub(1)) as u16) >> 4;
+            yield_all!(SMP::push_pc(smp.clone()));
             let dest_pc = yield_all!(Self::read_u16(smp.clone(), 0xFFDE - (2 * n)));
             smp.borrow_mut().reg.pc = dest_pc;
             // TODO: Need to look into how many cycles branch can take
@@ -1674,14 +1698,86 @@ impl SMP {
     fn stp<'a>(smp: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            // TODO: There's probably a more useful way to do STP
-            let old_pc = smp.borrow().reg.pc;
-            smp.borrow_mut().reg.pc = (old_pc & 0xFF00) | (old_pc.wrapping_sub(1) & 0xFF);
+            smp.borrow_mut().stopped = true;
         }
     }
 
     fn nop<'a>(_: Rc<RefCell<SMP>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scheduler::Device;
+    use crate::snes::SNES;
+    use json;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    // TODO: Consider factoring out this test setup (and improving reporting with a custom harness, maybe parallelize)
+    fn tom_harte() {
+        let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        test_dir.push("testdata/spc700/v1/");
+        let test_files = fs::read_dir(test_dir).unwrap();
+
+        let mut snes = SNES::new_test();
+        let cpu = snes.cpu.clone();
+        let bus = snes.bus.clone();
+        let smp = snes.smp.clone();
+        bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
+        for test_file in test_files {
+            let test_path = test_file.unwrap().path();
+            match test_path.extension() {
+                None => continue,
+                Some(extension) if extension != "json" => continue,
+                _ => {}
+            }
+            let contents = fs::read_to_string(test_path).unwrap();
+            let tests = json::parse(&contents).unwrap();
+            for test in tests.members() {
+                let initial = &test["initial"];
+                // TODO: Clearing RAM is too slow... this works for now without it, but
+                // technically a hashmap could work for testonly memory
+                smp.borrow_mut().reg.pc = initial["pc"].as_u16().unwrap();
+                smp.borrow_mut()
+                    .reg
+                    .psw
+                    .set(initial["psw"].as_u8().unwrap());
+                smp.borrow_mut().reg.sp = initial["sp"].as_u8().unwrap();
+                smp.borrow_mut().reg.a = initial["a"].as_u8().unwrap();
+                smp.borrow_mut().reg.x = initial["x"].as_u8().unwrap();
+                smp.borrow_mut().reg.y = initial["y"].as_u8().unwrap();
+                smp.borrow_mut().stopped = false;
+                for entry in initial["ram"].members() {
+                    let members: Vec<_> = entry.members().collect();
+                    smp.borrow_mut().ram[members[0].as_usize().unwrap()] =
+                        members[1].as_u8().unwrap();
+                }
+                snes.run_instruction_debug(Device::SMP, None);
+                let after = &test["final"];
+                {
+                    let reg = &smp.borrow().reg;
+                    assert_eq!(reg.pc, after["pc"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.psw.get(), after["psw"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.sp, after["sp"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.a, after["a"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.x, after["x"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.y, after["y"].as_u8().unwrap(), "{}", test);
+                }
+                for entry in after["ram"].members() {
+                    let members: Vec<_> = entry.members().collect();
+                    assert_eq!(
+                        smp.borrow().ram[members[0].as_usize().unwrap()],
+                        members[1].as_u8().unwrap(),
+                        "{}",
+                        test
+                    );
+                }
+            }
+        }
     }
 }

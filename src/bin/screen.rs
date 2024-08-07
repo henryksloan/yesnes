@@ -108,6 +108,7 @@ impl eframe::App for YesnesApp {
             );
         });
 
+        // TODO: Enforce some sort of frame rate
         // Effectively puts egui in "continuous mode", where we repaint as quickly as possible (up to refresh rate)
         ctx.request_repaint();
     }

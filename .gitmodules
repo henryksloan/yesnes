@@ -1,0 +1,6 @@
+[submodule "testdata/65816"]
+	path = testdata/65816
+	url = https://github.com/SingleStepTests/65816.git
+[submodule "testdata/spc700"]
+	path = testdata/spc700
+	url = https://github.com/SingleStepTests/spc700.git
