@@ -372,7 +372,7 @@ pub struct SMP {
     ticks_run: u64,
     ram: Vec<u8>,
     stopped: bool,
-    // DO NOT SUBMIT: Once again, clunky
+    // If true, use a flat, RAM-only address space
     test_mode: bool,
     pub breakpoint_addrs: HashSet<u16>,
     debug_log: bool, // TODO: Remove this debugging tool
@@ -387,6 +387,19 @@ impl SMP {
             ram: vec![0; 0x10000],
             stopped: false,
             test_mode: false,
+            breakpoint_addrs: HashSet::new(),
+            debug_log: false,
+        }
+    }
+
+    pub fn new_test() -> Self {
+        Self {
+            reg: Registers::new(),
+            io_reg: IoRegisters::new(),
+            ticks_run: 0,
+            ram: vec![0; 0x10000],
+            stopped: false,
+            test_mode: true,
             breakpoint_addrs: HashSet::new(),
             debug_log: false,
         }
@@ -640,10 +653,9 @@ impl SMP {
             0x00F2 => self.io_reg.dsp_addr,
             0x00F3 => self.io_reg.dsp_data,
             0x00F4..=0x00F7 => self.io_reg.external_ports[addr as usize - 0x00F4],
-            // 0x00F8..=0x00F9 => todo!("IO reg read {addr:#06X}"),
-            0x00F8..=0x00F9 => 0,
+            0x00F8..=0x00F9 => self.ram[addr as usize],
             0x00FA..=0x00FC => self.io_reg.timer_dividers[addr as usize - 0x00FA],
-            0x00FD..=0x00FF => self.io_reg.timers[addr as usize - 0x00FD],
+            0x00FD..=0x00FF => self.io_reg.timers[addr as usize - 0x00FD] & 0xF,
             _ => panic!("Address {:#02X} is not an SMP IO register", addr),
         }
     }
@@ -653,7 +665,12 @@ impl SMP {
         move || {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             // yield YieldReason::Sync(Device::CPU);
-            smp.borrow().peak_io_reg(addr)
+            let data = smp.borrow().peak_io_reg(addr);
+            if (0x00FD..=0x00FF).contains(&addr) {
+                smp.borrow_mut().io_reg.timers[addr as usize - 0x00FD] = 0;
+            }
+
+            data
         }
     }
 
@@ -663,16 +680,17 @@ impl SMP {
             // TODO: I think this should maybe yield to CPU for some (all?) of these?
             // yield YieldReason::Sync(Device::CPU);
             match addr {
+                // TODO: Testonly functions register
                 0x00F0 => {}
                 // 0x00F0 => todo!("IO reg write {addr:#06X}"),
                 0x00F1 => smp.borrow_mut().io_reg.control.0 = data,
+                // TODO: Are games getting blocked because there's no DSP?
                 0x00F2 => smp.borrow_mut().io_reg.dsp_addr = data,
                 0x00F3 => smp.borrow_mut().io_reg.dsp_data = data,
                 0x00F4..=0x00F7 => {
                     smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
                 }
-                // 0x00F8..=0x00F9 => todo!("IO reg write {addr:#06X}"),
-                0x00F8..=0x00F9 => {}
+                0x00F8..=0x00F9 => smp.borrow_mut().ram[addr as usize] = data,
                 0x00FA..=0x00FC => {
                     smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA] = data
                 }
@@ -709,11 +727,12 @@ impl SMP {
     fn read_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
         #[coroutine]
         move || {
-            if smp.borrow().test_mode {
-                return smp.borrow().ram[addr as usize];
-            }
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
+            if smp.borrow().test_mode {
+                smp.borrow_mut().step(2);
+                return smp.borrow().ram[addr as usize];
+            }
             let data = match addr {
                 0x0000..=0x00EF => smp.borrow().ram[addr as usize],
                 0x00F0..=0x00FF => yield_all!(SMP::read_io_reg(smp.clone(), addr)),
@@ -757,11 +776,13 @@ impl SMP {
     fn write_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16, data: u8) -> impl Yieldable<()> + 'a {
         #[coroutine]
         move || {
-            if smp.borrow().test_mode {
-                smp.borrow_mut().ram[addr as usize] = data;
-            }
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
+            if smp.borrow().test_mode {
+                smp.borrow_mut().ram[addr as usize] = data;
+                smp.borrow_mut().step(2);
+                return;
+            }
             // All writes always go to ram, even if they also go to e.g. IO
             smp.borrow_mut().ram[addr as usize] = data;
             match addr {
@@ -1697,22 +1718,19 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    // TODO: Consider factoring out this test setup (and improving reporting with a custom harness, maybe parallelize)
     fn tom_harte() {
         let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_dir.push("testdata/spc700/v1/");
         let test_files = fs::read_dir(test_dir).unwrap();
 
         let mut snes = SNES::new_test();
-        // DO NOT SUBMIT: Some of this might be unnecessary
         let cpu = snes.cpu.clone();
         let bus = snes.bus.clone();
         let smp = snes.smp.clone();
-        // DO NOT SUBMIT: Is this the best place to set this?
-        smp.borrow_mut().test_mode = true;
         bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
         for test_file in test_files {
             let test_path = test_file.unwrap().path();
-            // println!("{test_path:?}");
             match test_path.extension() {
                 None => continue,
                 Some(extension) if extension != "json" => continue,
@@ -1721,10 +1739,9 @@ mod tests {
             let contents = fs::read_to_string(test_path).unwrap();
             let tests = json::parse(&contents).unwrap();
             for test in tests.members() {
-                // println!("{}", test);
                 let initial = &test["initial"];
-                // DO NOT SUBMIT: Hah, I think clearing RAM is too slow...
-                // smp.borrow_mut().reset();
+                // TODO: Clearing RAM is too slow... this works for now without it, but
+                // technically a hashmap could work for testonly memory
                 smp.borrow_mut().reg.pc = initial["pc"].as_u16().unwrap();
                 smp.borrow_mut()
                     .reg
@@ -1742,27 +1759,15 @@ mod tests {
                 }
                 snes.run_instruction_debug(Device::SMP, None);
                 let after = &test["final"];
-                assert_eq!(
-                    smp.borrow().reg.pc,
-                    after["pc"].as_u16().unwrap(),
-                    "{}",
-                    test
-                );
-                assert_eq!(
-                    smp.borrow().reg.psw.get(),
-                    after["psw"].as_u8().unwrap(),
-                    "{}",
-                    test
-                );
-                assert_eq!(
-                    smp.borrow().reg.sp,
-                    after["sp"].as_u8().unwrap(),
-                    "{}",
-                    test
-                );
-                assert_eq!(smp.borrow().reg.a, after["a"].as_u8().unwrap(), "{}", test);
-                assert_eq!(smp.borrow().reg.x, after["x"].as_u8().unwrap(), "{}", test);
-                assert_eq!(smp.borrow().reg.y, after["y"].as_u8().unwrap(), "{}", test);
+                {
+                    let reg = &smp.borrow().reg;
+                    assert_eq!(reg.pc, after["pc"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.psw.get(), after["psw"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.sp, after["sp"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.a, after["a"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.x, after["x"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.y, after["y"].as_u8().unwrap(), "{}", test);
+                }
                 for entry in after["ram"].members() {
                     let members: Vec<_> = entry.members().collect();
                     assert_eq!(

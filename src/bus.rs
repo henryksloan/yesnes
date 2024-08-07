@@ -29,7 +29,7 @@ pub struct Bus {
     quotient: u16,
     // 4216h - RDMPYL and 4217h - RDMPYH; result of IO multiplication or division
     product_or_remainder: u16,
-    // DO NOT SUBMIT: This works well, but polish and add comments
+    // Used by CPU as a RAM-only address space during tests.
     testonly_ram: Option<Vec<u8>>,
 }
 

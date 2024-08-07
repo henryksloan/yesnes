@@ -1172,7 +1172,6 @@ impl CPU {
 
     // TODO: Stuff like this can OBVIOUSLY be modified to take &self
     fn bank_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
-        // DO NOT SUBMIT: It seems like this would have to be wrapping?
         u24((cpu.borrow().reg.b as u32) << 16) + addr
     }
 
@@ -1303,11 +1302,10 @@ impl CPU {
         move || {
             let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_x() as u32);
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
-            // DO NOT SUBMIT: Should this wrap u16? Fuzzing doesn't say for sure
             Pointer {
                 addr,
                 long,
-                wrap_u16: false,
+                wrap_u16: true,
             }
         }
     }
@@ -1320,7 +1318,7 @@ impl CPU {
             Pointer {
                 addr,
                 long,
-                wrap_u16: false,
+                wrap_u16: true,
             }
         }
     }
@@ -2504,7 +2502,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    // TODO: Consider factoring out this test setup (and improving reporting with a custom harness)
+    // TODO: Consider factoring out this test setup (and improving reporting with a custom harness, maybe parallelize)
     fn tom_harte() {
         let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_dir.push("testdata/65816/v1/");
@@ -2516,13 +2514,12 @@ mod tests {
         bus.borrow_mut().connect_cpu(Rc::downgrade(&cpu));
         'file_loop: for test_file in test_files {
             let test_path = test_file.unwrap().path();
-            // println!("{test_path:?}");
             match test_path.extension() {
                 None => continue,
                 Some(extension) if extension != "json" => continue,
                 _ => {}
             }
-            // DO NOT SUBMIT: Skipping MVP and MVN, WAI, STP
+            // TODO: Skipping MVP and MVN, WAI, STP
             if let Some(file_name) = test_path.file_name().unwrap().to_str() {
                 if file_name.starts_with("44")
                     || file_name.starts_with("54")
@@ -2535,11 +2532,9 @@ mod tests {
             let contents = fs::read_to_string(test_path).unwrap();
             let tests = json::parse(&contents).unwrap();
             for test in tests.members() {
-                // println!("{}", test);
                 let initial = &test["initial"];
-                // DO NOT SUBMIT: Hah, I think clearing RAM is too slow...
-                // cpu.borrow_mut().reset();
-                // bus.borrow_mut().reset();
+                // TODO: Clearing RAM is too slow... this works for now without it, but
+                // technically a hashmap could work for testonly memory
                 cpu.borrow_mut()
                     .reg
                     .pc
@@ -2549,12 +2544,12 @@ mod tests {
                     .pc
                     .set_bank(initial["pbr"].as_u8().unwrap());
                 cpu.borrow_mut().reg.p.set(initial["p"].as_u8().unwrap());
-                // DO NOT SUBMIT: Skipping decimal mode tests
+                // TODO: Skipping decimal mode tests
                 if cpu.borrow().reg.p.d {
                     continue;
                 }
                 cpu.borrow_mut().reg.p.e = initial["e"].as_u8().unwrap() != 0;
-                // DO NOT SUBMIT: Skipping emu mode tests
+                // TODO: Skipping emu mode tests
                 if cpu.borrow().reg.p.e {
                     continue 'file_loop;
                 }
@@ -2574,47 +2569,19 @@ mod tests {
                 }
                 snes.run_instruction_debug(Device::CPU, None);
                 let after = &test["final"];
-                // DO NOT SUBMIT: Factor out these "{}" things
-                assert_eq!(
-                    cpu.borrow().reg.pc.lo16(),
-                    after["pc"].as_u16().unwrap(),
-                    "{}",
-                    test
-                );
-                assert_eq!(
-                    cpu.borrow().reg.pc.bank(),
-                    after["pbr"].as_u8().unwrap(),
-                    "{}",
-                    test
-                );
-                assert_eq!(
-                    cpu.borrow().reg.p.get(),
-                    after["p"].as_u8().unwrap(),
-                    "{}",
-                    test
-                );
-                assert_eq!(
-                    cpu.borrow().reg.p.e,
-                    after["e"].as_u8().unwrap() != 0,
-                    "{}",
-                    test
-                );
-                assert_eq!(
-                    cpu.borrow().reg.sp,
-                    after["s"].as_u16().unwrap(),
-                    "{}",
-                    test
-                );
-                assert_eq!(cpu.borrow().reg.a, after["a"].as_u16().unwrap(), "{}", test);
-                assert_eq!(cpu.borrow().reg.x, after["x"].as_u16().unwrap(), "{}", test);
-                assert_eq!(cpu.borrow().reg.y, after["y"].as_u16().unwrap(), "{}", test);
-                assert_eq!(
-                    cpu.borrow().reg.b,
-                    after["dbr"].as_u8().unwrap(),
-                    "{}",
-                    test
-                );
-                assert_eq!(cpu.borrow().reg.d, after["d"].as_u16().unwrap(), "{}", test);
+                {
+                    let reg = &cpu.borrow().reg;
+                    assert_eq!(reg.pc.lo16(), after["pc"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.pc.bank(), after["pbr"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.p.get(), after["p"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.p.e, after["e"].as_u8().unwrap() != 0, "{}", test);
+                    assert_eq!(reg.sp, after["s"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.a, after["a"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.x, after["x"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.y, after["y"].as_u16().unwrap(), "{}", test);
+                    assert_eq!(reg.b, after["dbr"].as_u8().unwrap(), "{}", test);
+                    assert_eq!(reg.d, after["d"].as_u16().unwrap(), "{}", test);
+                }
                 for entry in after["ram"].members() {
                     let members: Vec<_> = entry.members().collect();
                     assert_eq!(
