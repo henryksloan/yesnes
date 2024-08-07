@@ -36,7 +36,7 @@ impl SNES {
         }
     }
 
-    // DO NOT SUBMIT: This works, but the API is a little ugly
+    // TODO: Decouple the individual processors so the tests don't depend on a modified SNES object
     pub fn new_test() -> Self {
         let ppu = Rc::new(RefCell::new(PPU::new()));
         let smp = Rc::new(RefCell::new(SMP::new_test()));

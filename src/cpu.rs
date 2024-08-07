@@ -276,8 +276,26 @@ fn bcd_to_bin(x: u16) -> u16 {
 struct Pointer {
     pub addr: u24,
     pub long: bool,
-    // DO NOT SUBMIT: This is only for direct, and I'm not a fan
+    // TODO: This is only for direct modes, so it could probably be simplified
     pub wrap_u16: bool,
+}
+
+impl Pointer {
+    pub fn new(addr: u24, long: bool) -> Self {
+        Self {
+            addr,
+            long,
+            wrap_u16: false,
+        }
+    }
+
+    pub fn new_wrap_u16(addr: u24, long: bool) -> Self {
+        Self {
+            addr,
+            long,
+            wrap_u16: true,
+        }
+    }
 }
 
 /// The 65816 microprocessor, the main CPU of the SNES
@@ -1275,11 +1293,7 @@ impl CPU {
         move || {
             let addr = cpu.borrow().reg.pc;
             cpu.borrow_mut().progress_pc(if long { 2 } else { 1 });
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1289,11 +1303,7 @@ impl CPU {
         move || {
             let direct_addr = u24(fetch!(cpu) as u32);
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
-            Pointer {
-                addr,
-                long,
-                wrap_u16: true,
-            }
+            Pointer::new_wrap_u16(addr, long)
         }
     }
 
@@ -1302,11 +1312,7 @@ impl CPU {
         move || {
             let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_x() as u32);
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
-            Pointer {
-                addr,
-                long,
-                wrap_u16: true,
-            }
+            Pointer::new_wrap_u16(addr, long)
         }
     }
 
@@ -1315,11 +1321,7 @@ impl CPU {
         move || {
             let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_y() as u32);
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
-            Pointer {
-                addr,
-                long,
-                wrap_u16: true,
-            }
+            Pointer::new_wrap_u16(addr, long)
         }
     }
 
@@ -1331,11 +1333,7 @@ impl CPU {
                 let addr_lo = fetch!(cpu) as u32;
                 CPU::bank_addr(cpu.clone(), u24(((fetch!(cpu) as u32) << 8) | addr_lo))
             };
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1349,11 +1347,7 @@ impl CPU {
                     u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_x() as u32),
                 )
             };
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1367,11 +1361,7 @@ impl CPU {
                     u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32),
                 )
             };
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1383,11 +1373,7 @@ impl CPU {
                 let addr_mid = fetch!(cpu) as u32;
                 u24(((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
             };
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1400,11 +1386,7 @@ impl CPU {
                 u24(((fetch!(cpu) as u32) << 16) | (addr_mid << 8) | addr_lo)
                     + u24(cpu.borrow().reg.get_x() as u32)
             };
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1420,11 +1402,7 @@ impl CPU {
                 ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32) << 8)
                     | addr_lo
             });
-            Pointer {
-                addr,
-                long: true,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, true)
         }
     }
 
@@ -1452,11 +1430,7 @@ impl CPU {
                     | (addr_mid << 8)
                     | addr_lo
             });
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1479,11 +1453,7 @@ impl CPU {
                 ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32) << 8)
                     | addr_lo
             });
-            Pointer {
-                addr,
-                long: true,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, true)
         }
     }
 
@@ -1498,11 +1468,7 @@ impl CPU {
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 CPU::bank_addr(cpu.clone(), u24((hi << 8) | lo))
             };
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1520,11 +1486,7 @@ impl CPU {
                 u24((hi << 8) | lo)
             };
             let addr = CPU::bank_addr(cpu.clone(), bank_addr);
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1539,11 +1501,7 @@ impl CPU {
                 u24((hi << 8) | lo)
             } + offset;
             let addr = CPU::bank_addr(cpu.clone(), bank_addr);
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1558,11 +1516,7 @@ impl CPU {
                     yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 2u32)) as u32;
                 u24((bank << 16) | (hi << 8) | lo)
             };
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1578,11 +1532,7 @@ impl CPU {
                     yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 2u32)) as u32;
                 u24((bank << 16) | (hi << 8) | lo)
             } + cpu.borrow().reg.get_y() as u32;
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1590,11 +1540,7 @@ impl CPU {
         #[coroutine]
         move || {
             let addr = u24(fetch!(cpu) as u32).wrapping_add_lo16(cpu.borrow().reg.get_sp() as i16);
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
@@ -1612,11 +1558,7 @@ impl CPU {
                 yield_all!(CPU::read_u8(cpu.clone(), stack_addr.wrapping_add_lo16(1))) as u32;
             let bank_addr = ((addr_hi << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32;
             let addr = CPU::bank_addr(cpu.clone(), u24(bank_addr));
-            Pointer {
-                addr,
-                long,
-                wrap_u16: false,
-            }
+            Pointer::new(addr, long)
         }
     }
 
