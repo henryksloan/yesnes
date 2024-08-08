@@ -673,6 +673,7 @@ impl CPU {
                 if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {
                     cpu.borrow_mut().nmi_enqueued = true;
                 }
+                // This flag is set even if NMIs are disabled
                 cpu.borrow_mut().vblank_nmi_flag = true;
                 let frame = cpu.borrow().bus.borrow().debug_get_frame();
                 cpu.borrow_mut().debug_frame = Some(frame);

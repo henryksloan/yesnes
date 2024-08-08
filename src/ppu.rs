@@ -391,7 +391,7 @@ impl PPU {
                 Some(palette_n as u16),
                 4,
                 attr.flip_x(),
-                attr.flip_y(),
+                false, // If needed, we already flipped vertically based on height
                 true,
             );
             for bit_i in 0..8 {
