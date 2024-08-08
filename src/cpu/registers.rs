@@ -372,11 +372,19 @@ bitfield! {
   #[derive(Clone, Copy, Default)]
   pub struct IndirectAddrOrByteCount(u24);
   impl Debug;
-  pub u16, dma_byte_count, _: 15, 0;
-
   pub u8, lo_byte, set_lo_byte: 7, 0;
   pub u8, hi_byte, set_hi_byte: 15, 8;
   pub u8, bank_byte, set_bank_byte: 23, 16;
+}
+
+impl IndirectAddrOrByteCount {
+    pub fn dma_byte_count(&self) -> usize {
+        let lo16 = self.0.lo16();
+        match lo16 {
+            1..=0xFFFF => lo16 as usize,
+            0 => 0x10000,
+        }
+    }
 }
 
 bitfield! {

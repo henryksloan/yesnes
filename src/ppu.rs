@@ -280,6 +280,7 @@ impl PPU {
                     + ((1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize)
                         % self.cgram.len()]
             } else {
+                // TODO: Replace fake palette and add more frontend options (different fake palettes or use cgram)
                 [
                     0x0000, 0x7FDD, 0x3A49, 0x428B, 0x4ACD, 0x530F, 0x5B51, 0x6393, 0x7393, 0x0000,
                     0x0CFB, 0x2FEB, 0x7393, 0x0000, 0x7FDD, 0x2D7F,
