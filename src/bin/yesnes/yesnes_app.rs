@@ -139,6 +139,7 @@ impl eframe::App for YesnesApp {
 }
 
 pub fn run() -> Result<(), eframe::Error> {
+    // TODO: vsync currently slows down execution, but really those should be decoupled
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1600.0, 1000.0]),
         ..Default::default()

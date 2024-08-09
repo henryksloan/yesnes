@@ -32,7 +32,17 @@ impl Cartridge {
                         .map(|header| (header, MapperType::HiROM))
                 })
                 .flatten();
-            lorom_header.or(hirom_header).expect("Invalid ROM")
+            if lorom_header.is_some() && hirom_header.is_some() {
+                if hirom_header.as_ref().unwrap().0.checksum_valid() {
+                    hirom_header.unwrap()
+                } else {
+                    lorom_header.unwrap()
+                }
+            } else if lorom_header.is_some() {
+                lorom_header.unwrap()
+            } else {
+                hirom_header.expect("Invalid ROM")
+            }
         };
         if header.mapper() != mapper_type {
             // TODO: Guessing the mapping type purely from checksums isn't quite ideal

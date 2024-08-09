@@ -29,10 +29,6 @@ impl CartridgeHeader {
         let checksum_complement = u16::from_le_bytes(data[0x1C..=0x1D].try_into().unwrap());
         let checksum = u16::from_le_bytes(data[0x1E..=0x1F].try_into().unwrap());
 
-        if !checksum != checksum_complement {
-            return None;
-        }
-
         Some(Self {
             title: data[..0x15].try_into().unwrap(),
             rom_speed_map_mode: RomSpeedMapMode(data[0x15]),
@@ -66,6 +62,10 @@ impl CartridgeHeader {
 
     pub fn mapper(&self) -> MapperType {
         self.rom_speed_map_mode.mapper()
+    }
+
+    pub fn checksum_valid(&self) -> bool {
+        return !self.checksum == self.checksum_complement;
     }
 }
 

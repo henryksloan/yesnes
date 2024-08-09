@@ -111,7 +111,7 @@ impl Bus {
                     }
                     0x2180 => {
                         let wram_port_addr = bus.borrow().wram_port_addr;
-                        bus.borrow().wram[wram_port_addr.0 as usize]
+                        bus.borrow().wram[wram_port_addr.0 as usize & 0x1FFFF]
                     }
                     0x4214 => bus.borrow().quotient as u8,
                     0x4215 => (bus.borrow().quotient >> 8) as u8,
@@ -179,7 +179,7 @@ impl Bus {
                         0x2180 => {
                             let wram_port_addr = bus.borrow().wram_port_addr;
                             bus.borrow_mut().wram_port_addr = wram_port_addr.wrapping_add_signed(1);
-                            bus.borrow().wram[wram_port_addr.0 as usize]
+                            bus.borrow().wram[wram_port_addr.0 as usize & 0x1FFFF]
                         }
                         0x4016 => {
                             log::debug!("TODO: Read {addr} Joypad Input Register A (R)");
@@ -270,7 +270,7 @@ impl Bus {
                         0x2180 => {
                             let wram_port_addr = bus.borrow().wram_port_addr;
                             bus.borrow_mut().wram_port_addr = wram_port_addr.wrapping_add_signed(1);
-                            bus.borrow_mut().wram[wram_port_addr.0 as usize] = data;
+                            bus.borrow_mut().wram[wram_port_addr.0 as usize & 0x1FFFF] = data;
                         }
                         0x2181 => bus.borrow_mut().wram_port_addr.set_lo_byte(data),
                         0x2182 => bus.borrow_mut().wram_port_addr.set_hi_byte(data),

@@ -144,7 +144,6 @@ impl AppWindow for TileViewWindow {
                             });
                             if let Some(new_base_addr) = new_base_addr {
                                 if new_base_addr / 0x200 == i {
-                                    println!("scrolling to {i}");
                                     self.top_scroll_row = i;
                                     horiz.response.scroll_to_me(Some(egui::Align::TOP));
                                 }
