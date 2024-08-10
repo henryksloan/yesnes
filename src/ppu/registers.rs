@@ -31,6 +31,8 @@ pub struct IoRegisters {
     // 2128h - WH2 - Window 2 Left Position (X1) (W)
     // 2129h - WH3 - Window 2 Right Position (X2) (W)
     pub window_pos: [WindowPosition; 2],
+    pub window_bg_logic: WindowBackgroundLogic,
+    pub window_obj_math_logic: WindowObjMathLogic,
     // 212Eh - TMW - Window Area Main Screen Disable (W)
     pub window_main_screen_disable: WindowAreaScreenDisable,
     // 212Fh - TSW - Window Area Sub Screen Disable (W)
@@ -289,20 +291,21 @@ pub struct WindowMaskSettings {
 }
 
 impl WindowMaskSettings {
-    pub fn bg_mask(&self, bg_n: usize, window_n: usize) -> WindowMask {
+    pub fn bg_masks(&self, bg_n: usize) -> [WindowMask; 2] {
         match bg_n {
-            1 | 2 => self.bg1_bg2_masks.get_mask(bg_n == 2, window_n),
-            3 | 4 => self.bg3_bg4_masks.get_mask(bg_n == 4, window_n),
+            1 | 2 => self.bg1_bg2_masks.get_masks(bg_n == 2),
+            3 | 4 => self.bg3_bg4_masks.get_masks(bg_n == 4),
             _ => panic!("Invalid background number {bg_n}"),
         }
     }
 
-    pub fn obj_mask(&self, window_n: usize) -> WindowMask {
-        self.obj_math_masks.get_mask(false, window_n)
+    pub fn obj_masks(&self) -> [WindowMask; 2] {
+        self.obj_math_masks.get_masks(false)
     }
 
-    pub fn math_mask(&self, window_n: usize) -> WindowMask {
-        self.obj_math_masks.get_mask(true, window_n)
+    #[expect(unused)]
+    pub fn math_masks(&self) -> [WindowMask; 2] {
+        self.obj_math_masks.get_masks(true)
     }
 }
 
@@ -313,6 +316,10 @@ impl WindowMaskPair {
     pub fn get_mask(&self, hi: bool, window_n: usize) -> WindowMask {
         assert!(window_n == 1 || window_n == 2);
         WindowMask::from((self.0 >> (hi as u8 * 4 + (window_n as u8 - 1) * 2)) & 0b11)
+    }
+
+    pub fn get_masks(&self, hi: bool) -> [WindowMask; 2] {
+        [self.get_mask(hi, 1), self.get_mask(hi, 2)]
     }
 }
 
@@ -335,6 +342,69 @@ impl From<u8> for WindowMask {
 pub struct WindowPosition {
     pub left: u8,
     pub right: u8,
+}
+
+bitfield! {
+  // 212Ah - WBGLOG - Background Window 1/2 Mask Logic (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct WindowBackgroundLogic(u8);
+  impl Debug;
+  pub u8, into WindowLogic, bg1_logic, _: 1, 0;
+  pub u8, into WindowLogic, bg2_logic, _: 3, 2;
+  pub u8, into WindowLogic, bg3_logic, _: 5, 4;
+  pub u8, into WindowLogic, bg4_logic, _: 7, 6;
+}
+
+impl WindowBackgroundLogic {
+    pub fn bg_logic(&self, bg_n: usize) -> WindowLogic {
+        match bg_n {
+            1 => self.bg1_logic(),
+            2 => self.bg2_logic(),
+            3 => self.bg3_logic(),
+            4 => self.bg4_logic(),
+            _ => panic!("Invalid background number {bg_n}"),
+        }
+    }
+}
+
+bitfield! {
+  // 212Bh - WOBJLOG - Obj/Math Window 1/2 Mask Logic (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct WindowObjMathLogic(u8);
+  impl Debug;
+  pub u8, into WindowLogic, obj_logic, _: 1, 0;
+  pub u8, into WindowLogic, math_logic, _: 3, 2;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WindowLogic {
+    OR,
+    AND,
+    XOR,
+    XNOR,
+}
+
+impl WindowLogic {
+    pub fn apply(&self, window1: bool, window2: bool) -> bool {
+        match *self {
+            WindowLogic::OR => window1 || window2,
+            WindowLogic::AND => window1 && window2,
+            WindowLogic::XOR => window1 ^ window2,
+            WindowLogic::XNOR => !(window1 ^ window2),
+        }
+    }
+}
+
+impl From<u8> for WindowLogic {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::OR,
+            1 => Self::AND,
+            2 => Self::XOR,
+            3 => Self::XNOR,
+            _ => panic!("Invalid window logic value {value}"),
+        }
+    }
 }
 
 bitfield! {
