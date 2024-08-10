@@ -946,12 +946,12 @@ impl CPU {
                     cpu.borrow_mut().io_reg.dma_channels[channel_i]
                         .hdma_table_curr_addr
                         .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(1);
-                    let new_line_count = yield_all!(CPU::read_u8(cpu.clone(), addr));
+                    let entry = yield_all!(CPU::read_u8(cpu.clone(), addr));
                     cpu.borrow_mut().io_reg.dma_channels[channel_i]
                         .hdma_line_counter
-                        .set_line_count(new_line_count);
+                        .0 = entry;
                     // Reached terminating 0x00 in HDMA table
-                    if new_line_count == 0x00 {
+                    if entry == 0x00 {
                         cpu.borrow_mut().hdmas_complete_this_frame[channel_i] = true;
                     }
                     if indirect {
@@ -1044,7 +1044,7 @@ impl CPU {
                         yield_all!(CPU::write_u8(cpu.clone(), io_reg_addr, data));
                     }
                 }
-                cpu.borrow_mut().do_hdmas_this_line[channel_i] = repeat;
+                cpu.borrow_mut().do_hdmas_this_line[channel_i] = indirect && repeat;
             }
         }
     }

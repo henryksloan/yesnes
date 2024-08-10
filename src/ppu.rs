@@ -171,21 +171,29 @@ impl PPU {
         .iter()
         .rev()
         {
-            let line = match *sublayer {
-                SubLayer::Obj(priority) => &self.scanline_buffs.obj_buff[priority],
-                SubLayer::Bg(bg_n, priority) => &self.scanline_buffs.bg_buff[bg_n - 1][priority],
+            // DO NOT SUBMIT: Window logic (AND, OR, etc.)
+            let (line, window_mask, window_disable) = match *sublayer {
+                SubLayer::Obj(priority) => (
+                    &self.scanline_buffs.obj_buff[priority],
+                    self.io_reg.window_mask.obj_mask(1),
+                    self.io_reg.window_main_screen_disable.obj_disable(),
+                ),
+                SubLayer::Bg(bg_n, priority) => (
+                    &self.scanline_buffs.bg_buff[bg_n - 1][priority],
+                    self.io_reg.window_mask.bg_mask(bg_n, 1),
+                    self.io_reg.window_main_screen_disable.bg_disable(bg_n),
+                ),
             };
             for x in 0..256 {
+                if window_disable && window_mask.enable {
+                    let inside = x >= self.io_reg.window_pos[0].left as usize
+                        && x <= self.io_reg.window_pos[0].right as usize;
+                    if window_mask.invert != inside {
+                        continue;
+                    }
+                }
                 if let Some(color) = line[x] {
                     self.frame[draw_line as usize][x] = color;
-                }
-                // DO NOT SUBMIT
-                if x >= self.io_reg.window_pos[0].left as usize
-                    && x <= self.io_reg.window_pos[0].right as usize
-                {
-                    // self.frame[draw_line as usize][x] = [0, 0, 0];
-                } else {
-                    // self.frame[draw_line as usize][x] = [0, 0, 0];
                 }
             }
         }
@@ -544,13 +552,19 @@ impl PPU {
                 }
                 self.cgram[cgram_addr].set_bit_range(write_bits.0, write_bits.1, data);
             }
-            0x212C => self.io_reg.main_layer_enable.0 = data,
-            0x212D => self.io_reg.sub_layer_enable.0 = data,
+            0x2123 => self.io_reg.window_mask.bg1_bg2_masks.0 = data,
+            0x2124 => self.io_reg.window_mask.bg3_bg4_masks.0 = data,
+            0x2125 => self.io_reg.window_mask.obj_math_masks.0 = data,
             0x2126 => self.io_reg.window_pos[0].left = data,
             0x2127 => self.io_reg.window_pos[0].right = data,
             0x2128 => self.io_reg.window_pos[1].left = data,
             0x2129 => self.io_reg.window_pos[1].right = data,
-            0x2123..=0x212B | 0x212E..=0x212F => {} // TODO: Window
+            0x212E => self.io_reg.window_main_screen_disable.0 = data,
+            0x212F => self.io_reg.window_sub_screen_disable.0 = data,
+            // DO NOT SUBMIT: Window logic
+            0x212A..=0x212B => {}
+            0x212C => self.io_reg.main_layer_enable.0 = data,
+            0x212D => self.io_reg.sub_layer_enable.0 = data,
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
                                                                            // _ => panic!("Invalid IO write of PPU at {addr:#04X}"),
         }

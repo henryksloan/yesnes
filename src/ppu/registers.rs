@@ -25,11 +25,16 @@ pub struct IoRegisters {
     // 2121h - CGADD - Palette CGRAM Address (Color Generator Memory) (W)
     pub cgram_addr: u8,
     pub cgram_access_latch: bool,
+    pub window_mask: WindowMaskSettings,
     // 2126h - WH0 - Window 1 Left Position (X1) (W)
     // 2127h - WH1 - Window 1 Right Position (X2) (W)
     // 2128h - WH2 - Window 2 Left Position (X1) (W)
     // 2129h - WH3 - Window 2 Right Position (X2) (W)
     pub window_pos: [WindowPosition; 2],
+    // 212Eh - TMW - Window Area Main Screen Disable (W)
+    pub window_main_screen_disable: WindowAreaScreenDisable,
+    // 212Fh - TSW - Window Area Sub Screen Disable (W)
+    pub window_sub_screen_disable: WindowAreaScreenDisable,
 }
 
 impl IoRegisters {
@@ -219,12 +224,12 @@ bitfield! {
 
 impl BackgroundChrAddr {
     pub fn bg_base(&self, bg_n: usize) -> u16 {
-        assert!((1..=4).contains(&bg_n));
         match bg_n {
             1 => self.bg1_base(),
             2 => self.bg2_base(),
             3 => self.bg3_base(),
-            4 | _ => self.bg4_base(),
+            4 => self.bg4_base(),
+            _ => panic!("Invalid background number {bg_n}"),
         }
     }
 }
@@ -273,8 +278,84 @@ impl VramAddrIncrMode {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct WindowMaskSettings {
+    /// 2123h - W12SEL - Window BG1/BG2 Mask Settings (W)
+    pub bg1_bg2_masks: WindowMaskPair,
+    /// 2124h - W34SEL - Window BG3/BG4 Mask Settings (W)
+    pub bg3_bg4_masks: WindowMaskPair,
+    /// 2125h - WOBJSEL - Window OBJ/MATH Mask Settings (W)
+    pub obj_math_masks: WindowMaskPair,
+}
+
+impl WindowMaskSettings {
+    pub fn bg_mask(&self, bg_n: usize, window_n: usize) -> WindowMask {
+        match bg_n {
+            1 | 2 => self.bg1_bg2_masks.get_mask(bg_n == 2, window_n),
+            3 | 4 => self.bg3_bg4_masks.get_mask(bg_n == 4, window_n),
+            _ => panic!("Invalid background number {bg_n}"),
+        }
+    }
+
+    pub fn obj_mask(&self, window_n: usize) -> WindowMask {
+        self.obj_math_masks.get_mask(false, window_n)
+    }
+
+    pub fn math_mask(&self, window_n: usize) -> WindowMask {
+        self.obj_math_masks.get_mask(true, window_n)
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct WindowMaskPair(pub u8);
+
+impl WindowMaskPair {
+    pub fn get_mask(&self, hi: bool, window_n: usize) -> WindowMask {
+        assert!(window_n == 1 || window_n == 2);
+        WindowMask::from((self.0 >> (hi as u8 * 4 + (window_n as u8 - 1) * 2)) & 0b11)
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct WindowMask {
+    pub enable: bool,
+    pub invert: bool,
+}
+
+impl From<u8> for WindowMask {
+    fn from(value: u8) -> Self {
+        Self {
+            enable: value & 0b01 == 0b01,
+            invert: value & 0b10 == 0b10,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default, Debug)]
 pub struct WindowPosition {
     pub left: u8,
     pub right: u8,
+}
+
+bitfield! {
+  #[derive(Clone, Copy, Default)]
+  pub struct WindowAreaScreenDisable(u8);
+  impl Debug;
+  pub bg1_disable, _: 0;
+  pub bg2_disable, _: 1;
+  pub bg3_disable, _: 2;
+  pub bg4_disable, _: 3;
+  pub obj_disable, _: 4;
+}
+
+impl WindowAreaScreenDisable {
+    pub fn bg_disable(&self, bg_n: usize) -> bool {
+        match bg_n {
+            1 => self.bg1_disable(),
+            2 => self.bg2_disable(),
+            3 => self.bg3_disable(),
+            4 => self.bg4_disable(),
+            _ => panic!("Invalid background number {bg_n}"),
+        }
+    }
 }
