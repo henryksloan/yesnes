@@ -609,7 +609,7 @@ impl CPU {
                 yield_ticks!(cpu, CPU::interrupt(cpu.clone(), vector));
             }
 
-            if cpu.borrow().irq_enqueued {
+            if !cpu.borrow().reg.p.i && cpu.borrow().irq_enqueued {
                 cpu.borrow_mut().irq_enqueued = false;
                 let vector = if cpu.borrow().reg.p.e {
                     IRQ_VECTOR_E

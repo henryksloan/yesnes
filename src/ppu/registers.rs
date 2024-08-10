@@ -37,6 +37,9 @@ pub struct IoRegisters {
     pub window_main_screen_disable: WindowAreaScreenDisable,
     // 212Fh - TSW - Window Area Sub Screen Disable (W)
     pub window_sub_screen_disable: WindowAreaScreenDisable,
+    pub color_math_control_a: ColorMathControlA,
+    pub color_math_control_b: ColorMathControlB,
+    pub color_math_backdrop_color: ColorMathBackdropColor,
 }
 
 impl IoRegisters {
@@ -427,5 +430,74 @@ impl WindowAreaScreenDisable {
             4 => self.bg4_disable(),
             _ => panic!("Invalid background number {bg_n}"),
         }
+    }
+}
+
+bitfield! {
+  // 2130h - CGWSEL - Color Math Control Register A (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct ColorMathControlA(u8);
+  impl Debug;
+  pub direct_color, _: 0;
+  pub sub_screen_bg_obj, _: 1;
+  pub u8, into ColorMathCondition, color_math_enable, _: 5, 4;
+  pub u8, into ColorMathCondition, force_main_screen_black, _: 5, 4;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ColorMathCondition {
+    Never,
+    OutsideMathWindow,
+    InsideMathWindow,
+    Always,
+}
+
+impl From<u8> for ColorMathCondition {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Never,
+            1 => Self::OutsideMathWindow,
+            2 => Self::InsideMathWindow,
+            3 => Self::Always,
+            _ => panic!("Invalid color math condition {value}"),
+        }
+    }
+}
+
+bitfield! {
+  // 2131h - CGADSUB - Color Math Control Register B (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct ColorMathControlB(u8);
+  impl Debug;
+  pub bg1_color_math, _: 0;
+  pub bg2_color_math, _: 1;
+  pub bg3_color_math, _: 2;
+  pub bg4_color_math, _: 3;
+  // Only applies to OBJ palettes 4..=7
+  pub obj_hipal_color_math, _: 4;
+  pub backdrop_color_math, _: 5;
+  pub div2_result, _: 6;
+  pub subtract, _: 7;
+}
+
+bitfield! {
+  // 2132h - COLDATA - Color Math Sub Screen Backdrop Color (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct ColorMathBackdropColor(u8);
+  impl Debug;
+  pub intensity, _: 4, 0;
+  pub apply_red, _: 5;
+  pub apply_green, _: 6;
+  pub apply_blue, _: 7;
+}
+
+impl ColorMathBackdropColor {
+    pub fn color(&self) -> [u8; 3] {
+        let intensity = self.intensity();
+        [
+            intensity * self.apply_red() as u8,
+            intensity * self.apply_green() as u8,
+            intensity * self.apply_blue() as u8,
+        ]
     }
 }

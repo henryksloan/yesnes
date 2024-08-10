@@ -569,12 +569,15 @@ impl PPU {
             0x2127 => self.io_reg.window_pos[0].right = data,
             0x2128 => self.io_reg.window_pos[1].left = data,
             0x2129 => self.io_reg.window_pos[1].right = data,
-            0x212E => self.io_reg.window_main_screen_disable.0 = data,
-            0x212F => self.io_reg.window_sub_screen_disable.0 = data,
             0x212A => self.io_reg.window_bg_logic.0 = data,
             0x212B => self.io_reg.window_obj_math_logic.0 = data,
             0x212C => self.io_reg.main_layer_enable.0 = data,
             0x212D => self.io_reg.sub_layer_enable.0 = data,
+            0x212E => self.io_reg.window_main_screen_disable.0 = data,
+            0x212F => self.io_reg.window_sub_screen_disable.0 = data,
+            0x2130 => self.io_reg.color_math_control_a.0 = data,
+            0x2131 => self.io_reg.color_math_control_b.0 = data,
+            0x2132 => self.io_reg.color_math_backdrop_color.0 = data,
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
                                                                            // _ => panic!("Invalid IO write of PPU at {addr:#04X}"),
         }
