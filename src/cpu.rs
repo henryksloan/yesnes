@@ -17,6 +17,7 @@ pub const RESET_VECTOR: u24 = u24(0xFFFC);
 pub const COP_VECTOR_E: u24 = u24(0xFFF4);
 pub const NMI_VECTOR_E: u24 = u24(0xFFFA);
 pub const IRQ_VECTOR_E: u24 = u24(0xFFFE);
+#[expect(unused)]
 pub const ABORT_VECTOR_E: u24 = u24(0xFFF8);
 pub const BRK_VECTOR_E: u24 = u24(0xFFFE);
 
@@ -24,6 +25,7 @@ pub const BRK_VECTOR_E: u24 = u24(0xFFFE);
 pub const NMI_VECTOR: u24 = u24(0xFFEA);
 pub const IRQ_VECTOR: u24 = u24(0xFFEE);
 pub const COP_VECTOR: u24 = u24(0xFFE4);
+#[expect(unused)]
 pub const ABORT_VECTOR: u24 = u24(0xFFF8);
 pub const BRK_VECTOR: u24 = u24(0xFFE6);
 
@@ -663,7 +665,7 @@ impl CPU {
                             .0 = table_base_addr;
                         cpu.borrow_mut().io_reg.dma_channels[channel_i]
                             .hdma_line_counter
-                            .0 = 0;
+                            .0 &= 0x80;
                     }
                 }
                 cpu.borrow_mut().hdmas_complete_this_frame.fill(false);
@@ -952,34 +954,31 @@ impl CPU {
                     if new_line_count == 0x00 {
                         cpu.borrow_mut().hdmas_complete_this_frame[channel_i] = true;
                     }
-                }
-                if indirect {
-                    let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
-                        .hdma_table_curr_addr
-                        .0 as u32;
-                    let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
-                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                        .hdma_table_curr_addr
-                        .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(1);
-                    let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
-                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                        .indirect_addr_or_byte_count
-                        .set_hi_byte(data);
-                    // TODO: Data might be shifted into the lo16 of this register, so this low byte might be the old high byte
-                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                        .indirect_addr_or_byte_count
-                        .set_lo_byte(0);
-                    let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
-                        .hdma_table_curr_addr
-                        .0 as u32;
-                    let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
-                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                        .hdma_table_curr_addr
-                        .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(1);
-                    let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
-                    cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                        .indirect_addr_or_byte_count
-                        .set_hi_byte(data);
+                    if indirect {
+                        let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 as u32;
+                        let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
+                        // DO NOT SUBMIT: This `2` and `3` makes borrowing simpler...
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(2);
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .indirect_addr_or_byte_count
+                            .set_lo_byte(data);
+                        let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 as u32;
+                        let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .hdma_table_curr_addr
+                            .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(3);
+                        let data = yield_all!(CPU::read_u8(cpu.clone(), addr));
+                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                            .indirect_addr_or_byte_count
+                            .set_hi_byte(data);
+                    }
                 }
             }
         }
@@ -1005,20 +1004,29 @@ impl CPU {
                 }
                 // TODO: Ban wram-to-wram
                 let channel_regs = cpu.borrow().io_reg.dma_channels[channel_i];
+                let repeat = channel_regs.hdma_line_counter.repeat();
                 let table_base_addr = channel_regs.addr.0;
                 let indirect = channel_regs.setup.hdma_addr_mode();
                 let indirect_addr = channel_regs.indirect_addr_or_byte_count.0;
                 let io_to_cpu = channel_regs.setup.transfer_direction();
                 let io_reg_base = channel_regs.io_reg;
                 let io_reg_offsets = channel_regs.setup.hdma_io_reg_offsets();
-                for io_reg_offset in io_reg_offsets {
+                for (i, io_reg_offset) in io_reg_offsets.iter().enumerate() {
                     let io_reg = io_reg_base.wrapping_add(*io_reg_offset);
                     let io_reg_addr = u24(0x2100 | io_reg as u32);
                     let cpu_addr = if indirect {
-                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                            .indirect_addr_or_byte_count
-                            .0 = indirect_addr.wrapping_add_signed(1);
-                        indirect_addr
+                        if repeat {
+                            let old_indirect_addr = cpu.borrow().io_reg.dma_channels[channel_i]
+                                .indirect_addr_or_byte_count
+                                .0;
+                            channel_regs.indirect_addr_or_byte_count.0;
+                            cpu.borrow_mut().io_reg.dma_channels[channel_i]
+                                .indirect_addr_or_byte_count
+                                .0 = old_indirect_addr.wrapping_add_lo16(1);
+                            old_indirect_addr
+                        } else {
+                            indirect_addr.wrapping_add_lo16(i as i16)
+                        }
                     } else {
                         let table_off = cpu.borrow().io_reg.dma_channels[channel_i]
                             .hdma_table_curr_addr
@@ -1036,12 +1044,6 @@ impl CPU {
                         yield_all!(CPU::write_u8(cpu.clone(), io_reg_addr, data));
                     }
                 }
-                let repeat = (cpu.borrow().io_reg.dma_channels[channel_i]
-                    .hdma_line_counter
-                    .line_count()
-                    >> 7)
-                    & 1
-                    == 1;
                 cpu.borrow_mut().do_hdmas_this_line[channel_i] = repeat;
             }
         }

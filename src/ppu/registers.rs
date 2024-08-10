@@ -5,6 +5,7 @@ pub struct IoRegisters {
     pub display_control_1: DisplayControl1,
     pub main_layer_enable: LayerEnable,
     pub sub_layer_enable: LayerEnable,
+    #[expect(unused)]
     pub display_control_2: DisplayControl2,
     pub obj_size_base: ObjSizeBase,
     pub oam_addr_priority: OamAddrPriority,
@@ -24,6 +25,11 @@ pub struct IoRegisters {
     // 2121h - CGADD - Palette CGRAM Address (Color Generator Memory) (W)
     pub cgram_addr: u8,
     pub cgram_access_latch: bool,
+    // 2126h - WH0 - Window 1 Left Position (X1) (W)
+    // 2127h - WH1 - Window 1 Right Position (X2) (W)
+    // 2128h - WH2 - Window 2 Left Position (X1) (W)
+    // 2129h - WH3 - Window 2 Right Position (X2) (W)
+    pub window_pos: [WindowPosition; 2],
 }
 
 impl IoRegisters {
@@ -265,4 +271,10 @@ impl VramAddrIncrMode {
             0b10 | 0b11 | _ => 128,
         }
     }
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct WindowPosition {
+    pub left: u8,
+    pub right: u8,
 }

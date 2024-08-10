@@ -179,6 +179,14 @@ impl PPU {
                 if let Some(color) = line[x] {
                     self.frame[draw_line as usize][x] = color;
                 }
+                // DO NOT SUBMIT
+                if x >= self.io_reg.window_pos[0].left as usize
+                    && x <= self.io_reg.window_pos[0].right as usize
+                {
+                    // self.frame[draw_line as usize][x] = [0, 0, 0];
+                } else {
+                    // self.frame[draw_line as usize][x] = [0, 0, 0];
+                }
             }
         }
     }
@@ -536,9 +544,12 @@ impl PPU {
                 }
                 self.cgram[cgram_addr].set_bit_range(write_bits.0, write_bits.1, data);
             }
-            // TODO: Should reads of these work? What is the program tries to OR or something?
             0x212C => self.io_reg.main_layer_enable.0 = data,
             0x212D => self.io_reg.sub_layer_enable.0 = data,
+            0x2126 => self.io_reg.window_pos[0].left = data,
+            0x2127 => self.io_reg.window_pos[0].right = data,
+            0x2128 => self.io_reg.window_pos[1].left = data,
+            0x2129 => self.io_reg.window_pos[1].right = data,
             0x2123..=0x212B | 0x212E..=0x212F => {} // TODO: Window
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
                                                                            // _ => panic!("Invalid IO write of PPU at {addr:#04X}"),

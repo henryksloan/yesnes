@@ -8,6 +8,7 @@ use crate::u24::u24;
 
 // TODO: Implement speeds and such
 pub struct Cartridge {
+    #[expect(unused)]
     header: CartridgeHeader,
     mapper: Box<dyn Mapper>,
 }

@@ -9,14 +9,18 @@ pub struct CartridgeHeader {
     cartridge_type: CartridgeType,
     // FFD7h - ROM size (1 SHL n) Kbytes (usually 8=256KByte .. 0Ch=4MByte)
     // Values are rounded-up for carts with 10,12,20,24 Mbits
+    #[expect(unused)]
     rom_size_shift: u8,
     // FFD8h - RAM size (1 SHL n) Kbytes (usually 1=2Kbyte .. 5=32Kbyte) (0=None)
     ram_size_shift: u8,
     // FFD9h - Country (also implies PAL/NTSC)
+    #[expect(unused)]
     country: u8,
     // FFDAh - Developer ID code  (00h=None/Homebrew, 01h=Nintendo, etc.) (33h=New)
+    #[expect(unused)]
     developer_id: u8,
     // FFDBh - ROM Version number (00h=First)
+    #[expect(unused)]
     rom_version: u8,
     // FFDCh - Checksum complement (same as below, XORed with FFFFh)
     checksum_complement: u16,
