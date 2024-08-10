@@ -573,7 +573,9 @@ impl CPU {
                 (transfer_x_y, NoFlag; 0x9B=>implied)
                 (transfer_y_a, NoFlag; 0x98=>implied)
                 (transfer_y_x, NoFlag; 0xBB=>implied)
-                (stp, NoFlag; 0xDB=>implied)
+                // DO NOT SUBMIT
+                // (stp, NoFlag; 0xDB=>implied)
+                (stp, NoFlag; 0xDB=>implied, 0xCB=>implied)
                 // TODO: Implement WAI instruction
             );
 
@@ -2372,6 +2374,14 @@ impl CPU {
                 let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;
                 u24((pb << 16) | addr)
             };
+            // DO NOT SUBMIT
+            {
+                let new_pc = cpu.borrow().reg.pc;
+                let data = Bus::peak_u8(cpu.borrow_mut().bus.clone(), new_pc);
+                if data == 0xCB {
+                    cpu.borrow_mut().reg.pc = new_pc.wrapping_add_lo16(1);
+                }
+            }
             yield YieldReason::Debug(DebugPoint::FinishedInterrupt);
         }
     }

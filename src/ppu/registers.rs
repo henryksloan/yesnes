@@ -171,6 +171,19 @@ bitfield! {
   pub u8, hi_byte, set_hi_byte: 15, 8;
 }
 
+impl OamAddrPriority {
+    pub fn oam_priority_iter(&self) -> impl DoubleEndedIterator<Item = usize> {
+        let highest_priority = if self.priority_rotation() {
+            self.priority_obj_n() as usize
+        } else {
+            0
+        };
+        (highest_priority..128)
+            .into_iter()
+            .chain((0..highest_priority).into_iter())
+    }
+}
+
 bitfield! {
   /// 2105h - BGMODE - BG Mode and BG Character Size (W)
   #[derive(Clone, Copy, Default)]

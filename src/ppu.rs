@@ -346,6 +346,7 @@ impl PPU {
         for obj_buff in &mut *self.scanline_buffs.obj_buff {
             obj_buff.fill(None);
         }
+        self.scanline_buffs.obj_hipal_buff.fill(false);
     }
 
     fn debug_render_scanline_bpp(&mut self, bg_i: usize, scanline: u16, bits_per_pixel: usize) {
@@ -473,7 +474,7 @@ impl PPU {
     }
 
     fn debug_render_sprites(&mut self, scanline: u16) {
-        for sprite_i in (0..128).rev() {
+        for sprite_i in self.io_reg.oam_addr_priority.oam_priority_iter().rev() {
             let oam_lo_entry = {
                 let oam_off = sprite_i * 4;
                 OamLoEntry(u32::from_le_bytes(
