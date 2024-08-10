@@ -85,21 +85,21 @@ bitfield! {
   #[derive(Clone, Copy, Default)]
   pub struct LayerEnable(u8);
   impl Debug;
-  pub bg1, _: 0;
-  pub bg2, _: 1;
-  pub bg3, _: 2;
-  pub bg4, _: 3;
-  pub obj, _: 4;
+  pub bg1_enable, _: 0;
+  pub bg2_enable, _: 1;
+  pub bg3_enable, _: 2;
+  pub bg4_enable, _: 3;
+  pub obj_enable, _: 4;
 }
 
 impl LayerEnable {
-    pub fn layer_enabled(&self, bg_n: usize) -> bool {
+    pub fn bg_enabled(&self, bg_n: usize) -> bool {
         assert!((1..=4).contains(&bg_n));
         match bg_n {
-            1 => self.bg1(),
-            2 => self.bg2(),
-            3 => self.bg3(),
-            4 | _ => self.bg4(),
+            1 => self.bg1_enable(),
+            2 => self.bg2_enable(),
+            3 => self.bg3_enable(),
+            4 | _ => self.bg4_enable(),
         }
     }
 }
@@ -485,4 +485,16 @@ bitfield! {
   pub backdrop_color_math, _: 5;
   pub div2_result, _: 6;
   pub subtract, _: 7;
+}
+
+impl ColorMathControlB {
+    pub fn bg_color_math(&self, bg_n: usize) -> bool {
+        match bg_n {
+            1 => self.bg1_color_math(),
+            2 => self.bg2_color_math(),
+            3 => self.bg3_color_math(),
+            4 => self.bg4_color_math(),
+            _ => panic!("Invalid background number {bg_n}"),
+        }
+    }
 }
