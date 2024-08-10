@@ -37,7 +37,7 @@ impl Default for ScanlineBuffers {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Layer {
     Obj,
     Bg(usize), // .0: BG number
@@ -92,7 +92,7 @@ pub struct PPU {
     ppu_counter: Rc<RefCell<PpuCounter>>,
     frame: [[[u8; 3]; 256]; 224],
     main_screen: Box<[[([u8; 3], Layer); 256]; 224]>,
-    sub_screen: Box<[[[u8; 3]; 256]; 224]>,
+    sub_screen: Box<[[([u8; 3], Layer); 256]; 224]>,
     scanline_buffs: ScanlineBuffers,
     ticks_run: u64,
 }
@@ -108,7 +108,7 @@ impl PPU {
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
             frame: [[[0; 3]; 256]; 224],
             main_screen: vec![[Default::default(); 256]; 224].try_into().unwrap(),
-            sub_screen: vec![[[0; 3]; 256]; 224].try_into().unwrap(),
+            sub_screen: vec![[Default::default(); 256]; 224].try_into().unwrap(),
             scanline_buffs: ScanlineBuffers::default(),
             ticks_run: 0,
         }
@@ -175,7 +175,8 @@ impl PPU {
         self.debug_clear_scanline_buffs();
         let backdrop_color = self.palette_entry_to_rgb(self.cgram[0]);
         self.main_screen[draw_line as usize].fill((backdrop_color, Layer::Backdrop));
-        self.sub_screen[draw_line as usize].fill(self.io_reg.color_math_backdrop_color);
+        self.sub_screen[draw_line as usize]
+            .fill((self.io_reg.color_math_backdrop_color, Layer::Backdrop));
         let layer_bpps: &[usize] = match self.io_reg.bg_mode.bg_mode() {
             0 => &[2, 2, 2, 2],
             1 => &[4, 4, 2],
@@ -215,7 +216,7 @@ impl PPU {
                 }
                 for x in 0..256 {
                     if let Some(color) = line[x] {
-                        self.sub_screen[draw_line as usize][x] = color;
+                        self.sub_screen[draw_line as usize][x] = (color, sublayer.to_layer());
                     }
                 }
             }
@@ -273,6 +274,7 @@ impl PPU {
 
         let color_math_condition = self.io_reg.color_math_control_a.color_math_condition();
         for x in 0..256 {
+            // DO NOT SUBMIT: implement "Force Main Screen Black" (does it affect div?)
             let (main_color, main_layer) = self.main_screen[draw_line as usize][x];
             self.frame[draw_line as usize][x] = main_color;
             let do_color_math = match main_layer {
@@ -284,21 +286,19 @@ impl PPU {
                 Layer::Backdrop => self.io_reg.color_math_control_b.backdrop_color_math(),
             };
             if color_math_condition != ColorMathCondition::Never && do_color_math {
-                let sub_screen_color = self.sub_screen[draw_line as usize][x];
+                let (sub_color, sub_layer) = self.sub_screen[draw_line as usize][x];
                 let subtract = self.io_reg.color_math_control_b.subtract();
                 let div2_result = self.io_reg.color_math_control_b.div2_result();
                 if color_math_condition == ColorMathCondition::Always {
                     for i in 0..3 {
                         if subtract {
-                            self.frame[draw_line as usize][x][i] = self.frame[draw_line as usize]
-                                [x][i]
-                                .saturating_sub(sub_screen_color[i]);
+                            self.frame[draw_line as usize][x][i] =
+                                self.frame[draw_line as usize][x][i].saturating_sub(sub_color[i]);
                         } else {
-                            self.frame[draw_line as usize][x][i] = self.frame[draw_line as usize]
-                                [x][i]
-                                .saturating_add(sub_screen_color[i]);
+                            self.frame[draw_line as usize][x][i] =
+                                self.frame[draw_line as usize][x][i].saturating_add(sub_color[i]);
                         }
-                        if div2_result {
+                        if div2_result && sub_layer != Layer::Backdrop {
                             self.frame[draw_line as usize][x][i] /= 2;
                         }
                     }
@@ -322,13 +322,13 @@ impl PPU {
                             if subtract {
                                 self.frame[draw_line as usize][x][i] = self.frame
                                     [draw_line as usize][x][i]
-                                    .saturating_sub(sub_screen_color[i]);
+                                    .saturating_sub(sub_color[i]);
                             } else {
                                 self.frame[draw_line as usize][x][i] = self.frame
                                     [draw_line as usize][x][i]
-                                    .saturating_add(sub_screen_color[i]);
+                                    .saturating_add(sub_color[i]);
                             }
-                            if div2_result {
+                            if div2_result && sub_layer != Layer::Backdrop {
                                 self.frame[draw_line as usize][x][i] /= 2;
                             }
                         }
@@ -490,7 +490,9 @@ impl PPU {
                 )
             };
             let (width, height) = self.io_reg.obj_size_base.obj_width_height(large);
-            let y = oam_lo_entry.y() as u16;
+            // The rendering of sprites is offset by +1 from backgrounds, but since scanline 0 is invisible,
+            // it cancels out. i.e. a sprite at y=0 will be drawn starting on the first visible scanline.
+            let y = oam_lo_entry.y() as u16 + 1;
             if scanline < y || scanline >= (y + height) {
                 continue;
             }
@@ -512,8 +514,6 @@ impl PPU {
         first_chr_n: u8,
         attr: ObjAttributes,
     ) {
-        // The rendering of sprites is offset by +1 from backgrounds, but since scanline 0 is invisible,
-        // it cancels out. i.e. a sprite at y=0 will be drawn starting on the first visible scanline.
         let line = {
             let line_offset = scanline - y;
             if attr.flip_y() {
