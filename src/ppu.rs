@@ -22,13 +22,17 @@ struct ScanlineBuffers {
     bg_buff: Box<[[[Option<[u8; 3]>; 256]; 2]; 4]>,
     // A buffer of pixels at each object priority (0-3)
     obj_buff: Box<[[Option<[u8; 3]>; 256]; 4]>,
+    // Color math distinguishes between objects with palettes 0..=3 and those with palettes 4..=7.
+    // For x-values with a sprite pixel, this stores whether the corresponding object uses a high palette (4..=7).
+    obj_hipal_buff: Box<[bool; 256]>,
 }
 
 impl Default for ScanlineBuffers {
     fn default() -> Self {
         Self {
-            bg_buff: Box::new([[[None; 256]; 2]; 4]),
-            obj_buff: Box::new([[None; 256]; 4]),
+            bg_buff: vec![[[None; 256]; 2]; 4].try_into().unwrap(),
+            obj_buff: vec![[None; 256]; 4].try_into().unwrap(),
+            obj_hipal_buff: vec![false; 256].try_into().unwrap(),
         }
     }
 }
@@ -187,6 +191,7 @@ impl PPU {
         }
         self.debug_render_sprites(draw_line);
 
+        // DO NOT SUBMIT: Simplify and generalize all this code
         if self.io_reg.color_math_control_a.sub_screen_bg_obj() {
             for sublayer in layer_priority_order(
                 self.io_reg.bg_mode.bg_mode(),
@@ -271,9 +276,10 @@ impl PPU {
             let (main_color, main_layer) = self.main_screen[draw_line as usize][x];
             self.frame[draw_line as usize][x] = main_color;
             let do_color_math = match main_layer {
-                // DO NOT SUBMIT: How to distinguish hipal?
-                // Layer::Obj => self.io_reg.color_math_control_b.obj_hipal_color_math(),
-                Layer::Obj => false,
+                Layer::Obj => {
+                    self.io_reg.color_math_control_b.obj_hipal_color_math()
+                        && self.scanline_buffs.obj_hipal_buff[x]
+                }
                 Layer::Bg(bg_n) => self.io_reg.color_math_control_b.bg_color_math(bg_n),
                 Layer::Backdrop => self.io_reg.color_math_control_b.backdrop_color_math(),
             };
@@ -283,7 +289,6 @@ impl PPU {
                 let div2_result = self.io_reg.color_math_control_b.div2_result();
                 if color_math_condition == ColorMathCondition::Always {
                     for i in 0..3 {
-                        // DO NOT SUBMIT: div2
                         if subtract {
                             self.frame[draw_line as usize][x][i] = self.frame[draw_line as usize]
                                 [x][i]
@@ -558,6 +563,7 @@ impl PPU {
                 if tile_line_pixels[bit_i].is_some() {
                     self.scanline_buffs.obj_buff[attr.priority() as usize][pixel_x] =
                         tile_line_pixels[bit_i];
+                    self.scanline_buffs.obj_hipal_buff[pixel_x] = palette_n >= 4;
                 }
             }
         }
