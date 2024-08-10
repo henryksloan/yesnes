@@ -6,7 +6,7 @@ pub use counter::PpuCounter;
 
 use bitfield::{BitRange, BitRangeMut};
 use obj::{OamLoEntry, ObjAttributes};
-use registers::IoRegisters;
+use registers::{ColorMathCondition, IoRegisters};
 
 use crate::cpu::yield_ticks;
 use crate::scheduler::*;
@@ -144,6 +144,57 @@ impl PPU {
         // to be overdrawn by any non-transparent pixels.
         let backdrop_color = self.palette_entry_to_rgb(self.cgram[0]);
         self.frame[draw_line as usize].fill(backdrop_color);
+        // DO NOT SUBMIT: Simplify and generalize+factor out this code
+        let color_math_condition = self.io_reg.color_math_control_a.color_math_condition();
+        if color_math_condition != ColorMathCondition::Never {
+            let sub_screen_backdrop_color = self.io_reg.color_math_backdrop_color;
+            let subtract = self.io_reg.color_math_control_b.subtract();
+            if color_math_condition == ColorMathCondition::Always {
+                for x in 0..256 {
+                    for i in 0..3 {
+                        if subtract {
+                            self.frame[draw_line as usize][x][i] = self.frame[draw_line as usize]
+                                [x][i]
+                                .saturating_sub(sub_screen_backdrop_color[i] << 3);
+                        } else {
+                            self.frame[draw_line as usize][x][i] = self.frame[draw_line as usize]
+                                [x][i]
+                                .saturating_add(sub_screen_backdrop_color[i] << 3);
+                        }
+                    }
+                }
+            } else {
+                let invert = color_math_condition == ColorMathCondition::OutsideMathWindow;
+                let window_masks = self.io_reg.window_mask.math_masks();
+                let window_logic = self.io_reg.window_obj_math_logic.math_logic();
+                for x in 0..256 {
+                    let overlap_window1 = window_masks[0].enable && {
+                        let inside = x >= self.io_reg.window_pos[0].left as usize
+                            && x <= self.io_reg.window_pos[0].right as usize;
+                        inside != window_masks[0].invert
+                    };
+                    let overlap_window2 = window_masks[1].enable && {
+                        let inside = x >= self.io_reg.window_pos[1].left as usize
+                            && x <= self.io_reg.window_pos[1].right as usize;
+                        inside != window_masks[1].invert
+                    };
+                    let window_applies = window_logic.apply(overlap_window1, overlap_window2);
+                    if window_applies != invert {
+                        for i in 0..3 {
+                            if subtract {
+                                self.frame[draw_line as usize][x][i] = self.frame
+                                    [draw_line as usize][x][i]
+                                    .saturating_sub(sub_screen_backdrop_color[i] << 3);
+                            } else {
+                                self.frame[draw_line as usize][x][i] = self.frame
+                                    [draw_line as usize][x][i]
+                                    .saturating_add(sub_screen_backdrop_color[i] << 3);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         self.debug_clear_scanline_buffs();
         // TODO: Support layer disablement (in which case, no need to draw some layers)
         let layer_bpps: &[usize] = match self.io_reg.bg_mode.bg_mode() {
@@ -577,7 +628,16 @@ impl PPU {
             0x212F => self.io_reg.window_sub_screen_disable.0 = data,
             0x2130 => self.io_reg.color_math_control_a.0 = data,
             0x2131 => self.io_reg.color_math_control_b.0 = data,
-            0x2132 => self.io_reg.color_math_backdrop_color.0 = data,
+            0x2132 => {
+                let intensity = data & 0x1F;
+                // Apply intensity to red/green/blue depending on bits 5/6/7
+                for color_i in 0..3 {
+                    if (data >> (5 + color_i)) & 1 == 1 {
+                        self.io_reg.color_math_backdrop_color[color_i] = intensity;
+                    }
+                }
+            }
+            // TODO: 2133h - SETINI - Display Control 2 (W)
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
                                                                            // _ => panic!("Invalid IO write of PPU at {addr:#04X}"),
         }

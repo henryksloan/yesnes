@@ -39,7 +39,8 @@ pub struct IoRegisters {
     pub window_sub_screen_disable: WindowAreaScreenDisable,
     pub color_math_control_a: ColorMathControlA,
     pub color_math_control_b: ColorMathControlB,
-    pub color_math_backdrop_color: ColorMathBackdropColor,
+    // 2132h - COLDATA - Color Math Sub Screen Backdrop Color (W)
+    pub color_math_backdrop_color: [u8; 3],
 }
 
 impl IoRegisters {
@@ -306,7 +307,6 @@ impl WindowMaskSettings {
         self.obj_math_masks.get_masks(false)
     }
 
-    #[expect(unused)]
     pub fn math_masks(&self) -> [WindowMask; 2] {
         self.obj_math_masks.get_masks(true)
     }
@@ -335,8 +335,10 @@ pub struct WindowMask {
 impl From<u8> for WindowMask {
     fn from(value: u8) -> Self {
         Self {
-            enable: value & 0b01 == 0b01,
-            invert: value & 0b10 == 0b10,
+            // enable: value & 0b01 == 0b01,
+            // invert: value & 0b10 == 0b10,
+            enable: value & 0b10 == 0b10,
+            invert: value & 0b01 == 0b01,
         }
     }
 }
@@ -440,11 +442,11 @@ bitfield! {
   impl Debug;
   pub direct_color, _: 0;
   pub sub_screen_bg_obj, _: 1;
-  pub u8, into ColorMathCondition, color_math_enable, _: 5, 4;
-  pub u8, into ColorMathCondition, force_main_screen_black, _: 5, 4;
+  pub u8, into ColorMathCondition, color_math_condition, _: 5, 4;
+  pub u8, into ColorMathCondition, force_main_screen_black, _: 7, 6;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ColorMathCondition {
     Never,
     OutsideMathWindow,
@@ -454,11 +456,16 @@ pub enum ColorMathCondition {
 
 impl From<u8> for ColorMathCondition {
     fn from(value: u8) -> Self {
+        // DO NOT SUBMIT: Do the two registers have different interpretations of this?
         match value {
-            0 => Self::Never,
-            1 => Self::OutsideMathWindow,
-            2 => Self::InsideMathWindow,
-            3 => Self::Always,
+            // 0 => Self::Never,
+            // 1 => Self::OutsideMathWindow,
+            // 2 => Self::InsideMathWindow,
+            // 3 => Self::Always,
+            0 => Self::Always,
+            1 => Self::InsideMathWindow,
+            2 => Self::OutsideMathWindow,
+            3 => Self::Never,
             _ => panic!("Invalid color math condition {value}"),
         }
     }
@@ -478,26 +485,4 @@ bitfield! {
   pub backdrop_color_math, _: 5;
   pub div2_result, _: 6;
   pub subtract, _: 7;
-}
-
-bitfield! {
-  // 2132h - COLDATA - Color Math Sub Screen Backdrop Color (W)
-  #[derive(Clone, Copy, Default)]
-  pub struct ColorMathBackdropColor(u8);
-  impl Debug;
-  pub intensity, _: 4, 0;
-  pub apply_red, _: 5;
-  pub apply_green, _: 6;
-  pub apply_blue, _: 7;
-}
-
-impl ColorMathBackdropColor {
-    pub fn color(&self) -> [u8; 3] {
-        let intensity = self.intensity();
-        [
-            intensity * self.apply_red() as u8,
-            intensity * self.apply_green() as u8,
-            intensity * self.apply_blue() as u8,
-        ]
-    }
 }
