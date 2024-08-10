@@ -187,8 +187,12 @@ impl PPU {
             6 => &[4],     // TODO: Hi-res and Offset-per-pixel
             7 | _ => &[8], // TODO: Rotation/scaling
         };
-        for (bg_i, layer_bpp) in layer_bpps.iter().enumerate() {
-            self.debug_render_scanline_bpp(bg_i, draw_line, *layer_bpp);
+        if self.io_reg.bg_mode.bg_mode() == 7 {
+            self.debug_render_scanline_mode7(draw_line);
+        } else {
+            for (bg_i, layer_bpp) in layer_bpps.iter().enumerate() {
+                self.debug_render_scanline_bpp(bg_i, draw_line, *layer_bpp);
+            }
         }
         self.debug_render_sprites(draw_line);
 
@@ -451,6 +455,41 @@ impl PPU {
             result[bit_i] = Some(pixel);
         }
         result
+    }
+
+    fn debug_render_scanline_mode7(&mut self, scanline: u16) {
+        // TODO: Reading from VRAM takes cycles...
+        // TODO: Rotate, scaling, offset
+        let render_line = scanline as usize + self.io_reg.bg_scroll[0].v.val as usize;
+        let row = (render_line / 8) % 128;
+        let line_offset = render_line % 8;
+        let start_col = (self.io_reg.bg_scroll[0].h.val / 8) as usize;
+        let start_pixel_x = (self.io_reg.bg_scroll[0].h.val % 8) as usize;
+        let n_cols = 32 + (start_pixel_x > 0) as usize;
+        for col_i in 0..n_cols {
+            let col = (start_col + col_i) % 128;
+            let tile = self.vram[(row * 128 + col) % self.vram.len()];
+            let chr_n = tile & 0xFF;
+            let start_bit = if col_i == 0 { start_pixel_x } else { 0 };
+            let end_bit = if col_i == 32 { start_pixel_x } else { 8 };
+            let mut tile_line_pixels = [None; 8];
+            for bit_i in 0..8 {
+                let chr_data = (self.vram
+                    [(64 * chr_n as usize + 8 * line_offset as usize + bit_i) % self.vram.len()]
+                    >> 8) as u8;
+                let palette_entry = self.cgram[chr_data as usize];
+                let pixel = [
+                    ((palette_entry & 0x1F) as u8) << 3,
+                    (((palette_entry >> 5) & 0x1F) as u8) << 3,
+                    (((palette_entry >> 10) & 0x1F) as u8) << 3,
+                ];
+                tile_line_pixels[bit_i] = Some(pixel);
+            }
+            let line_buffs = &mut self.scanline_buffs.bg_buff[0];
+            for bit_i in start_bit..end_bit {
+                line_buffs[0][(col_i * 8 + bit_i) - start_pixel_x] = tile_line_pixels[bit_i];
+            }
+        }
     }
 
     pub fn debug_compute_tile(
