@@ -82,15 +82,15 @@ fn layer_priority_order(bg_mode: u8, mode1_bg3_priority: bool) -> &'static [SubL
 }
 
 pub struct PPU {
-    vram: Vec<u16>,
-    cgram: Vec<u16>,
+    vram: Box<[u16; 0x8000]>,
+    cgram: Box<[u16; 0x100]>,
     // OAM can be seen as a 512-byte low table and a 32-byte upper table.
     // The two tables have different data formats and different write behavior.
-    oam_lo: Vec<u8>,
-    oam_hi: Vec<u8>,
+    oam_lo: Box<[u8; 0x200]>,
+    oam_hi: Box<[u8; 0x20]>,
     io_reg: IoRegisters,
     ppu_counter: Rc<RefCell<PpuCounter>>,
-    frame: [[[u8; 3]; 256]; 224],
+    frame: Box<[[[u8; 3]; 256]; 224]>,
     main_screen: Box<[[([u8; 3], Layer); 256]; 224]>,
     sub_screen: Box<[[([u8; 3], Layer); 256]; 224]>,
     scanline_buffs: ScanlineBuffers,
@@ -101,12 +101,12 @@ impl PPU {
     pub fn new() -> Self {
         Self {
             io_reg: IoRegisters::new(),
-            vram: vec![0; 0x8000],
-            cgram: vec![0; 0x100],
-            oam_lo: vec![0; 0x200],
-            oam_hi: vec![0; 0x20],
+            vram: vec![0; 0x8000].try_into().unwrap(),
+            cgram: vec![0; 0x100].try_into().unwrap(),
+            oam_lo: vec![0; 0x200].try_into().unwrap(),
+            oam_hi: vec![0; 0x20].try_into().unwrap(),
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
-            frame: [[[0; 3]; 256]; 224],
+            frame: vec![[[0; 3]; 256]; 224].try_into().unwrap(),
             main_screen: vec![[Default::default(); 256]; 224].try_into().unwrap(),
             sub_screen: vec![[Default::default(); 256]; 224].try_into().unwrap(),
             scanline_buffs: ScanlineBuffers::default(),
@@ -598,7 +598,7 @@ impl PPU {
     }
 
     pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
-        self.frame
+        *self.frame
     }
 
     pub fn io_peak(&self, _addr: u16) -> u8 {
