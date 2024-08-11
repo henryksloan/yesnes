@@ -6,7 +6,7 @@ pub use counter::PpuCounter;
 
 use bitfield::{BitRange, BitRangeMut};
 use obj::{OamLoEntry, ObjAttributes};
-use registers::IoRegisters;
+use registers::{ColorMathCondition, IoRegisters, WindowLogic, WindowMask};
 
 use crate::cpu::yield_ticks;
 use crate::scheduler::*;
@@ -19,23 +19,50 @@ use std::rc::Rc;
 /// Holds the pixels of each layer on this scanline, that they may be combined according to priority
 struct ScanlineBuffers {
     // For each bg layer, buffers of high- and low-priority pixels (0=Lower, 1=Higher)
-    bg_buff: [[[Option<[u8; 3]>; 256]; 2]; 4],
+    bg_buff: Box<[[[Option<[u8; 3]>; 256]; 2]; 4]>,
     // A buffer of pixels at each object priority (0-3)
-    obj_buff: [[Option<[u8; 3]>; 256]; 4],
+    obj_buff: Box<[[Option<[u8; 3]>; 256]; 4]>,
+    // Color math distinguishes between objects with palettes 0..=3 and those with palettes 4..=7.
+    // For x-values with a sprite pixel, this stores whether the corresponding object uses a high palette (4..=7).
+    obj_hipal_buff: Box<[bool; 256]>,
 }
 
 impl Default for ScanlineBuffers {
     fn default() -> Self {
         Self {
-            bg_buff: [[[None; 256]; 2]; 4],
-            obj_buff: [[None; 256]; 4],
+            bg_buff: vec![[[None; 256]; 2]; 4].try_into().unwrap(),
+            obj_buff: vec![[None; 256]; 4].try_into().unwrap(),
+            obj_hipal_buff: vec![false; 256].try_into().unwrap(),
         }
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Layer {
+    Obj,
+    Bg(usize), // .0: BG number
+    Backdrop,
+}
+
+impl Default for Layer {
+    fn default() -> Self {
+        Self::Backdrop
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 enum SubLayer {
     Obj(usize),       // Objects with the given priority
-    Bg(usize, usize), // .0: BG index, .1: Priority
+    Bg(usize, usize), // .0: BG number, .1: Priority
+}
+
+impl SubLayer {
+    pub fn to_layer(&self) -> Layer {
+        match *self {
+            SubLayer::Obj(_) => Layer::Obj,
+            SubLayer::Bg(bg_n, _) => Layer::Bg(bg_n),
+        }
+    }
 }
 
 #[rustfmt::skip]
@@ -55,15 +82,17 @@ fn layer_priority_order(bg_mode: u8, mode1_bg3_priority: bool) -> &'static [SubL
 }
 
 pub struct PPU {
-    vram: Vec<u16>,
-    cgram: Vec<u16>,
+    vram: Box<[u16; 0x8000]>,
+    cgram: Box<[u16; 0x100]>,
     // OAM can be seen as a 512-byte low table and a 32-byte upper table.
     // The two tables have different data formats and different write behavior.
-    oam_lo: Vec<u8>,
-    oam_hi: Vec<u8>,
+    oam_lo: Box<[u8; 0x200]>,
+    oam_hi: Box<[u8; 0x20]>,
     io_reg: IoRegisters,
     ppu_counter: Rc<RefCell<PpuCounter>>,
-    frame: [[[u8; 3]; 256]; 224],
+    frame: Box<[[[u8; 3]; 256]; 224]>,
+    main_screen: Box<[[([u8; 3], Layer); 256]; 224]>,
+    sub_screen: Box<[[([u8; 3], Layer); 256]; 224]>,
     scanline_buffs: ScanlineBuffers,
     ticks_run: u64,
 }
@@ -72,12 +101,14 @@ impl PPU {
     pub fn new() -> Self {
         Self {
             io_reg: IoRegisters::new(),
-            vram: vec![0; 0x8000],
-            cgram: vec![0; 0x100],
-            oam_lo: vec![0; 0x200],
-            oam_hi: vec![0; 0x20],
+            vram: vec![0; 0x8000].try_into().unwrap(),
+            cgram: vec![0; 0x100].try_into().unwrap(),
+            oam_lo: vec![0; 0x200].try_into().unwrap(),
+            oam_hi: vec![0; 0x20].try_into().unwrap(),
             ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
-            frame: [[[0; 3]; 256]; 224],
+            frame: vec![[[0; 3]; 256]; 224].try_into().unwrap(),
+            main_screen: vec![[Default::default(); 256]; 224].try_into().unwrap(),
+            sub_screen: vec![[Default::default(); 256]; 224].try_into().unwrap(),
             scanline_buffs: ScanlineBuffers::default(),
             ticks_run: 0,
         }
@@ -140,12 +171,12 @@ impl PPU {
             self.frame[draw_line as usize].fill([0, 0, 0]);
             return;
         }
-        // The color at CGRAM[0] is drawn if all other layers are transparent; we fill it in first
-        // to be overdrawn by any non-transparent pixels.
-        let backdrop_color = self.palette_entry_to_rgb(self.cgram[0]);
-        self.frame[draw_line as usize].fill(backdrop_color);
+
         self.debug_clear_scanline_buffs();
-        // TODO: Support layer disablement (in which case, no need to draw some layers)
+        let backdrop_color = self.palette_entry_to_rgb(self.cgram[0]);
+        self.main_screen[draw_line as usize].fill((backdrop_color, Layer::Backdrop));
+        self.sub_screen[draw_line as usize]
+            .fill((self.io_reg.color_math_backdrop_color, Layer::Backdrop));
         let layer_bpps: &[usize] = match self.io_reg.bg_mode.bg_mode() {
             0 => &[2, 2, 2, 2],
             1 => &[4, 4, 2],
@@ -156,14 +187,44 @@ impl PPU {
             6 => &[4],     // TODO: Hi-res and Offset-per-pixel
             7 | _ => &[8], // TODO: Rotation/scaling
         };
-        for (bg_i, layer_bpp) in layer_bpps.iter().enumerate() {
-            if self.io_reg.main_layer_enable.layer_enabled(bg_i + 1) {
+        if self.io_reg.bg_mode.bg_mode() == 7 {
+            self.debug_render_scanline_mode7(draw_line);
+        } else {
+            for (bg_i, layer_bpp) in layer_bpps.iter().enumerate() {
                 self.debug_render_scanline_bpp(bg_i, draw_line, *layer_bpp);
             }
         }
-        if self.io_reg.main_layer_enable.obj() {
-            self.debug_render_sprites(draw_line);
+        self.debug_render_sprites(draw_line);
+
+        if self.io_reg.color_math_control_a.sub_screen_bg_obj() {
+            for sublayer in layer_priority_order(
+                self.io_reg.bg_mode.bg_mode(),
+                self.io_reg.bg_mode.bg3_priority(),
+            )
+            .iter()
+            .rev()
+            {
+                let (line, sub_screen_enable) = match *sublayer {
+                    SubLayer::Obj(priority) => (
+                        &self.scanline_buffs.obj_buff[priority],
+                        self.io_reg.sub_layer_enable.obj_enable(),
+                    ),
+                    SubLayer::Bg(bg_n, priority) => (
+                        &self.scanline_buffs.bg_buff[bg_n - 1][priority],
+                        self.io_reg.sub_layer_enable.bg_enabled(bg_n),
+                    ),
+                };
+                if !sub_screen_enable {
+                    continue;
+                }
+                for x in 0..256 {
+                    if let Some(color) = line[x] {
+                        self.sub_screen[draw_line as usize][x] = (color, sublayer.to_layer());
+                    }
+                }
+            }
         }
+
         for sublayer in layer_priority_order(
             self.io_reg.bg_mode.bg_mode(),
             self.io_reg.bg_mode.bg3_priority(),
@@ -171,26 +232,113 @@ impl PPU {
         .iter()
         .rev()
         {
-            let line = match *sublayer {
-                SubLayer::Obj(priority) => &self.scanline_buffs.obj_buff[priority],
-                SubLayer::Bg(bg_n, priority) => &self.scanline_buffs.bg_buff[bg_n - 1][priority],
-            };
+            let (line, main_screen_enable, window_masks, window_logic, window_disable) =
+                match *sublayer {
+                    SubLayer::Obj(priority) => (
+                        &self.scanline_buffs.obj_buff[priority],
+                        self.io_reg.main_layer_enable.obj_enable(),
+                        self.io_reg.window_mask.obj_masks(),
+                        self.io_reg.window_obj_math_logic.obj_logic(),
+                        self.io_reg.window_main_screen_disable.obj_disable(),
+                    ),
+                    SubLayer::Bg(bg_n, priority) => (
+                        &self.scanline_buffs.bg_buff[bg_n - 1][priority],
+                        self.io_reg.main_layer_enable.bg_enabled(bg_n),
+                        self.io_reg.window_mask.bg_masks(bg_n),
+                        self.io_reg.window_bg_logic.bg_logic(bg_n),
+                        self.io_reg.window_main_screen_disable.bg_disable(bg_n),
+                    ),
+                };
+            if !main_screen_enable {
+                continue;
+            }
             for x in 0..256 {
+                if window_disable && self.window_area_applies(x, &window_masks, &window_logic) {
+                    continue;
+                }
                 if let Some(color) = line[x] {
-                    self.frame[draw_line as usize][x] = color;
+                    self.main_screen[draw_line as usize][x] = (color, sublayer.to_layer());
+                }
+            }
+        }
+
+        let color_math_condition = self.io_reg.color_math_control_a.color_math_condition();
+        for x in 0..256 {
+            // TODO: implement "Force Main Screen Black" (does it affect div?)
+            let (main_color, main_layer) = self.main_screen[draw_line as usize][x];
+            self.frame[draw_line as usize][x] = main_color;
+            let do_color_math = match main_layer {
+                Layer::Obj => {
+                    self.io_reg.color_math_control_b.obj_hipal_color_math()
+                        && self.scanline_buffs.obj_hipal_buff[x]
+                }
+                Layer::Bg(bg_n) => self.io_reg.color_math_control_b.bg_color_math(bg_n),
+                Layer::Backdrop => self.io_reg.color_math_control_b.backdrop_color_math(),
+            };
+            if color_math_condition != ColorMathCondition::Never && do_color_math {
+                let (sub_color, sub_layer) = self.sub_screen[draw_line as usize][x];
+                let subtract = self.io_reg.color_math_control_b.subtract();
+                let div2_result = self.io_reg.color_math_control_b.div2_result();
+                let apply_color_math = color_math_condition == ColorMathCondition::Always || {
+                    let invert = color_math_condition == ColorMathCondition::OutsideMathWindow;
+                    let window_masks = self.io_reg.window_mask.math_masks();
+                    let window_logic = self.io_reg.window_obj_math_logic.math_logic();
+                    self.window_area_applies(x, &window_masks, &window_logic) != invert
+                };
+                if apply_color_math {
+                    for i in 0..3 {
+                        if subtract {
+                            self.frame[draw_line as usize][x][i] =
+                                self.frame[draw_line as usize][x][i].saturating_sub(sub_color[i]);
+                        } else {
+                            self.frame[draw_line as usize][x][i] =
+                                self.frame[draw_line as usize][x][i].saturating_add(sub_color[i]);
+                        }
+                        if div2_result && sub_layer != Layer::Backdrop {
+                            self.frame[draw_line as usize][x][i] /= 2;
+                        }
+                    }
                 }
             }
         }
     }
 
+    fn window_area_applies(
+        &self,
+        x: usize,
+        window_masks: &[WindowMask; 2],
+        window_logic: &WindowLogic,
+    ) -> bool {
+        if !window_masks[0].enable && !window_masks[1].enable {
+            return false;
+        }
+        let overlap_window1 = window_masks[0].enable && {
+            let inside = x >= self.io_reg.window_pos[0].left as usize
+                && x <= self.io_reg.window_pos[0].right as usize;
+            inside != window_masks[0].invert
+        };
+        let overlap_window2 = window_masks[1].enable && {
+            let inside = x >= self.io_reg.window_pos[1].left as usize
+                && x <= self.io_reg.window_pos[1].right as usize;
+            inside != window_masks[1].invert
+        };
+        if window_masks[0].enable && window_masks[1].enable {
+            window_logic.apply(overlap_window1, overlap_window2)
+        } else {
+            // Exactly one of the windows is enabled, so just OR the overlaps
+            overlap_window1 || overlap_window2
+        }
+    }
+
     fn debug_clear_scanline_buffs(&mut self) {
-        for line_buffs in &mut self.scanline_buffs.bg_buff {
+        for line_buffs in &mut *self.scanline_buffs.bg_buff {
             line_buffs[0].fill(None);
             line_buffs[1].fill(None);
         }
-        for obj_buff in &mut self.scanline_buffs.obj_buff {
+        for obj_buff in &mut *self.scanline_buffs.obj_buff {
             obj_buff.fill(None);
         }
+        self.scanline_buffs.obj_hipal_buff.fill(false);
     }
 
     fn debug_render_scanline_bpp(&mut self, bg_i: usize, scanline: u16, bits_per_pixel: usize) {
@@ -261,6 +409,7 @@ impl PPU {
     ) -> [Option<[u8; 3]>; 8] {
         let mut result = [None; 8];
         let line = if flip_y { 7 - line_offset } else { line_offset };
+        // TODO: Allocating here it a big slowdown. Once we have a cycle-accurate PPU, avoid allocations.
         let tile_plane_pairs: Vec<u16> = (0..(bits_per_pixel / 2))
             .map(|i| self.vram[(i * 8 + tile_chr_base + line) % self.vram.len()])
             .collect();
@@ -280,6 +429,7 @@ impl PPU {
                     + ((1 << bits_per_pixel) * (palette_n as usize) + palette_i as usize)
                         % self.cgram.len()]
             } else {
+                // TODO: Replace fake palette and add more frontend options (different fake palettes or use cgram)
                 [
                     0x0000, 0x7FDD, 0x3A49, 0x428B, 0x4ACD, 0x530F, 0x5B51, 0x6393, 0x7393, 0x0000,
                     0x0CFB, 0x2FEB, 0x7393, 0x0000, 0x7FDD, 0x2D7F,
@@ -293,6 +443,41 @@ impl PPU {
             result[bit_i] = Some(pixel);
         }
         result
+    }
+
+    fn debug_render_scanline_mode7(&mut self, scanline: u16) {
+        // TODO: Reading from VRAM takes cycles...
+        // TODO: Rotate, scaling, offset
+        let render_line = scanline as usize + self.io_reg.bg_scroll[0].v.val as usize;
+        let row = (render_line / 8) % 128;
+        let line_offset = render_line % 8;
+        let start_col = (self.io_reg.bg_scroll[0].h.val / 8) as usize;
+        let start_pixel_x = (self.io_reg.bg_scroll[0].h.val % 8) as usize;
+        let n_cols = 32 + (start_pixel_x > 0) as usize;
+        for col_i in 0..n_cols {
+            let col = (start_col + col_i) % 128;
+            let tile = self.vram[(row * 128 + col) % self.vram.len()];
+            let chr_n = tile & 0xFF;
+            let start_bit = if col_i == 0 { start_pixel_x } else { 0 };
+            let end_bit = if col_i == 32 { start_pixel_x } else { 8 };
+            let mut tile_line_pixels = [None; 8];
+            for bit_i in 0..8 {
+                let chr_data = (self.vram
+                    [(64 * chr_n as usize + 8 * line_offset as usize + bit_i) % self.vram.len()]
+                    >> 8) as u8;
+                let palette_entry = self.cgram[chr_data as usize];
+                let pixel = [
+                    ((palette_entry & 0x1F) as u8) << 3,
+                    (((palette_entry >> 5) & 0x1F) as u8) << 3,
+                    (((palette_entry >> 10) & 0x1F) as u8) << 3,
+                ];
+                tile_line_pixels[bit_i] = Some(pixel);
+            }
+            let line_buffs = &mut self.scanline_buffs.bg_buff[0];
+            for bit_i in start_bit..end_bit {
+                line_buffs[0][(col_i * 8 + bit_i) - start_pixel_x] = tile_line_pixels[bit_i];
+            }
+        }
     }
 
     pub fn debug_compute_tile(
@@ -316,7 +501,7 @@ impl PPU {
     }
 
     fn debug_render_sprites(&mut self, scanline: u16) {
-        for sprite_i in (0..128).rev() {
+        for sprite_i in self.io_reg.oam_addr_priority.oam_priority_iter().rev() {
             let oam_lo_entry = {
                 let oam_off = sprite_i * 4;
                 OamLoEntry(u32::from_le_bytes(
@@ -332,7 +517,9 @@ impl PPU {
                 )
             };
             let (width, height) = self.io_reg.obj_size_base.obj_width_height(large);
-            let y = oam_lo_entry.y() as u16;
+            // The rendering of sprites is offset by +1 from backgrounds, but since scanline 0 is invisible,
+            // it cancels out. i.e. a sprite at y=0 will be drawn starting on the first visible scanline.
+            let y = oam_lo_entry.y() as u16 + 1;
             if scanline < y || scanline >= (y + height) {
                 continue;
             }
@@ -354,8 +541,6 @@ impl PPU {
         first_chr_n: u8,
         attr: ObjAttributes,
     ) {
-        // The rendering of sprites is offset by +1 from backgrounds, but since scanline 0 is invisible,
-        // it cancels out. i.e. a sprite at y=0 will be drawn starting on the first visible scanline.
         let line = {
             let line_offset = scanline - y;
             if attr.flip_y() {
@@ -391,7 +576,7 @@ impl PPU {
                 Some(palette_n as u16),
                 4,
                 attr.flip_x(),
-                attr.flip_y(),
+                false, // If needed, we already flipped vertically based on height
                 true,
             );
             for bit_i in 0..8 {
@@ -406,13 +591,14 @@ impl PPU {
                 if tile_line_pixels[bit_i].is_some() {
                     self.scanline_buffs.obj_buff[attr.priority() as usize][pixel_x] =
                         tile_line_pixels[bit_i];
+                    self.scanline_buffs.obj_hipal_buff[pixel_x] = palette_n >= 4;
                 }
             }
         }
     }
 
     pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
-        self.frame
+        *self.frame
     }
 
     pub fn io_peak(&self, _addr: u16) -> u8 {
@@ -534,10 +720,31 @@ impl PPU {
                 }
                 self.cgram[cgram_addr].set_bit_range(write_bits.0, write_bits.1, data);
             }
-            // TODO: Should reads of these work? What is the program tries to OR or something?
+            0x2123 => self.io_reg.window_mask.bg1_bg2_masks.0 = data,
+            0x2124 => self.io_reg.window_mask.bg3_bg4_masks.0 = data,
+            0x2125 => self.io_reg.window_mask.obj_math_masks.0 = data,
+            0x2126 => self.io_reg.window_pos[0].left = data,
+            0x2127 => self.io_reg.window_pos[0].right = data,
+            0x2128 => self.io_reg.window_pos[1].left = data,
+            0x2129 => self.io_reg.window_pos[1].right = data,
+            0x212A => self.io_reg.window_bg_logic.0 = data,
+            0x212B => self.io_reg.window_obj_math_logic.0 = data,
             0x212C => self.io_reg.main_layer_enable.0 = data,
             0x212D => self.io_reg.sub_layer_enable.0 = data,
-            0x2123..=0x212B | 0x212E..=0x212F => {} // TODO: Window
+            0x212E => self.io_reg.window_main_screen_disable.0 = data,
+            0x212F => self.io_reg.window_sub_screen_disable.0 = data,
+            0x2130 => self.io_reg.color_math_control_a.0 = data,
+            0x2131 => self.io_reg.color_math_control_b.0 = data,
+            0x2132 => {
+                let intensity = data & 0x1F;
+                // Apply intensity to red/green/blue depending on bits 5/6/7
+                for color_i in 0..3 {
+                    if (data >> (5 + color_i)) & 1 == 1 {
+                        self.io_reg.color_math_backdrop_color[color_i] = intensity << 3;
+                    }
+                }
+            }
+            // TODO: 2133h - SETINI - Display Control 2 (W)
             _ => log::debug!("TODO: PPU IO write {addr:04X}: {data:02X}"), // TODO: Remove this fallback
                                                                            // _ => panic!("Invalid IO write of PPU at {addr:#04X}"),
         }

@@ -5,6 +5,7 @@ pub struct IoRegisters {
     pub display_control_1: DisplayControl1,
     pub main_layer_enable: LayerEnable,
     pub sub_layer_enable: LayerEnable,
+    #[expect(unused)]
     pub display_control_2: DisplayControl2,
     pub obj_size_base: ObjSizeBase,
     pub oam_addr_priority: OamAddrPriority,
@@ -24,6 +25,22 @@ pub struct IoRegisters {
     // 2121h - CGADD - Palette CGRAM Address (Color Generator Memory) (W)
     pub cgram_addr: u8,
     pub cgram_access_latch: bool,
+    pub window_mask: WindowMaskSettings,
+    // 2126h - WH0 - Window 1 Left Position (X1) (W)
+    // 2127h - WH1 - Window 1 Right Position (X2) (W)
+    // 2128h - WH2 - Window 2 Left Position (X1) (W)
+    // 2129h - WH3 - Window 2 Right Position (X2) (W)
+    pub window_pos: [WindowPosition; 2],
+    pub window_bg_logic: WindowBackgroundLogic,
+    pub window_obj_math_logic: WindowObjMathLogic,
+    // 212Eh - TMW - Window Area Main Screen Disable (W)
+    pub window_main_screen_disable: WindowAreaScreenDisable,
+    // 212Fh - TSW - Window Area Sub Screen Disable (W)
+    pub window_sub_screen_disable: WindowAreaScreenDisable,
+    pub color_math_control_a: ColorMathControlA,
+    pub color_math_control_b: ColorMathControlB,
+    // 2132h - COLDATA - Color Math Sub Screen Backdrop Color (W)
+    pub color_math_backdrop_color: [u8; 3],
 }
 
 impl IoRegisters {
@@ -68,21 +85,21 @@ bitfield! {
   #[derive(Clone, Copy, Default)]
   pub struct LayerEnable(u8);
   impl Debug;
-  pub bg1, _: 0;
-  pub bg2, _: 1;
-  pub bg3, _: 2;
-  pub bg4, _: 3;
-  pub obj, _: 4;
+  pub bg1_enable, _: 0;
+  pub bg2_enable, _: 1;
+  pub bg3_enable, _: 2;
+  pub bg4_enable, _: 3;
+  pub obj_enable, _: 4;
 }
 
 impl LayerEnable {
-    pub fn layer_enabled(&self, bg_n: usize) -> bool {
+    pub fn bg_enabled(&self, bg_n: usize) -> bool {
         assert!((1..=4).contains(&bg_n));
         match bg_n {
-            1 => self.bg1(),
-            2 => self.bg2(),
-            3 => self.bg3(),
-            4 | _ => self.bg4(),
+            1 => self.bg1_enable(),
+            2 => self.bg2_enable(),
+            3 => self.bg3_enable(),
+            4 | _ => self.bg4_enable(),
         }
     }
 }
@@ -154,6 +171,19 @@ bitfield! {
   pub u8, hi_byte, set_hi_byte: 15, 8;
 }
 
+impl OamAddrPriority {
+    pub fn oam_priority_iter(&self) -> impl DoubleEndedIterator<Item = usize> {
+        let highest_priority = if self.priority_rotation() {
+            self.priority_obj_n() as usize
+        } else {
+            0
+        };
+        (highest_priority..128)
+            .into_iter()
+            .chain((0..highest_priority).into_iter())
+    }
+}
+
 bitfield! {
   /// 2105h - BGMODE - BG Mode and BG Character Size (W)
   #[derive(Clone, Copy, Default)]
@@ -213,12 +243,12 @@ bitfield! {
 
 impl BackgroundChrAddr {
     pub fn bg_base(&self, bg_n: usize) -> u16 {
-        assert!((1..=4).contains(&bg_n));
         match bg_n {
             1 => self.bg1_base(),
             2 => self.bg2_base(),
             3 => self.bg3_base(),
-            4 | _ => self.bg4_base(),
+            4 => self.bg4_base(),
+            _ => panic!("Invalid background number {bg_n}"),
         }
     }
 }
@@ -263,6 +293,217 @@ impl VramAddrIncrMode {
             0b00 => 1,
             0b01 => 32,
             0b10 | 0b11 | _ => 128,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct WindowMaskSettings {
+    /// 2123h - W12SEL - Window BG1/BG2 Mask Settings (W)
+    pub bg1_bg2_masks: WindowMaskPair,
+    /// 2124h - W34SEL - Window BG3/BG4 Mask Settings (W)
+    pub bg3_bg4_masks: WindowMaskPair,
+    /// 2125h - WOBJSEL - Window OBJ/MATH Mask Settings (W)
+    pub obj_math_masks: WindowMaskPair,
+}
+
+impl WindowMaskSettings {
+    pub fn bg_masks(&self, bg_n: usize) -> [WindowMask; 2] {
+        match bg_n {
+            1 | 2 => self.bg1_bg2_masks.get_masks(bg_n == 2),
+            3 | 4 => self.bg3_bg4_masks.get_masks(bg_n == 4),
+            _ => panic!("Invalid background number {bg_n}"),
+        }
+    }
+
+    pub fn obj_masks(&self) -> [WindowMask; 2] {
+        self.obj_math_masks.get_masks(false)
+    }
+
+    pub fn math_masks(&self) -> [WindowMask; 2] {
+        self.obj_math_masks.get_masks(true)
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct WindowMaskPair(pub u8);
+
+impl WindowMaskPair {
+    pub fn get_mask(&self, hi: bool, window_n: usize) -> WindowMask {
+        assert!(window_n == 1 || window_n == 2);
+        WindowMask::from((self.0 >> (hi as u8 * 4 + (window_n as u8 - 1) * 2)) & 0b11)
+    }
+
+    pub fn get_masks(&self, hi: bool) -> [WindowMask; 2] {
+        [self.get_mask(hi, 1), self.get_mask(hi, 2)]
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct WindowMask {
+    pub enable: bool,
+    pub invert: bool,
+}
+
+impl From<u8> for WindowMask {
+    fn from(value: u8) -> Self {
+        Self {
+            // enable: value & 0b01 == 0b01,
+            // invert: value & 0b10 == 0b10,
+            enable: value & 0b10 == 0b10,
+            invert: value & 0b01 == 0b01,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct WindowPosition {
+    pub left: u8,
+    pub right: u8,
+}
+
+bitfield! {
+  // 212Ah - WBGLOG - Background Window 1/2 Mask Logic (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct WindowBackgroundLogic(u8);
+  impl Debug;
+  pub u8, into WindowLogic, bg1_logic, _: 1, 0;
+  pub u8, into WindowLogic, bg2_logic, _: 3, 2;
+  pub u8, into WindowLogic, bg3_logic, _: 5, 4;
+  pub u8, into WindowLogic, bg4_logic, _: 7, 6;
+}
+
+impl WindowBackgroundLogic {
+    pub fn bg_logic(&self, bg_n: usize) -> WindowLogic {
+        match bg_n {
+            1 => self.bg1_logic(),
+            2 => self.bg2_logic(),
+            3 => self.bg3_logic(),
+            4 => self.bg4_logic(),
+            _ => panic!("Invalid background number {bg_n}"),
+        }
+    }
+}
+
+bitfield! {
+  // 212Bh - WOBJLOG - Obj/Math Window 1/2 Mask Logic (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct WindowObjMathLogic(u8);
+  impl Debug;
+  pub u8, into WindowLogic, obj_logic, _: 1, 0;
+  pub u8, into WindowLogic, math_logic, _: 3, 2;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WindowLogic {
+    OR,
+    AND,
+    XOR,
+    XNOR,
+}
+
+impl WindowLogic {
+    pub fn apply(&self, window1: bool, window2: bool) -> bool {
+        match *self {
+            WindowLogic::OR => window1 || window2,
+            WindowLogic::AND => window1 && window2,
+            WindowLogic::XOR => window1 ^ window2,
+            WindowLogic::XNOR => !(window1 ^ window2),
+        }
+    }
+}
+
+impl From<u8> for WindowLogic {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::OR,
+            1 => Self::AND,
+            2 => Self::XOR,
+            3 => Self::XNOR,
+            _ => panic!("Invalid window logic value {value}"),
+        }
+    }
+}
+
+bitfield! {
+  #[derive(Clone, Copy, Default)]
+  pub struct WindowAreaScreenDisable(u8);
+  impl Debug;
+  pub bg1_disable, _: 0;
+  pub bg2_disable, _: 1;
+  pub bg3_disable, _: 2;
+  pub bg4_disable, _: 3;
+  pub obj_disable, _: 4;
+}
+
+impl WindowAreaScreenDisable {
+    pub fn bg_disable(&self, bg_n: usize) -> bool {
+        match bg_n {
+            1 => self.bg1_disable(),
+            2 => self.bg2_disable(),
+            3 => self.bg3_disable(),
+            4 => self.bg4_disable(),
+            _ => panic!("Invalid background number {bg_n}"),
+        }
+    }
+}
+
+bitfield! {
+  // 2130h - CGWSEL - Color Math Control Register A (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct ColorMathControlA(u8);
+  impl Debug;
+  pub direct_color, _: 0;
+  pub sub_screen_bg_obj, _: 1;
+  pub u8, into ColorMathCondition, color_math_condition, _: 5, 4;
+  pub u8, into ColorMathCondition, force_main_screen_black, _: 7, 6;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ColorMathCondition {
+    Never,
+    OutsideMathWindow,
+    InsideMathWindow,
+    Always,
+}
+
+impl From<u8> for ColorMathCondition {
+    fn from(value: u8) -> Self {
+        // TODO: "Force Main Screen Black" might interpret this differently?
+        match value {
+            0 => Self::Always,
+            1 => Self::InsideMathWindow,
+            2 => Self::OutsideMathWindow,
+            3 => Self::Never,
+            _ => panic!("Invalid color math condition {value}"),
+        }
+    }
+}
+
+bitfield! {
+  // 2131h - CGADSUB - Color Math Control Register B (W)
+  #[derive(Clone, Copy, Default)]
+  pub struct ColorMathControlB(u8);
+  impl Debug;
+  pub bg1_color_math, _: 0;
+  pub bg2_color_math, _: 1;
+  pub bg3_color_math, _: 2;
+  pub bg4_color_math, _: 3;
+  // Only applies to OBJ palettes 4..=7
+  pub obj_hipal_color_math, _: 4;
+  pub backdrop_color_math, _: 5;
+  pub div2_result, _: 6;
+  pub subtract, _: 7;
+}
+
+impl ColorMathControlB {
+    pub fn bg_color_math(&self, bg_n: usize) -> bool {
+        match bg_n {
+            1 => self.bg1_color_math(),
+            2 => self.bg2_color_math(),
+            3 => self.bg3_color_math(),
+            4 => self.bg4_color_math(),
+            _ => panic!("Invalid background number {bg_n}"),
         }
     }
 }

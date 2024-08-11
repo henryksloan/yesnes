@@ -220,17 +220,14 @@ impl Scheduler {
         }
     }
 
-    fn get_relative_clocks(&mut self, processor: Device) -> Vec<&mut RelativeClock> {
-        match processor {
-            Device::CPU => vec![&mut self.cpu_ppu_clock, &mut self.cpu_smp_clock],
-            Device::PPU => vec![&mut self.cpu_ppu_clock],
-            Device::SMP => vec![&mut self.cpu_smp_clock],
-        }
-    }
-
     fn tick_curr_clocks(&mut self, n_ticks: u64) {
         let curr_device = self.curr;
-        for relative_clock in self.get_relative_clocks(curr_device) {
+        let relative_clocks: &mut [&mut RelativeClock] = match curr_device {
+            Device::CPU => &mut [&mut self.cpu_ppu_clock, &mut self.cpu_smp_clock],
+            Device::PPU => &mut [&mut self.cpu_ppu_clock],
+            Device::SMP => &mut [&mut self.cpu_smp_clock],
+        };
+        for relative_clock in relative_clocks {
             relative_clock.tick(curr_device, n_ticks);
         }
     }

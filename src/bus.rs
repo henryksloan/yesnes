@@ -16,7 +16,7 @@ pub struct Bus {
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
     // TODO: Probably want Box<[u8; 0x20000]>, but need to somehow avoid allocating on stack first
-    wram: Vec<u8>,
+    wram: Box<[u8; 0x20000]>,
     wram_port_addr: u24,
     cart: Option<Cartridge>,
     // TODO: These arithmetic ops take place in the CPU (ALU) and take cycle (mult=8, div=16)
@@ -30,7 +30,7 @@ pub struct Bus {
     // 4216h - RDMPYL and 4217h - RDMPYH; result of IO multiplication or division
     product_or_remainder: u16,
     // Used by CPU as a RAM-only address space during tests.
-    testonly_ram: Option<Vec<u8>>,
+    testonly_ram: Option<Box<[u8; 0x1000000]>>,
 }
 
 impl Bus {
@@ -39,7 +39,7 @@ impl Bus {
             cpu: Weak::new(),
             ppu,
             smp,
-            wram: vec![0; 0x20000],
+            wram: vec![0; 0x20000].try_into().unwrap(),
             wram_port_addr: u24(0),
             cart: None,
             multiplicand_a: 0,
@@ -55,14 +55,14 @@ impl Bus {
             cpu: Weak::new(),
             ppu,
             smp,
-            wram: vec![0; 0x20000],
+            wram: vec![0; 0x20000].try_into().unwrap(),
             wram_port_addr: u24(0),
             cart: None,
             multiplicand_a: 0,
             dividend: 0,
             quotient: 0,
             product_or_remainder: 0,
-            testonly_ram: Some(vec![0; 0x1000000]),
+            testonly_ram: Some(vec![0; 0x1000000].try_into().unwrap()),
         }
     }
 
@@ -72,6 +72,7 @@ impl Bus {
 
     pub fn reset(&mut self) {
         // TODO: Incomplete reset!
+        // TODO: Reset cartridge (incl. SRAM)... depends on how save will work
         self.wram.fill(0);
         self.multiplicand_a = 0;
         self.product_or_remainder = 0;
@@ -111,7 +112,7 @@ impl Bus {
                     }
                     0x2180 => {
                         let wram_port_addr = bus.borrow().wram_port_addr;
-                        bus.borrow().wram[wram_port_addr.0 as usize]
+                        bus.borrow().wram[wram_port_addr.0 as usize & 0x1FFFF]
                     }
                     0x4214 => bus.borrow().quotient as u8,
                     0x4215 => (bus.borrow().quotient >> 8) as u8,
@@ -179,7 +180,7 @@ impl Bus {
                         0x2180 => {
                             let wram_port_addr = bus.borrow().wram_port_addr;
                             bus.borrow_mut().wram_port_addr = wram_port_addr.wrapping_add_signed(1);
-                            bus.borrow().wram[wram_port_addr.0 as usize]
+                            bus.borrow().wram[wram_port_addr.0 as usize & 0x1FFFF]
                         }
                         0x4016 => {
                             log::debug!("TODO: Read {addr} Joypad Input Register A (R)");
@@ -270,7 +271,7 @@ impl Bus {
                         0x2180 => {
                             let wram_port_addr = bus.borrow().wram_port_addr;
                             bus.borrow_mut().wram_port_addr = wram_port_addr.wrapping_add_signed(1);
-                            bus.borrow_mut().wram[wram_port_addr.0 as usize] = data;
+                            bus.borrow_mut().wram[wram_port_addr.0 as usize & 0x1FFFF] = data;
                         }
                         0x2181 => bus.borrow_mut().wram_port_addr.set_lo_byte(data),
                         0x2182 => bus.borrow_mut().wram_port_addr.set_hi_byte(data),

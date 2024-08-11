@@ -123,6 +123,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
 
     fn control_area(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            // TODO: A single pause/continue button would be nice
             self.button_with_shortcut(ui, DisassemblerShortcut::Continue, "Continue");
             self.button_with_shortcut(ui, DisassemblerShortcut::Pause, "Pause");
             self.button_with_shortcut(ui, DisassemblerShortcut::Trace, "Trace");

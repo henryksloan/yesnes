@@ -342,11 +342,15 @@ impl DmaSetup {
         }
     }
 
+    // TODO: There are various claims about these values; verify them
     pub fn hdma_io_reg_offsets(&self) -> &'static [u8] {
         match self.transfer_unit_select() {
             0b000 => &[0],
-            0b001 | 0b010 | 0b110 => &[0, 1],
-            0b101 | 0b011 | 0b111 | 0b100 | _ => &[0, 1, 2, 3],
+            0b001 => &[0, 1],
+            0b010 | 0b110 => &[0, 0],
+            0b101 => &[0, 1, 0, 1],
+            0b011 | 0b111 => &[0, 0, 1, 1],
+            0b100 | _ => &[0, 1, 2, 3],
         }
     }
 }
@@ -372,11 +376,19 @@ bitfield! {
   #[derive(Clone, Copy, Default)]
   pub struct IndirectAddrOrByteCount(u24);
   impl Debug;
-  pub u16, dma_byte_count, _: 15, 0;
-
   pub u8, lo_byte, set_lo_byte: 7, 0;
   pub u8, hi_byte, set_hi_byte: 15, 8;
   pub u8, bank_byte, set_bank_byte: 23, 16;
+}
+
+impl IndirectAddrOrByteCount {
+    pub fn dma_byte_count(&self) -> usize {
+        let lo16 = self.0.lo16();
+        match lo16 {
+            1..=0xFFFF => lo16 as usize,
+            0 => 0x10000,
+        }
+    }
 }
 
 bitfield! {

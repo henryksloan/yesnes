@@ -9,14 +9,18 @@ pub struct CartridgeHeader {
     cartridge_type: CartridgeType,
     // FFD7h - ROM size (1 SHL n) Kbytes (usually 8=256KByte .. 0Ch=4MByte)
     // Values are rounded-up for carts with 10,12,20,24 Mbits
+    #[expect(unused)]
     rom_size_shift: u8,
     // FFD8h - RAM size (1 SHL n) Kbytes (usually 1=2Kbyte .. 5=32Kbyte) (0=None)
     ram_size_shift: u8,
     // FFD9h - Country (also implies PAL/NTSC)
+    #[expect(unused)]
     country: u8,
     // FFDAh - Developer ID code  (00h=None/Homebrew, 01h=Nintendo, etc.) (33h=New)
+    #[expect(unused)]
     developer_id: u8,
     // FFDBh - ROM Version number (00h=First)
+    #[expect(unused)]
     rom_version: u8,
     // FFDCh - Checksum complement (same as below, XORed with FFFFh)
     checksum_complement: u16,
@@ -28,10 +32,6 @@ impl CartridgeHeader {
     pub fn try_read_from(data: &[u8; 0x20]) -> Option<Self> {
         let checksum_complement = u16::from_le_bytes(data[0x1C..=0x1D].try_into().unwrap());
         let checksum = u16::from_le_bytes(data[0x1E..=0x1F].try_into().unwrap());
-
-        if !checksum != checksum_complement {
-            return None;
-        }
 
         Some(Self {
             title: data[..0x15].try_into().unwrap(),
@@ -66,6 +66,10 @@ impl CartridgeHeader {
 
     pub fn mapper(&self) -> MapperType {
         self.rom_speed_map_mode.mapper()
+    }
+
+    pub fn checksum_valid(&self) -> bool {
+        return !self.checksum == self.checksum_complement;
     }
 }
 
