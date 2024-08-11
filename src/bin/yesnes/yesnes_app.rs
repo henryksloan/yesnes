@@ -12,6 +12,7 @@ use yesnes::snes::SNES;
 use crossbeam::channel;
 use eframe::egui;
 
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
@@ -32,7 +33,7 @@ struct YesnesApp {
 impl YesnesApp {
     fn new() -> Self {
         let snes = Arc::new(Mutex::new(SNES::new()));
-        let cart_path = std::env::args().nth(1).expect("Expected a rom file");
+        let cart_path = PathBuf::from(std::env::args().nth(1).expect("Expected a rom file"));
         snes.lock().unwrap().load_cart(&cart_path);
         snes.lock().unwrap().reset();
         let cpu_disassembler = Arc::new(Mutex::new(Disassembler::new(

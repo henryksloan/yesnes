@@ -1,12 +1,13 @@
 extern crate yesnes;
 
-use std::time::Instant;
-
 use yesnes::frame_history::FrameHistory;
 use yesnes::snes::SNES;
 use yesnes::Device;
 
 use eframe::egui::{Color32, ColorImage, TextureHandle};
+
+use std::path::PathBuf;
+use std::time::Instant;
 
 struct YesnesApp {
     snes: SNES,
@@ -21,7 +22,7 @@ struct YesnesApp {
 impl Default for YesnesApp {
     fn default() -> Self {
         let mut snes = SNES::new();
-        let cart_path = std::env::args().nth(1).expect("Expected a rom file");
+        let cart_path = PathBuf::from(std::env::args().nth(1).expect("Expected a rom file"));
         snes.load_cart(&cart_path);
         snes.reset();
         let image = ColorImage::new([256, 224], Color32::BLACK);
@@ -125,6 +126,7 @@ impl eframe::App for YesnesApp {
 }
 
 fn main() -> Result<(), eframe::Error> {
+    env_logger::init();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([880.0, 800.0]),
         ..Default::default()

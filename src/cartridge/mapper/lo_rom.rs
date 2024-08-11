@@ -2,18 +2,20 @@ use super::Mapper;
 
 use crate::u24::u24;
 
-pub struct LoROM {
+use std::ops::DerefMut;
+
+pub struct LoROM<SRAM: DerefMut<Target = [u8]>> {
     rom: Vec<u8>,
-    sram: Vec<u8>,
+    sram: SRAM,
 }
 
-impl LoROM {
-    pub fn new(rom: Vec<u8>, sram: Vec<u8>) -> Self {
+impl<SRAM: DerefMut<Target = [u8]>> LoROM<SRAM> {
+    pub fn new(rom: Vec<u8>, sram: SRAM) -> Self {
         Self { rom, sram }
     }
 }
 
-impl Mapper for LoROM {
+impl<SRAM: DerefMut<Target = [u8]>> Mapper for LoROM<SRAM> {
     fn try_read_u8(&self, addr: u24) -> Option<u8> {
         match addr.bank() {
             // A mirror of the cartridge header and exception vectors (as they are placed in LoROM images)

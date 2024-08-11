@@ -8,6 +8,7 @@ use crate::u24::u24;
 use std::cell::RefCell;
 use std::fs;
 use std::ops::CoroutineState;
+use std::path::Path;
 use std::pin::Pin;
 use std::rc::{Rc, Weak};
 
@@ -81,8 +82,8 @@ impl Bus {
         }
     }
 
-    pub fn load_cart(&mut self, cart_path: &str) {
-        self.cart = Some(Cartridge::new(fs::read(cart_path).unwrap()));
+    pub fn load_cart(&mut self, cart_path: &Path) {
+        self.cart = Some(Cartridge::new(fs::read(cart_path).unwrap(), cart_path));
     }
 
     // TODO: I have FORGOTTEN why these don't take &self. Look into why.

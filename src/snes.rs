@@ -3,6 +3,7 @@ use crate::scheduler::{DebugPoint, Device};
 use crate::{apu::SMP, bus::Bus, cpu::CPU, ppu::PPU, scheduler::Scheduler};
 
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 
 pub struct SNES {
@@ -66,7 +67,7 @@ impl SNES {
         Scheduler::new(cpu_thread, ppu_thread, smp_thread)
     }
 
-    pub fn load_cart(&mut self, cart_path: &str) {
+    pub fn load_cart(&mut self, cart_path: &Path) {
         self.bus.borrow_mut().load_cart(cart_path);
     }
 

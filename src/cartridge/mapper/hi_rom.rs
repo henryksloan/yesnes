@@ -2,18 +2,20 @@ use super::Mapper;
 
 use crate::u24::u24;
 
-pub struct HiROM {
+use std::ops::DerefMut;
+
+pub struct HiROM<SRAM: DerefMut<Target = [u8]>> {
     rom: Vec<u8>,
-    sram: Vec<u8>,
+    sram: SRAM,
 }
 
-impl HiROM {
-    pub fn new(rom: Vec<u8>, sram: Vec<u8>) -> Self {
+impl<SRAM: DerefMut<Target = [u8]>> HiROM<SRAM> {
+    pub fn new(rom: Vec<u8>, sram: SRAM) -> Self {
         Self { rom, sram }
     }
 }
 
-impl Mapper for HiROM {
+impl<SRAM: DerefMut<Target = [u8]>> Mapper for HiROM<SRAM> {
     fn try_read_u8(&self, addr: u24) -> Option<u8> {
         match addr.bank() {
             0x00..=0x3F | 0x80..=0xBF if (0x8000..=0xFFFF).contains(&addr.lo16()) => Some(
