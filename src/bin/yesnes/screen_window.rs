@@ -18,6 +18,7 @@ pub struct ScreenWindow {
     frame_ready: Arc<AtomicBool>,
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
+    lock_fps: bool,
 }
 
 impl ScreenWindow {
@@ -33,6 +34,7 @@ impl ScreenWindow {
             frame_ready,
             frame_history: FrameHistory::new(),
             previous_frame_instant: None,
+            lock_fps: true,
         }
     }
 }
@@ -43,15 +45,17 @@ impl AppWindow for ScreenWindow {
     }
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
-        if let Ok(true) =
-            self.frame_ready
-                .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
+        while !paused && !self.frame_ready.load(Ordering::Relaxed) {
+            std::hint::spin_loop();
+        }
         {
             // TODO: Much of this need not happen under the lock
             let mut frame = None;
             if let Ok(mut snes) = self.snes.lock() {
+                self.frame_ready.store(false, Ordering::Relaxed);
                 frame = snes.take_frame();
                 if focused && !paused {
+                    // TODO: Analyze input latency
                     let controller_state = ctx.input(|input_state| {
                         const KEYS: &[egui::Key] = &[
                             egui::Key::C,          // B
@@ -77,13 +81,20 @@ impl AppWindow for ScreenWindow {
                 }
             }
             if let Some(frame) = frame {
-                let now = Instant::now();
-                let delta = self
+                let render_delta = self
                     .previous_frame_instant
-                    .map(|previous| (now - previous).as_secs_f32());
-                self.previous_frame_instant = Some(now);
+                    .map(|previous| (Instant::now() - previous).as_secs_f32());
+                if let Some(delta) = render_delta {
+                    if self.lock_fps && delta < 0.016 {
+                        std::thread::sleep(std::time::Duration::from_secs_f32(0.016 - delta));
+                    }
+                }
+                let display_delta = self
+                    .previous_frame_instant
+                    .map(|previous| (Instant::now() - previous).as_secs_f32());
                 self.frame_history
-                    .on_new_frame(ctx.input(|i| i.time), delta);
+                    .on_new_frame(ctx.input(|i| i.time), display_delta);
+                self.previous_frame_instant = Some(Instant::now());
                 for y in 0..224 {
                     for x in 0..256 {
                         let color = frame[y][x];
@@ -112,11 +123,12 @@ impl AppWindow for ScreenWindow {
                 if !focused {
                     ui.disable();
                 }
-                ui.vertical(|ui| {
+                ui.horizontal(|ui| {
                     ui.label(format!(
                         "Mean frame time: {:.2}ms",
                         1e3 * self.frame_history.mean_frame_time()
                     ));
+                    ui.checkbox(&mut self.lock_fps, "Lock FPS");
                 });
                 // TODO: This is a janky resizing implementation to maintain aspect ratio
                 let rect = ui.available_rect_before_wrap();
