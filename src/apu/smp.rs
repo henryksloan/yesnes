@@ -422,7 +422,7 @@ impl SMP {
         smp.borrow_mut().io_reg.control.0 = 0x80;
         smp.borrow_mut().io_reg.dsp_addr = 0xFF;
         // TODO: Apparently should be DSP[7Fh]
-        smp.borrow_mut().io_reg.dsp_data = 0;
+        smp.borrow_mut().io_reg.dsp_data.fill(0);
         smp.borrow_mut().io_reg.timer_dividers.fill(0xFF);
         smp.borrow_mut().io_reg.timers.fill(0);
         smp.borrow_mut().reg = Registers::new();
@@ -651,7 +651,7 @@ impl SMP {
             // 0x00F0 => todo!("IO reg read {addr:#06X}"),
             0x00F1 => self.io_reg.control.0,
             0x00F2 => self.io_reg.dsp_addr,
-            0x00F3 => self.io_reg.dsp_data,
+            0x00F3 => self.io_reg.dsp_data[self.io_reg.dsp_addr as usize % 0x80],
             0x00F4..=0x00F7 => self.io_reg.external_ports[addr as usize - 0x00F4],
             0x00F8..=0x00F9 => self.ram[addr as usize],
             0x00FA..=0x00FC => self.io_reg.timer_dividers[addr as usize - 0x00FA],
@@ -686,7 +686,12 @@ impl SMP {
                 0x00F1 => smp.borrow_mut().io_reg.control.0 = data,
                 // TODO: Are games getting blocked because there's no DSP?
                 0x00F2 => smp.borrow_mut().io_reg.dsp_addr = data,
-                0x00F3 => smp.borrow_mut().io_reg.dsp_data = data,
+                0x00F3 => {
+                    let dsp_addr = smp.borrow_mut().io_reg.dsp_addr;
+                    if dsp_addr < 0x80 {
+                        smp.borrow_mut().io_reg.dsp_data[dsp_addr as usize] = data;
+                    }
+                }
                 0x00F4..=0x00F7 => {
                     smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
                 }
