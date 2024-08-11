@@ -105,9 +105,8 @@ pub struct IoRegisters {
     // TODO: Currently DSP stub
     pub dsp_addr: u8,
     pub dsp_data: Vec<u8>,
-    pub timer_dividers: [u8; 3],
+    pub timer_divider_reloads: [u8; 3],
     pub timers: [u8; 3],
-    pub debug_timer_divider: u8,
 }
 
 impl IoRegisters {

@@ -369,6 +369,9 @@ struct AddressBit {
 pub struct SMP {
     reg: Registers,
     io_reg: IoRegisters,
+    divider_8khz: u8,
+    divider_64khz: u8,
+    timer_dividers: [u8; 3],
     ticks_run: u64,
     ram: Box<[u8; 0x10000]>,
     stopped: bool,
@@ -383,6 +386,9 @@ impl SMP {
         Self {
             reg: Registers::new(),
             io_reg: IoRegisters::new(),
+            divider_8khz: 0,
+            divider_64khz: 0,
+            timer_dividers: [0; 3],
             ticks_run: 0,
             ram: vec![0; 0x10000].try_into().unwrap(),
             stopped: false,
@@ -396,6 +402,9 @@ impl SMP {
         Self {
             reg: Registers::new(),
             io_reg: IoRegisters::new(),
+            divider_8khz: 0,
+            divider_64khz: 0,
+            timer_dividers: [0; 3],
             ticks_run: 0,
             ram: vec![0; 0x10000].try_into().unwrap(),
             stopped: false,
@@ -423,7 +432,9 @@ impl SMP {
         smp.borrow_mut().io_reg.dsp_addr = 0xFF;
         // TODO: Apparently should be DSP[7Fh]
         smp.borrow_mut().io_reg.dsp_data.fill(0);
-        smp.borrow_mut().io_reg.timer_dividers.fill(0xFF);
+        smp.borrow_mut().divider_8khz = 0;
+        smp.borrow_mut().divider_64khz = 0;
+        smp.borrow_mut().io_reg.timer_divider_reloads.fill(0xFF);
         smp.borrow_mut().io_reg.timers.fill(0);
         smp.borrow_mut().reg = Registers::new();
         // TODO: Simplify
@@ -632,29 +643,41 @@ impl SMP {
         self.reg.pc = self.reg.pc.wrapping_add_signed(bytes);
     }
 
-    fn step(&mut self, n_clocks: u64) {
-        self.ticks_run += n_clocks;
-        // DO NOT SUBMIT: Fix timers
-        self.io_reg.debug_timer_divider =
-            self.io_reg.debug_timer_divider.wrapping_add(n_clocks as u8);
-        if self.io_reg.debug_timer_divider >= 16 {
-            self.io_reg.debug_timer_divider -= 16;
-            for timer in self.io_reg.timers.iter_mut() {
-                *timer = timer.wrapping_add(1);
+    fn step(&mut self, n_clocks: u8) {
+        self.ticks_run += n_clocks as u64;
+        self.divider_8khz += n_clocks;
+        if self.divider_8khz >= 128 {
+            self.divider_8khz -= 128;
+            for i in 0..2 {
+                self.timer_dividers[i] += n_clocks;
+                if self.timer_dividers[i] >= self.io_reg.timer_divider_reloads[i] {
+                    self.timer_dividers[i] -= self.io_reg.timer_divider_reloads[i];
+                    self.io_reg.timers[i] = self.io_reg.timers[i].wrapping_add(1)
+                }
+            }
+        }
+        self.divider_64khz += n_clocks;
+        if self.divider_64khz >= 16 {
+            self.divider_64khz -= 16;
+            self.timer_dividers[2] += n_clocks;
+            if self.timer_dividers[2] >= self.io_reg.timer_divider_reloads[2] {
+                self.timer_dividers[2] -= self.io_reg.timer_divider_reloads[2];
+                self.io_reg.timers[2] = self.io_reg.timers[2].wrapping_add(1)
             }
         }
     }
 
     fn peak_io_reg(&self, addr: u16) -> u8 {
+        // TODO: Open bus?
         match addr {
             0x00F0 => 0,
             // 0x00F0 => todo!("IO reg read {addr:#06X}"),
-            0x00F1 => self.io_reg.control.0,
+            0x00F1 => 0,
             0x00F2 => self.io_reg.dsp_addr,
             0x00F3 => self.io_reg.dsp_data[self.io_reg.dsp_addr as usize % 0x80],
             0x00F4..=0x00F7 => self.io_reg.external_ports[addr as usize - 0x00F4],
             0x00F8..=0x00F9 => self.ram[addr as usize],
-            0x00FA..=0x00FC => self.io_reg.timer_dividers[addr as usize - 0x00FA],
+            0x00FA..=0x00FC => 0,
             0x00FD..=0x00FF => self.io_reg.timers[addr as usize - 0x00FD] & 0xF,
             _ => panic!("Address {:#02X} is not an SMP IO register", addr),
         }
@@ -697,7 +720,7 @@ impl SMP {
                 }
                 0x00F8..=0x00F9 => smp.borrow_mut().ram[addr as usize] = data,
                 0x00FA..=0x00FC => {
-                    smp.borrow_mut().io_reg.timer_dividers[addr as usize - 0x00FA] = data
+                    smp.borrow_mut().io_reg.timer_divider_reloads[addr as usize - 0x00FA] = data
                 }
                 0x00FD..=0x00FF => {}
                 _ => panic!("Address {:#02X} is not an SMP IO register", addr),
