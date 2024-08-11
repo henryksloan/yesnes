@@ -231,7 +231,7 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($cpu_rc, $instr_f, $flag, $addr_mode_f),)+
             )+
-            _ => panic!("Invalid CPU opcode {:#04X} at {:#08X}", opcode_val, $cpu_rc.borrow().reg.pc.raw().wrapping_sub(1)),
+            // _ => panic!("Invalid CPU opcode {:#04X} at {:#08X}", opcode_val, $cpu_rc.borrow().reg.pc.raw().wrapping_sub(1)),
         }
     };
 }
@@ -573,8 +573,8 @@ impl CPU {
                 (transfer_x_y, NoFlag; 0x9B=>implied)
                 (transfer_y_a, NoFlag; 0x98=>implied)
                 (transfer_y_x, NoFlag; 0xBB=>implied)
-                // DO NOT SUBMIT
-                // (stp, NoFlag; 0xDB=>implied)
+                // TODO: STP should ignore even interrupts
+                // TODO: 0xCB is WAI, which currently has a really silly implementation
                 (stp, NoFlag; 0xDB=>implied, 0xCB=>implied)
                 // TODO: Implement WAI instruction
             );
@@ -961,7 +961,6 @@ impl CPU {
                             .hdma_table_curr_addr
                             .0 as u32;
                         let addr = u24(((table_base_addr.bank() as u32) << 16) | table_off);
-                        // DO NOT SUBMIT: This `2` and `3` makes borrowing simpler...
                         cpu.borrow_mut().io_reg.dma_channels[channel_i]
                             .hdma_table_curr_addr
                             .0 = channel_regs.hdma_table_curr_addr.0.wrapping_add(2);
@@ -2374,7 +2373,7 @@ impl CPU {
                 let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;
                 u24((pb << 16) | addr)
             };
-            // DO NOT SUBMIT
+            // TODO: Fix up really silly WAI implementation
             {
                 let new_pc = cpu.borrow().reg.pc;
                 let data = Bus::peak_u8(cpu.borrow_mut().bus.clone(), new_pc);

@@ -6,7 +6,7 @@ pub use counter::PpuCounter;
 
 use bitfield::{BitRange, BitRangeMut};
 use obj::{OamLoEntry, ObjAttributes};
-use registers::{ColorMathCondition, IoRegisters};
+use registers::{ColorMathCondition, IoRegisters, WindowLogic, WindowMask};
 
 use crate::cpu::yield_ticks;
 use crate::scheduler::*;
@@ -196,7 +196,6 @@ impl PPU {
         }
         self.debug_render_sprites(draw_line);
 
-        // DO NOT SUBMIT: Simplify and generalize all this code
         if self.io_reg.color_math_control_a.sub_screen_bg_obj() {
             for sublayer in layer_priority_order(
                 self.io_reg.bg_mode.bg_mode(),
@@ -254,21 +253,8 @@ impl PPU {
                 continue;
             }
             for x in 0..256 {
-                if window_disable && (window_masks[0].enable || window_masks[1].enable) {
-                    let overlap_window1 = window_masks[0].enable && {
-                        let inside = x >= self.io_reg.window_pos[0].left as usize
-                            && x <= self.io_reg.window_pos[0].right as usize;
-                        inside != window_masks[0].invert
-                    };
-                    let overlap_window2 = window_masks[1].enable && {
-                        let inside = x >= self.io_reg.window_pos[1].left as usize
-                            && x <= self.io_reg.window_pos[1].right as usize;
-                        inside != window_masks[1].invert
-                    };
-                    let window_applies = window_logic.apply(overlap_window1, overlap_window2);
-                    if window_applies {
-                        continue;
-                    }
+                if window_disable && self.window_area_applies(x, &window_masks, &window_logic) {
+                    continue;
                 }
                 if let Some(color) = line[x] {
                     self.main_screen[draw_line as usize][x] = (color, sublayer.to_layer());
@@ -278,7 +264,7 @@ impl PPU {
 
         let color_math_condition = self.io_reg.color_math_control_a.color_math_condition();
         for x in 0..256 {
-            // DO NOT SUBMIT: implement "Force Main Screen Black" (does it affect div?)
+            // TODO: implement "Force Main Screen Black" (does it affect div?)
             let (main_color, main_layer) = self.main_screen[draw_line as usize][x];
             self.frame[draw_line as usize][x] = main_color;
             let do_color_math = match main_layer {
@@ -293,7 +279,13 @@ impl PPU {
                 let (sub_color, sub_layer) = self.sub_screen[draw_line as usize][x];
                 let subtract = self.io_reg.color_math_control_b.subtract();
                 let div2_result = self.io_reg.color_math_control_b.div2_result();
-                if color_math_condition == ColorMathCondition::Always {
+                let apply_color_math = color_math_condition == ColorMathCondition::Always || {
+                    let invert = color_math_condition == ColorMathCondition::OutsideMathWindow;
+                    let window_masks = self.io_reg.window_mask.math_masks();
+                    let window_logic = self.io_reg.window_obj_math_logic.math_logic();
+                    self.window_area_applies(x, &window_masks, &window_logic) != invert
+                };
+                if apply_color_math {
                     for i in 0..3 {
                         if subtract {
                             self.frame[draw_line as usize][x][i] =
@@ -306,39 +298,35 @@ impl PPU {
                             self.frame[draw_line as usize][x][i] /= 2;
                         }
                     }
-                } else {
-                    let invert = color_math_condition == ColorMathCondition::OutsideMathWindow;
-                    let window_masks = self.io_reg.window_mask.math_masks();
-                    let window_logic = self.io_reg.window_obj_math_logic.math_logic();
-                    let overlap_window1 = window_masks[0].enable && {
-                        let inside = x >= self.io_reg.window_pos[0].left as usize
-                            && x <= self.io_reg.window_pos[0].right as usize;
-                        inside != window_masks[0].invert
-                    };
-                    let overlap_window2 = window_masks[1].enable && {
-                        let inside = x >= self.io_reg.window_pos[1].left as usize
-                            && x <= self.io_reg.window_pos[1].right as usize;
-                        inside != window_masks[1].invert
-                    };
-                    let window_applies = window_logic.apply(overlap_window1, overlap_window2);
-                    if window_applies != invert {
-                        for i in 0..3 {
-                            if subtract {
-                                self.frame[draw_line as usize][x][i] = self.frame
-                                    [draw_line as usize][x][i]
-                                    .saturating_sub(sub_color[i]);
-                            } else {
-                                self.frame[draw_line as usize][x][i] = self.frame
-                                    [draw_line as usize][x][i]
-                                    .saturating_add(sub_color[i]);
-                            }
-                            if div2_result && sub_layer != Layer::Backdrop {
-                                self.frame[draw_line as usize][x][i] /= 2;
-                            }
-                        }
-                    }
                 }
             }
+        }
+    }
+
+    fn window_area_applies(
+        &self,
+        x: usize,
+        window_masks: &[WindowMask; 2],
+        window_logic: &WindowLogic,
+    ) -> bool {
+        if !window_masks[0].enable && !window_masks[1].enable {
+            return false;
+        }
+        let overlap_window1 = window_masks[0].enable && {
+            let inside = x >= self.io_reg.window_pos[0].left as usize
+                && x <= self.io_reg.window_pos[0].right as usize;
+            inside != window_masks[0].invert
+        };
+        let overlap_window2 = window_masks[1].enable && {
+            let inside = x >= self.io_reg.window_pos[1].left as usize
+                && x <= self.io_reg.window_pos[1].right as usize;
+            inside != window_masks[1].invert
+        };
+        if window_masks[0].enable && window_masks[1].enable {
+            window_logic.apply(overlap_window1, overlap_window2)
+        } else {
+            // Exactly one of the windows is enabled, so just OR the overlaps
+            overlap_window1 || overlap_window2
         }
     }
 

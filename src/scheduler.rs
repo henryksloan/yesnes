@@ -222,7 +222,6 @@ impl Scheduler {
 
     fn tick_curr_clocks(&mut self, n_ticks: u64) {
         let curr_device = self.curr;
-        // DO NOT SUBMIT: This is WAY faster than get_relative_clocks() that returned a Vec, but clean this a bit
         let relative_clocks: &mut [&mut RelativeClock] = match curr_device {
             Device::CPU => &mut [&mut self.cpu_ppu_clock, &mut self.cpu_smp_clock],
             Device::PPU => &mut [&mut self.cpu_ppu_clock],

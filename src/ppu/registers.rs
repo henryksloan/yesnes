@@ -469,12 +469,8 @@ pub enum ColorMathCondition {
 
 impl From<u8> for ColorMathCondition {
     fn from(value: u8) -> Self {
-        // DO NOT SUBMIT: Do the two registers have different interpretations of this?
+        // TODO: "Force Main Screen Black" might interpret this differently?
         match value {
-            // 0 => Self::Never,
-            // 1 => Self::OutsideMathWindow,
-            // 2 => Self::InsideMathWindow,
-            // 3 => Self::Always,
             0 => Self::Always,
             1 => Self::InsideMathWindow,
             2 => Self::OutsideMathWindow,

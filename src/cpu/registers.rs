@@ -342,7 +342,7 @@ impl DmaSetup {
         }
     }
 
-    // DO NOT SUBMIT: There are contradictory claims about these values
+    // TODO: There are various claims about these values; verify them
     pub fn hdma_io_reg_offsets(&self) -> &'static [u8] {
         match self.transfer_unit_select() {
             0b000 => &[0],
