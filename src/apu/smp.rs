@@ -634,11 +634,11 @@ impl SMP {
 
     fn step(&mut self, n_clocks: u64) {
         self.ticks_run += n_clocks;
-        // TODO: This is a super simple dummy implementation, not remotely correct
+        // DO NOT SUBMIT: Fix timers
         self.io_reg.debug_timer_divider =
             self.io_reg.debug_timer_divider.wrapping_add(n_clocks as u8);
-        if self.io_reg.debug_timer_divider >= 128 {
-            self.io_reg.debug_timer_divider -= 128;
+        if self.io_reg.debug_timer_divider >= 16 {
+            self.io_reg.debug_timer_divider -= 16;
             for timer in self.io_reg.timers.iter_mut() {
                 *timer = timer.wrapping_add(1);
             }
@@ -751,7 +751,7 @@ impl SMP {
                 }
             };
             // TODO: Some clock cycles before the read, depending on region
-            smp.borrow_mut().step(2);
+            smp.borrow_mut().step(1);
             data
         }
     }
@@ -795,7 +795,7 @@ impl SMP {
                 _ => {}
             }
             // TODO: Some clock cycles before the write, depending on region
-            smp.borrow_mut().step(2);
+            smp.borrow_mut().step(1);
         }
     }
 

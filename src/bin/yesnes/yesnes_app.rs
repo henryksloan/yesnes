@@ -29,8 +29,8 @@ struct YesnesApp {
     frame_history: FrameHistory,
 }
 
-impl Default for YesnesApp {
-    fn default() -> Self {
+impl YesnesApp {
+    fn new() -> Self {
         let snes = Arc::new(Mutex::new(SNES::new()));
         let cart_path = std::env::args().nth(1).expect("Expected a rom file");
         snes.lock().unwrap().load_cart(&cart_path);
@@ -93,6 +93,28 @@ impl Default for YesnesApp {
             frame_history: FrameHistory::new(),
         }
     }
+
+    fn app_creator(
+        cc: &eframe::CreationContext,
+    ) -> Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>> {
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "FiraCode-Light".to_owned(),
+            egui::FontData::from_static(include_bytes!("../../../assets/FiraCode-Light.ttf")),
+        );
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Monospace)
+            .unwrap()
+            .insert(0, "FiraCode-Light".to_owned());
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
+            .insert(0, "FiraCode-Light".to_owned());
+        cc.egui_ctx.set_fonts(fonts);
+        Ok(Box::new(Self::new()))
+    }
 }
 
 impl eframe::App for YesnesApp {
@@ -144,9 +166,5 @@ pub fn run() -> Result<(), eframe::Error> {
         viewport: egui::ViewportBuilder::default().with_inner_size([1600.0, 1000.0]),
         ..Default::default()
     };
-    eframe::run_native(
-        "yesnes",
-        options,
-        Box::new(|_cc| Ok(Box::<YesnesApp>::default())),
-    )
+    eframe::run_native("yesnes", options, Box::new(YesnesApp::app_creator))
 }

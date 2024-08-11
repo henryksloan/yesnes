@@ -143,6 +143,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             }
             self.button_with_shortcut(ui, DisassemblerShortcut::Reset, "Reset");
         });
+        ui.add_space(2.);
     }
 
     fn show_windows(&mut self, ctx: &egui::Context) {
@@ -253,50 +254,40 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
         }
         self.prev_top_row = None;
         self.prev_bottom_row = None;
-        table
-            .header(20.0, |mut header| {
-                header.col(|ui| {
-                    ui.strong("Address");
-                });
-                // TODO: I'd like these lines to include the hex data of the opcode and operand
-                header.col(|ui| {
-                    ui.strong("Instruction");
-                });
-            })
-            .body(|body| {
-                let disassembler = self.disassembler.lock().unwrap();
-                // TODO: try_lock is necessary due to the hacky `paused` mechanism
-                let maybe_snes_guard = if paused {
-                    self.snes.try_lock().ok()
-                } else {
-                    None
-                };
-                body.rows(text_height, total_lines, |row| {
-                    let clicked_addr = Self::disassembly_row(
-                        &disassembler,
-                        paused,
-                        &self.registers_mirror,
-                        &mut self.breakpoint_addrs,
-                        &maybe_snes_guard,
-                        &mut self.prev_top_row,
-                        &mut self.prev_bottom_row,
-                        row.index(),
-                        row,
-                    );
-                    if let Some(clicked_addr) = clicked_addr {
-                        // TODO: Breakpoints only requires paused because of the sync design; would be great to loosen that
-                        if paused {
-                            if !self.breakpoint_addrs.remove(&clicked_addr) {
-                                self.breakpoint_addrs.insert(clicked_addr);
-                            }
-                            D::toggle_breakpoint_at(
-                                &maybe_snes_guard.as_ref().unwrap(),
-                                D::Address::try_from(clicked_addr).unwrap_or_default(),
-                            );
+        table.body(|body| {
+            let disassembler = self.disassembler.lock().unwrap();
+            // TODO: try_lock is necessary due to the hacky `paused` mechanism
+            let maybe_snes_guard = if paused {
+                self.snes.try_lock().ok()
+            } else {
+                None
+            };
+            body.rows(text_height, total_lines, |row| {
+                let clicked_addr = Self::disassembly_row(
+                    &disassembler,
+                    paused,
+                    &self.registers_mirror,
+                    &mut self.breakpoint_addrs,
+                    &maybe_snes_guard,
+                    &mut self.prev_top_row,
+                    &mut self.prev_bottom_row,
+                    row.index(),
+                    row,
+                );
+                if let Some(clicked_addr) = clicked_addr {
+                    // TODO: Breakpoints only requires paused because of the sync design; would be great to loosen that
+                    if paused {
+                        if !self.breakpoint_addrs.remove(&clicked_addr) {
+                            self.breakpoint_addrs.insert(clicked_addr);
                         }
+                        D::toggle_breakpoint_at(
+                            &maybe_snes_guard.as_ref().unwrap(),
+                            D::Address::try_from(clicked_addr).unwrap_or_default(),
+                        );
                     }
-                });
+                }
             });
+        });
     }
 }
 

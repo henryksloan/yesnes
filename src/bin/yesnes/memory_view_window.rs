@@ -50,6 +50,7 @@ impl<D: DebugProcessor> MemoryViewWindow<D> {
 
     fn refresh_memory(&mut self) {
         // TODO: This is very inefficient
+        // TODO: This can cause a borrow error
         for i in 0..0x100_0000 {
             if let Ok(addr) = i.try_into() {
                 self.memory_mirror[i] = self.debug_processor.peak_u8(addr);
@@ -79,6 +80,7 @@ impl<D: DebugProcessor> MemoryViewWindow<D> {
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::exact(45.0))
             .columns(Column::exact(14.0), 0x10)
+            .column(Column::exact(8.0))
             .min_scrolled_height(0.0);
         if let Some((row_nr, align)) = self.scroll_to_row.take() {
             table = table.scroll_to_row(row_nr, Some(align));
@@ -133,6 +135,7 @@ impl<D: DebugProcessor> AppWindow for MemoryViewWindow<D> {
         self.show_windows(ctx);
 
         egui::Window::new(&self.title)
+            .max_width(270.0)
             .default_height(640.0)
             .show(ctx, |ui| {
                 if !focused {
