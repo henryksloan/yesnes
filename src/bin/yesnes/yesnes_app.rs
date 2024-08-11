@@ -107,11 +107,6 @@ impl YesnesApp {
             .get_mut(&egui::FontFamily::Monospace)
             .unwrap()
             .insert(0, "FiraCode-Light".to_owned());
-        fonts
-            .families
-            .get_mut(&egui::FontFamily::Proportional)
-            .unwrap()
-            .insert(0, "FiraCode-Light".to_owned());
         cc.egui_ctx.set_fonts(fonts);
         Ok(Box::new(Self::new()))
     }

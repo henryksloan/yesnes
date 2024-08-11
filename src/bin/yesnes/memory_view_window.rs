@@ -101,12 +101,12 @@ impl<D: DebugProcessor> MemoryViewWindow<D> {
                 body.rows(text_height, D::ADDR_SPACE_SIZE / 16, |mut row| {
                     let row_addr = row.index() * 0x10;
                     row.col(|ui| {
-                        ui.strong(format!("{:06X}", row_addr));
+                        ui.monospace(egui::RichText::new(format!("{:06X}", row_addr)).strong());
                     });
                     for low_nybble in 0x0..=0xF {
                         row.col(|ui| {
                             let data = self.memory_mirror[row_addr | low_nybble];
-                            ui.label(format!("{:02X}", data));
+                            ui.monospace(format!("{:02X}", data));
                         });
                     }
                 });

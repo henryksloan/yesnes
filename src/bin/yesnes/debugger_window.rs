@@ -114,6 +114,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             if !paused {
                 ui.disable();
             }
+            ui.style_mut().drag_value_text_style = egui::TextStyle::Monospace;
             D::registers_area(ui, &mut self.registers_mirror);
         });
         if let Some(snes) = maybe_snes_guard {
@@ -222,7 +223,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             if paused && row_addr == D::pc(&registers_mirror).into() {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }
-            let label = ui.label(format!("{:06X}", row_addr));
+            let label = ui.monospace(format!("{:06X}", row_addr));
             if label.contains_pointer() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
@@ -231,7 +232,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             }
         });
         row.col(|ui| {
-            ui.label(format!(
+            ui.monospace(format!(
                 "{} {}",
                 disassembly_line.1.mnemonic(),
                 disassembly_line.1.mode_str(),
