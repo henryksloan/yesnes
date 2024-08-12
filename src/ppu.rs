@@ -116,9 +116,13 @@ impl PPU {
 
     pub fn reset(&mut self) {
         self.vram.fill(0);
+        self.cgram.fill(0);
+        self.oam_lo.fill(0);
+        self.oam_hi.fill(0);
+        self.io_reg = IoRegisters::new();
+        self.ppu_counter = Rc::new(RefCell::new(PpuCounter::new()));
         self.ticks_run = 0;
         // TODO: Most of these are indeterminate, but it might be good to initialize to 0 for determinism
-        self.io_reg = IoRegisters::new();
     }
 
     pub fn run<'a>(ppu: Rc<RefCell<PPU>>) -> impl DeviceCoroutine + 'a {

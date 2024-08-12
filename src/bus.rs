@@ -74,7 +74,10 @@ impl Bus {
     pub fn reset(&mut self) {
         // TODO: Incomplete reset!
         self.wram.fill(0);
+        self.wram_port_addr = u24(0);
         self.multiplicand_a = 0;
+        self.dividend = 0;
+        self.quotient = 0;
         self.product_or_remainder = 0;
         if let Some(testonly_ram) = &mut self.testonly_ram {
             testonly_ram.fill(0);
