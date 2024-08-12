@@ -422,6 +422,13 @@ impl SMP {
         &mut self.reg
     }
 
+    pub fn debug_pitch(&mut self, channel_n: usize) -> u64 {
+        assert!(channel_n < 8);
+        let p = self.io_reg.dsp_data[0x10 * channel_n + 2] as u64
+            | ((0x3F & self.io_reg.dsp_data[0x10 * channel_n + 2] as u64) << 8);
+        (p * 32_000) / 0x1000
+    }
+
     pub fn reset(smp: Rc<RefCell<SMP>>) {
         smp.borrow_mut().ram.fill(0);
         smp.borrow_mut().ticks_run = 0;

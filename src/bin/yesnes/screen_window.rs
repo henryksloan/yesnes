@@ -4,10 +4,67 @@ use std::time::Instant;
 use yesnes::frame_history::FrameHistory;
 use yesnes::snes::SNES;
 
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{FromSample, Sample, Stream, StreamConfig};
 use eframe::egui::{Color32, ColorImage, TextureHandle};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+fn write_data<T>(output: &mut [T], channels: usize, next_sample: &mut dyn FnMut() -> f32)
+where
+    T: Sample + FromSample<f32>,
+{
+    for frame in output.chunks_mut(channels) {
+        let value: T = T::from_sample(next_sample());
+        for sample in frame.iter_mut() {
+            *sample = value;
+        }
+    }
+}
+
+fn make_audio_stream() -> Stream {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .expect("no output device available");
+    let supported_configs_range = device
+        .supported_output_configs()
+        .expect("error while querying configs");
+    let supported_config = supported_configs_range
+        // DO NOT SUBMIT: Will forcing f32 not work on some systems?
+        .filter(|config| config.sample_format() == cpal::SampleFormat::F32)
+        // .find_map(|config| config.try_with_sample_rate(cpal::SampleRate(32000)))
+        // .find_map(|config| config.try_with_sample_rate(cpal::SampleRate(44100)))
+        .next()
+        .expect("No supported audio config")
+        .with_max_sample_rate();
+    let err_fn = |err| eprintln!("an error occurred on the output audio stream: {}", err);
+    let config: StreamConfig = supported_config.into();
+
+    let sample_rate = config.sample_rate.0 as f32;
+    println!("{sample_rate}");
+    let channels = config.channels as usize;
+
+    // Produce a sinusoid of some amplitude.
+    let amplitude = 0.01; // up to 1.0
+    let mut sample_clock = 0f32;
+    let mut next_value = move || {
+        sample_clock = (sample_clock + 1.0) % sample_rate;
+        amplitude * (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
+    };
+
+    device
+        .build_output_stream(
+            &config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                write_data(data, channels, &mut next_value)
+            },
+            err_fn,
+            None,
+        )
+        .unwrap()
+}
 
 pub struct ScreenWindow {
     id: egui::Id,
@@ -19,12 +76,17 @@ pub struct ScreenWindow {
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
     lock_fps: bool,
+    audio_stream: Stream,
 }
 
 impl ScreenWindow {
     pub fn new(title: String, snes: Arc<Mutex<SNES>>, frame_ready: Arc<AtomicBool>) -> Self {
         let id = egui::Id::new(&title);
         let image = ColorImage::new([256, 224], Color32::BLACK);
+
+        let audio_stream = make_audio_stream();
+        audio_stream.pause().unwrap();
+
         Self {
             id,
             title,
@@ -35,6 +97,7 @@ impl ScreenWindow {
             frame_history: FrameHistory::new(),
             previous_frame_instant: None,
             lock_fps: true,
+            audio_stream,
         }
     }
 }
@@ -45,6 +108,12 @@ impl AppWindow for ScreenWindow {
     }
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
+        if paused {
+            self.audio_stream.pause().unwrap();
+        } else {
+            self.audio_stream.play().unwrap();
+        }
+
         while !paused && !self.frame_ready.load(Ordering::Relaxed) {
             std::hint::spin_loop();
         }
