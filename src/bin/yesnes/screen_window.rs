@@ -19,6 +19,8 @@ fn write_data(output: &mut [f32], channels: usize, audio_buffer: Arc<Mutex<VecDe
         for i in 0..values.len() {
             if let Some(value) = buffer.pop_front() {
                 values[i] = value;
+            } else {
+                break;
             }
         }
     }
@@ -76,7 +78,7 @@ pub struct ScreenWindow {
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
     lock_fps: bool,
-    debug_audio_generator: Box<dyn FnMut() -> (f32, f32)>,
+    debug_audio_generator: Box<dyn FnMut(f32) -> (f32, f32)>,
     debug_audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>,
     audio_sample_rate: SampleRate,
     audio_stream: Stream,
@@ -94,10 +96,11 @@ impl ScreenWindow {
 
         let amplitude = 0.01; // up to 1.0
         let mut sample_clock = 0f32;
-        let next_value = move || {
+        let next_value = move |freq: f32| {
             sample_clock = (sample_clock + 1.0) % sample_rate.0 as f32;
             let result = amplitude
-                * (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate.0 as f32).sin();
+                // * (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate.0 as f32).sin();
+                * (sample_clock * freq * 2.0 * std::f32::consts::PI / sample_rate.0 as f32).sin();
             (result, result)
         };
 
@@ -165,6 +168,31 @@ impl AppWindow for ScreenWindow {
                     });
                     snes.set_controller_state(0, controller_state);
                 }
+
+                if let Ok(mut debug_audio_buffer) = self.debug_audio_buffer.lock() {
+                    // for i in 0..self.audio_sample_rate.0 / 60 {
+                    // while debug_audio_buffer.len() < 3 * (self.audio_sample_rate.0 as usize / 60) / 2 {
+                    // println!("{}", debug_audio_buffer.len());
+                    let num_samples = (2 * (self.audio_sample_rate.0 as usize / 60))
+                        .saturating_sub(debug_audio_buffer.len());
+                    // let num_samples = (self.audio_sample_rate.0 as usize / 60)
+                    //     .saturating_sub(debug_audio_buffer.len());
+                    // let smp_pitch = snes.debug_take_audio(num_samples);
+                    let sample_ratio = 32000. / self.audio_sample_rate.0 as f32;
+                    // let sample_ratio = 1.;
+                    let adjusted_samples = (sample_ratio * num_samples as f32) as usize;
+                    let smp_pitch = snes.debug_take_audio(adjusted_samples);
+                    // while debug_audio_buffer.len() < 2 * (self.audio_sample_rate.0 as usize / 60) {
+                    for i in 0..num_samples {
+                        // while debug_audio_buffer.len() < self.audio_sample_rate.0 as usize {
+                        // debug_audio_buffer.push_back((self.debug_audio_generator)());
+                        // debug_audio_buffer.push_back((self.debug_audio_generator)(440.));
+                        // debug_audio_buffer.push_back((self.debug_audio_generator)(smp_pitch[i].0));
+                        debug_audio_buffer.push_back((self.debug_audio_generator)(
+                            smp_pitch[(i as f32 * sample_ratio) as usize % adjusted_samples].0,
+                        ));
+                    }
+                }
             }
             if let Some(frame) = frame {
                 let render_delta = self
@@ -186,16 +214,6 @@ impl AppWindow for ScreenWindow {
                         let color = frame[y][x];
                         self.image[(x, y)] = Color32::from_rgb(color[0], color[1], color[2]);
                     }
-                }
-            }
-
-            if let Ok(mut debug_audio_buffer) = self.debug_audio_buffer.lock() {
-                // for i in 0..self.audio_sample_rate.0 / 60 {
-                // while debug_audio_buffer.len() < 3 * (self.audio_sample_rate.0 as usize / 60) / 2 {
-                println!("{}", debug_audio_buffer.len());
-                while debug_audio_buffer.len() < 2 * (self.audio_sample_rate.0 as usize / 60) {
-                    // while debug_audio_buffer.len() < self.audio_sample_rate.0 as usize {
-                    debug_audio_buffer.push_back((self.debug_audio_generator)());
                 }
             }
         }

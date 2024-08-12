@@ -6,7 +6,7 @@ use crate::cpu::yield_ticks;
 use crate::scheduler::*;
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::ops::{Coroutine, CoroutineState};
 use std::pin::Pin;
 use std::rc::Rc;
@@ -379,6 +379,8 @@ pub struct SMP {
     test_mode: bool,
     pub breakpoint_addrs: HashSet<u16>,
     debug_log: bool, // TODO: Remove this debugging tool
+    debug_dsp_divider: u8,
+    pub debug_audio_buffer: VecDeque<(f32, f32)>,
 }
 
 impl SMP {
@@ -395,6 +397,8 @@ impl SMP {
             test_mode: false,
             breakpoint_addrs: HashSet::new(),
             debug_log: false,
+            debug_dsp_divider: 0,
+            debug_audio_buffer: VecDeque::with_capacity(32000),
         }
     }
 
@@ -411,6 +415,8 @@ impl SMP {
             test_mode: true,
             breakpoint_addrs: HashSet::new(),
             debug_log: false,
+            debug_dsp_divider: 0,
+            debug_audio_buffer: VecDeque::with_capacity(32000),
         }
     }
 
@@ -425,8 +431,11 @@ impl SMP {
     pub fn debug_pitch(&mut self, channel_n: usize) -> u64 {
         assert!(channel_n < 8);
         let p = self.io_reg.dsp_data[0x10 * channel_n + 2] as u64
-            | ((0x3F & self.io_reg.dsp_data[0x10 * channel_n + 2] as u64) << 8);
-        (p * 32_000) / 0x1000
+            | ((0x3F & self.io_reg.dsp_data[0x10 * channel_n + 3] as u64) << 8);
+        // let p = 0x38;
+        // let p = 0x1000;
+        // (p * 32_000) / 0x1000
+        (p * 500) / 0x1000
     }
 
     pub fn reset(smp: Rc<RefCell<SMP>>) {
@@ -670,6 +679,15 @@ impl SMP {
             if self.timer_dividers[2] >= self.io_reg.timer_divider_reloads[2] {
                 self.timer_dividers[2] -= self.io_reg.timer_divider_reloads[2];
                 self.io_reg.timers[2] = self.io_reg.timers[2].wrapping_add(1)
+            }
+        }
+
+        self.debug_dsp_divider += n_clocks;
+        if self.debug_dsp_divider >= 32 {
+            self.debug_dsp_divider -= 32;
+            if self.debug_audio_buffer.len() < 32000 {
+                let pitch = self.debug_pitch(0) as f32;
+                self.debug_audio_buffer.push_back((pitch, pitch));
             }
         }
     }

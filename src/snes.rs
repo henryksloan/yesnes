@@ -125,6 +125,19 @@ impl SNES {
     pub fn make_debug_smp(&self) -> DebugSmp {
         DebugSmp::new(self.smp.clone())
     }
+
+    pub fn debug_take_audio(&mut self, samples: usize) -> Vec<(f32, f32)> {
+        let mut buffer = vec![(0.0, 0.0); samples];
+        for i in 0..samples {
+            if let Some(value) = self.smp.borrow_mut().debug_audio_buffer.pop_front() {
+                buffer[i] = value;
+            } else {
+                println!("AAA {i}");
+                break;
+            }
+        }
+        buffer
+    }
 }
 
 #[cfg(test)]
