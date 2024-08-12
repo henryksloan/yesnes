@@ -73,7 +73,6 @@ impl Bus {
 
     pub fn reset(&mut self) {
         // TODO: Incomplete reset!
-        // TODO: Reset cartridge (incl. SRAM)... depends on how save will work
         self.wram.fill(0);
         self.multiplicand_a = 0;
         self.product_or_remainder = 0;

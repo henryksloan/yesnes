@@ -428,7 +428,7 @@ impl SMP {
         smp.borrow_mut().io_reg = IoRegisters::new();
         smp.borrow_mut().io_reg.internal_ports.fill(0);
         smp.borrow_mut().io_reg.external_ports.fill(0);
-        smp.borrow_mut().io_reg.control.0 = 0x80;
+        smp.borrow_mut().io_reg.control.0 = 0xB0;
         smp.borrow_mut().io_reg.dsp_addr = 0xFF;
         // TODO: Apparently should be DSP[7Fh]
         smp.borrow_mut().io_reg.dsp_data.fill(0);
@@ -706,7 +706,17 @@ impl SMP {
                 // TODO: Testonly functions register
                 0x00F0 => {}
                 // 0x00F0 => todo!("IO reg write {addr:#06X}"),
-                0x00F1 => smp.borrow_mut().io_reg.control.0 = data,
+                0x00F1 => {
+                    smp.borrow_mut().io_reg.control.0 = data;
+                    if (data >> 4) & 1 == 1 {
+                        smp.borrow_mut().io_reg.external_ports[0] = 0;
+                        smp.borrow_mut().io_reg.external_ports[1] = 0;
+                    }
+                    if (data >> 5) & 1 == 1 {
+                        smp.borrow_mut().io_reg.external_ports[2] = 0;
+                        smp.borrow_mut().io_reg.external_ports[3] = 0;
+                    }
+                }
                 // TODO: Are games getting blocked because there's no DSP?
                 0x00F2 => smp.borrow_mut().io_reg.dsp_addr = data,
                 0x00F3 => {
@@ -758,7 +768,7 @@ impl SMP {
             // TODO: Could this be more granular? Does every access need to sync?
             yield YieldReason::Sync(Device::CPU);
             if smp.borrow().test_mode {
-                smp.borrow_mut().step(2);
+                smp.borrow_mut().step(1);
                 return smp.borrow().ram[addr as usize];
             }
             let data = match addr {
@@ -808,7 +818,7 @@ impl SMP {
             yield YieldReason::Sync(Device::CPU);
             if smp.borrow().test_mode {
                 smp.borrow_mut().ram[addr as usize] = data;
-                smp.borrow_mut().step(2);
+                smp.borrow_mut().step(1);
                 return;
             }
             // All writes always go to ram, even if they also go to e.g. IO
