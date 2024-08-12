@@ -1,29 +1,36 @@
 use super::app_window::AppWindow;
-use std::time::Instant;
 
 use yesnes::frame_history::FrameHistory;
 use yesnes::snes::SNES;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, Sample, Stream, StreamConfig};
+use cpal::{SampleRate, Stream, StreamConfig};
 use eframe::egui::{Color32, ColorImage, TextureHandle};
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
-fn write_data<T>(output: &mut [T], channels: usize, next_sample: &mut dyn FnMut() -> f32)
-where
-    T: Sample + FromSample<f32>,
-{
-    for frame in output.chunks_mut(channels) {
-        let value: T = T::from_sample(next_sample());
+fn write_data(output: &mut [f32], channels: usize, audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>) {
+    let mut values = vec![(0.0, 0.0); output.len() / channels];
+    {
+        let mut buffer = audio_buffer.lock().unwrap();
+        for i in 0..values.len() {
+            if let Some(value) = buffer.pop_front() {
+                values[i] = value;
+            }
+        }
+    }
+    for (i, frame) in output.chunks_mut(channels).enumerate() {
+        let value = values[i];
         for sample in frame.iter_mut() {
-            *sample = value;
+            *sample = if i % 2 == 0 { value.0 } else { value.1 };
         }
     }
 }
 
-fn make_audio_stream() -> Stream {
+fn make_audio_stream(audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>) -> (Stream, SampleRate) {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -42,28 +49,21 @@ fn make_audio_stream() -> Stream {
     let err_fn = |err| eprintln!("an error occurred on the output audio stream: {}", err);
     let config: StreamConfig = supported_config.into();
 
-    let sample_rate = config.sample_rate.0 as f32;
-    println!("{sample_rate}");
+    let sample_rate = config.sample_rate;
     let channels = config.channels as usize;
 
-    // Produce a sinusoid of some amplitude.
-    let amplitude = 0.01; // up to 1.0
-    let mut sample_clock = 0f32;
-    let mut next_value = move || {
-        sample_clock = (sample_clock + 1.0) % sample_rate;
-        amplitude * (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
-    };
-
-    device
+    let stream = device
         .build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                write_data(data, channels, &mut next_value)
+                // write_data(data, channels, &mut next_value)
+                write_data(data, channels, audio_buffer.clone())
             },
             err_fn,
             None,
         )
-        .unwrap()
+        .unwrap();
+    (stream, sample_rate)
 }
 
 pub struct ScreenWindow {
@@ -76,6 +76,9 @@ pub struct ScreenWindow {
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
     lock_fps: bool,
+    debug_audio_generator: Box<dyn FnMut() -> (f32, f32)>,
+    debug_audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>,
+    audio_sample_rate: SampleRate,
     audio_stream: Stream,
 }
 
@@ -84,8 +87,19 @@ impl ScreenWindow {
         let id = egui::Id::new(&title);
         let image = ColorImage::new([256, 224], Color32::BLACK);
 
-        let audio_stream = make_audio_stream();
+        let debug_audio_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(32000)));
+
+        let (audio_stream, sample_rate) = make_audio_stream(debug_audio_buffer.clone());
         audio_stream.pause().unwrap();
+
+        let amplitude = 0.01; // up to 1.0
+        let mut sample_clock = 0f32;
+        let next_value = move || {
+            sample_clock = (sample_clock + 1.0) % sample_rate.0 as f32;
+            let result = amplitude
+                * (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate.0 as f32).sin();
+            (result, result)
+        };
 
         Self {
             id,
@@ -97,6 +111,9 @@ impl ScreenWindow {
             frame_history: FrameHistory::new(),
             previous_frame_instant: None,
             lock_fps: true,
+            debug_audio_generator: Box::new(next_value),
+            debug_audio_buffer,
+            audio_sample_rate: sample_rate,
             audio_stream,
         }
     }
@@ -114,10 +131,10 @@ impl AppWindow for ScreenWindow {
             self.audio_stream.play().unwrap();
         }
 
-        while !paused && !self.frame_ready.load(Ordering::Relaxed) {
-            std::hint::spin_loop();
-        }
-        {
+        if !paused {
+            while !self.frame_ready.load(Ordering::Relaxed) {
+                std::hint::spin_loop();
+            }
             // TODO: Much of this need not happen under the lock
             let mut frame = None;
             if let Ok(mut snes) = self.snes.lock() {
@@ -169,6 +186,16 @@ impl AppWindow for ScreenWindow {
                         let color = frame[y][x];
                         self.image[(x, y)] = Color32::from_rgb(color[0], color[1], color[2]);
                     }
+                }
+            }
+
+            if let Ok(mut debug_audio_buffer) = self.debug_audio_buffer.lock() {
+                // for i in 0..self.audio_sample_rate.0 / 60 {
+                // while debug_audio_buffer.len() < 3 * (self.audio_sample_rate.0 as usize / 60) / 2 {
+                println!("{}", debug_audio_buffer.len());
+                while debug_audio_buffer.len() < 2 * (self.audio_sample_rate.0 as usize / 60) {
+                    // while debug_audio_buffer.len() < self.audio_sample_rate.0 as usize {
+                    debug_audio_buffer.push_back((self.debug_audio_generator)());
                 }
             }
         }
