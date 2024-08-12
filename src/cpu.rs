@@ -378,6 +378,7 @@ impl CPU {
     pub fn reset(&mut self) {
         self.ticks_run = 0;
         self.reg = Registers::new();
+        self.ppu_counter = Rc::new(RefCell::new(PpuCounter::new()));
         self.reg.pc = u24(ignore_yields!(Bus::read_u16(self.bus.clone(), RESET_VECTOR)) as u32);
         self.reg.set_p(0x34);
         self.reg.p.e = true;
@@ -389,8 +390,7 @@ impl CPU {
         self.timer_irq_flag = false;
         self.vblank_nmi_flag = false;
 
-        self.io_reg.waitstate_control.0 = 0;
-        self.io_reg.interrupt_control.0 = 0;
+        self.io_reg = IoRegisters::new();
         for channel_regs in self.io_reg.dma_channels.iter_mut() {
             channel_regs.setup.0 = 0xFF;
             channel_regs.io_reg = 0xFF;

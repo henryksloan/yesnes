@@ -116,9 +116,13 @@ impl PPU {
 
     pub fn reset(&mut self) {
         self.vram.fill(0);
+        self.cgram.fill(0);
+        self.oam_lo.fill(0);
+        self.oam_hi.fill(0);
+        self.io_reg = IoRegisters::new();
+        self.ppu_counter = Rc::new(RefCell::new(PpuCounter::new()));
         self.ticks_run = 0;
         // TODO: Most of these are indeterminate, but it might be good to initialize to 0 for determinism
-        self.io_reg = IoRegisters::new();
     }
 
     pub fn run<'a>(ppu: Rc<RefCell<PPU>>) -> impl DeviceCoroutine + 'a {
@@ -167,11 +171,6 @@ impl PPU {
             return;
         }
         let draw_line = scanline - 1;
-        if self.io_reg.display_control_1.forced_blank() {
-            self.frame[draw_line as usize].fill([0, 0, 0]);
-            return;
-        }
-
         self.debug_clear_scanline_buffs();
         let backdrop_color = self.palette_entry_to_rgb(self.cgram[0]);
         self.main_screen[draw_line as usize].fill((backdrop_color, Layer::Backdrop));
@@ -263,10 +262,23 @@ impl PPU {
         }
 
         let color_math_condition = self.io_reg.color_math_control_a.color_math_condition();
+        let brightness_coefficient: u16 = match self.io_reg.display_control_1.master_brightness() {
+            0 => 0,
+            n => n as u16 + 1,
+        };
+        let force_blank =
+            self.io_reg.display_control_1.forced_blank() || brightness_coefficient == 0;
         for x in 0..256 {
-            // TODO: implement "Force Main Screen Black" (does it affect div?)
+            // We could skip rendering altogether in these cases, but we want to populate the buffers for debugging.
+            if force_blank {
+                self.frame[draw_line as usize][x] = [0, 0, 0];
+                continue;
+            }
+
+            // TODO: implement window "Force Main Screen Black" (does it affect div?)
             let (main_color, main_layer) = self.main_screen[draw_line as usize][x];
             self.frame[draw_line as usize][x] = main_color;
+
             let do_color_math = match main_layer {
                 Layer::Obj => {
                     self.io_reg.color_math_control_b.obj_hipal_color_math()
@@ -298,6 +310,13 @@ impl PPU {
                             self.frame[draw_line as usize][x][i] /= 2;
                         }
                     }
+                }
+            }
+            if brightness_coefficient != 16 {
+                for i in 0..3 {
+                    self.frame[draw_line as usize][x][i] =
+                        ((self.frame[draw_line as usize][x][i] as u16 * brightness_coefficient)
+                            / 16) as u8;
                 }
             }
         }

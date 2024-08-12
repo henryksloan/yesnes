@@ -122,6 +122,7 @@ impl AppWindow for TileViewWindow {
                         new_base_addr = Some(base_addr);
                     }
                 });
+                ui.add_space(2.);
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let tile_width = ui.available_width() / 16.;
                     let margin = ui.visuals().clip_rect_margin;

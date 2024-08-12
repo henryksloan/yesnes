@@ -2,13 +2,15 @@ use super::Mapper;
 
 use crate::u24::u24;
 
+use std::ops::DerefMut;
+
 pub struct HiROM {
     rom: Vec<u8>,
-    sram: Vec<u8>,
+    sram: Box<dyn DerefMut<Target = [u8]>>,
 }
 
 impl HiROM {
-    pub fn new(rom: Vec<u8>, sram: Vec<u8>) -> Self {
+    pub fn new(rom: Vec<u8>, sram: Box<dyn DerefMut<Target = [u8]>>) -> Self {
         Self { rom, sram }
     }
 }

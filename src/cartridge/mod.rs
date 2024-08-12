@@ -6,6 +6,12 @@ use mapper::{HiROM, LoROM, Mapper, MapperType};
 
 use crate::u24::u24;
 
+use memmap::MmapMut;
+
+use std::fs::OpenOptions;
+use std::ops::DerefMut;
+use std::path::Path;
+
 // TODO: Implement speeds and such
 pub struct Cartridge {
     #[expect(unused)]
@@ -14,7 +20,7 @@ pub struct Cartridge {
 }
 
 impl Cartridge {
-    pub fn new(mut data: Vec<u8>) -> Self {
+    pub fn new(mut data: Vec<u8>, cart_path: &Path) -> Self {
         // Drop extra headers from copiers (SWC/UFO/etc.)
         if data.len() & 0x3FF == 0x200 {
             data.drain(..0x200);
@@ -57,8 +63,25 @@ impl Cartridge {
             0x00 | 0x01 | 0x02 => {}
             cartridge_type => panic!("Unsupported cartridge type 0x{cartridge_type:X}"),
         }
-        log::debug!("{}", header.title());
-        let sram = vec![0; header.ram_bytes()];
+        log::debug!("Cartridge title: {}", header.title());
+        // TODO: Support configurable SRAM directory
+        // TODO: Consider supporting non-file-backed SRAM (just a VEC)
+        let sram: Box<dyn DerefMut<Target = [u8]>> = if header.ram_bytes() > 0 {
+            let sram_path = cart_path.with_extension("srm");
+            let sram_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&sram_path)
+                .expect("Failed to create or open SRAM file");
+            log::debug!("Opened SRAM file at {sram_path:?}");
+            sram_file
+                .set_len(header.ram_bytes() as u64)
+                .expect("Failed to resize SRAM file");
+            Box::new(unsafe { MmapMut::map_mut(&sram_file).expect("Failed to mmap SRAM file") })
+        } else {
+            Box::new(vec![0; header.ram_bytes()])
+        };
         let mapper: Box<dyn Mapper> = match mapper_type {
             MapperType::LoROM => Box::new(LoROM::new(data, sram)),
             MapperType::HiROM => Box::new(HiROM::new(data, sram)),
