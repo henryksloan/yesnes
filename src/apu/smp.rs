@@ -659,35 +659,46 @@ impl SMP {
         self.reg.pc = self.reg.pc.wrapping_add_signed(bytes);
     }
 
-    fn step(&mut self, n_clocks: u8) {
-        self.ticks_run += n_clocks as u64;
-        self.divider_8khz += n_clocks;
-        if self.divider_8khz >= 128 {
-            self.divider_8khz -= 128;
-            for i in 0..2 {
-                self.timer_dividers[i] += n_clocks;
-                if self.timer_dividers[i] >= self.io_reg.timer_divider_reloads[i] {
-                    self.timer_dividers[i] -= self.io_reg.timer_divider_reloads[i];
-                    self.io_reg.timers[i] = self.io_reg.timers[i].wrapping_add(1)
+    fn step<'a>(smp: Rc<RefCell<SMP>>, n_clocks: u8) -> impl Yieldable<()> + 'a {
+        #[coroutine]
+        move || {
+            let mut smp = smp.borrow_mut();
+            smp.ticks_run += n_clocks as u64;
+            let ticks_run = smp.ticks_run;
+            smp.divider_8khz += n_clocks;
+            if smp.divider_8khz >= 128 {
+                smp.divider_8khz -= 128;
+                for i in 0..2 {
+                    smp.timer_dividers[i] += n_clocks;
+                    if smp.timer_dividers[i] >= smp.io_reg.timer_divider_reloads[i] {
+                        smp.timer_dividers[i] -= smp.io_reg.timer_divider_reloads[i];
+                        smp.io_reg.timers[i] = smp.io_reg.timers[i].wrapping_add(1)
+                    }
                 }
             }
-        }
-        self.divider_64khz += n_clocks;
-        if self.divider_64khz >= 16 {
-            self.divider_64khz -= 16;
-            self.timer_dividers[2] += n_clocks;
-            if self.timer_dividers[2] >= self.io_reg.timer_divider_reloads[2] {
-                self.timer_dividers[2] -= self.io_reg.timer_divider_reloads[2];
-                self.io_reg.timers[2] = self.io_reg.timers[2].wrapping_add(1)
+            smp.divider_64khz += n_clocks;
+            if smp.divider_64khz >= 16 {
+                smp.divider_64khz -= 16;
+                smp.timer_dividers[2] += n_clocks;
+                if smp.timer_dividers[2] >= smp.io_reg.timer_divider_reloads[2] {
+                    smp.timer_dividers[2] -= smp.io_reg.timer_divider_reloads[2];
+                    smp.io_reg.timers[2] = smp.io_reg.timers[2].wrapping_add(1)
+                }
             }
-        }
 
-        self.debug_dsp_divider += n_clocks;
-        if self.debug_dsp_divider >= 32 {
-            self.debug_dsp_divider -= 32;
-            if self.debug_audio_buffer.len() < 32000 {
-                let pitch = self.debug_pitch(0) as f32;
-                self.debug_audio_buffer.push_back((pitch, pitch));
+            smp.debug_dsp_divider += n_clocks;
+            if smp.debug_dsp_divider >= 32 {
+                smp.debug_dsp_divider -= 32;
+                if smp.debug_audio_buffer.len() < 32000 {
+                    let pitch = smp.debug_pitch(0) as f32;
+                    smp.debug_audio_buffer.push_back((pitch, pitch));
+                }
+            }
+            drop(smp);
+
+            // DO NOT SUBMIT: Explain this and maybe generalize
+            if ticks_run > 768 * 24 {
+                yield YieldReason::Sync(Device::CPU);
             }
         }
     }
@@ -711,8 +722,9 @@ impl SMP {
     fn read_io_reg<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
         #[coroutine]
         move || {
-            // TODO: I think this should maybe yield to CPU for some (all?) of these?
-            // yield YieldReason::Sync(Device::CPU);
+            if (0x00F4..=0x00F7).contains(&addr) {
+                yield YieldReason::Sync(Device::CPU);
+            }
             let data = smp.borrow().peak_io_reg(addr);
             if (0x00FD..=0x00FF).contains(&addr) {
                 smp.borrow_mut().io_reg.timers[addr as usize - 0x00FD] = 0;
@@ -751,6 +763,7 @@ impl SMP {
                     }
                 }
                 0x00F4..=0x00F7 => {
+                    yield YieldReason::Sync(Device::CPU);
                     smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
                 }
                 0x00F8..=0x00F9 => smp.borrow_mut().ram[addr as usize] = data,
@@ -790,10 +803,8 @@ impl SMP {
     fn read_u8<'a>(smp: Rc<RefCell<SMP>>, addr: u16) -> impl Yieldable<u8> + 'a {
         #[coroutine]
         move || {
-            // TODO: Could this be more granular? Does every access need to sync?
-            yield YieldReason::Sync(Device::CPU);
             if smp.borrow().test_mode {
-                smp.borrow_mut().step(1);
+                yield_all!(SMP::step(smp.clone(), 1));
                 return smp.borrow().ram[addr as usize];
             }
             let data = match addr {
@@ -809,7 +820,7 @@ impl SMP {
                 }
             };
             // TODO: Some clock cycles before the read, depending on region
-            smp.borrow_mut().step(1);
+            yield_all!(SMP::step(smp.clone(), 1));
             data
         }
     }
@@ -840,10 +851,10 @@ impl SMP {
         #[coroutine]
         move || {
             // TODO: Could this be more granular? Does every access need to sync?
-            yield YieldReason::Sync(Device::CPU);
+            // yield YieldReason::Sync(Device::CPU);
             if smp.borrow().test_mode {
                 smp.borrow_mut().ram[addr as usize] = data;
-                smp.borrow_mut().step(1);
+                yield_all!(SMP::step(smp.clone(), 1));
                 return;
             }
             // All writes always go to ram, even if they also go to e.g. IO
@@ -853,7 +864,7 @@ impl SMP {
                 _ => {}
             }
             // TODO: Some clock cycles before the write, depending on region
-            smp.borrow_mut().step(1);
+            yield_all!(SMP::step(smp.clone(), 1));
         }
     }
 
