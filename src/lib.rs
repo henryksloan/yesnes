@@ -4,6 +4,7 @@
 #![feature(type_alias_impl_trait)]
 #![feature(trait_alias)]
 #![feature(never_type)]
+#![feature(exhaustive_patterns)]
 #![feature(test)]
 
 extern crate test;

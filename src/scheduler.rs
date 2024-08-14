@@ -105,7 +105,6 @@ impl Scheduler {
                         self.curr_thread().waiting_for = Some(other_device);
                     }
                 }
-                _ => panic!("unexpected value from resume"),
             }
         }
     }
@@ -135,7 +134,6 @@ impl Scheduler {
                         _ => {}
                     }
                 }
-                _ => panic!("unexpected value from resume"),
             }
         }
     }
@@ -184,7 +182,6 @@ impl Scheduler {
                         _ => {}
                     }
                 }
-                _ => panic!("unexpected value from resume"),
             }
         }
     }

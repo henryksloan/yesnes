@@ -403,21 +403,9 @@ impl SMP {
     }
 
     pub fn new_test() -> Self {
-        Self {
-            reg: Registers::new(),
-            io_reg: IoRegisters::new(),
-            divider_8khz: 0,
-            divider_64khz: 0,
-            timer_dividers: [0; 3],
-            ticks_run: 0,
-            ram: vec![0; 0x10000].try_into().unwrap(),
-            stopped: false,
-            test_mode: true,
-            breakpoint_addrs: HashSet::new(),
-            debug_log: false,
-            debug_dsp_divider: 0,
-            debug_audio_buffer: VecDeque::with_capacity(32000),
-        }
+        let mut smp = Self::new();
+        smp.test_mode = true;
+        smp
     }
 
     pub fn registers(&self) -> &Registers {
