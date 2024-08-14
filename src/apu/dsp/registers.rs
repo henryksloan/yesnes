@@ -1,9 +1,12 @@
 use super::signed_magnitude_8::{LeftRight, SignedMagnitude8};
 
+use arrayvec::ArrayVec;
 use bitfield::bitfield;
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct Registers {
+    // Register offsets with no other purpose still function as read/writable RAM
+    pub raw_values: ArrayVec<u8, 0x80>,
     // Registers X0h-X9h for the eight channels numbered 0-7
     pub channels: [ChannelRegisters; 8],
     // 0Ch, 1Ch (MVOL): Left and right main channel volume, signed
@@ -22,28 +25,73 @@ pub struct Registers {
     pub noise_enable: NoiseEnable,
     // 4Dh (EON): Controls which channels have echo
     pub echo_enable: EchoEnable,
-    // 5Dh (DIR): High byte of BRR sample bank address, indexed by SRCN for each channel
+    // 5Dh (DIR): High byte of BRR sample directory address, indexed by SRCN for each channel
     pub brr_directory_hi8: u8,
     // 6Dh (ESA): High byte of the echo memory region
     pub echo_region_hi8: u8,
     // 7Dh (EDL): Echo delay time
     pub echo_delay: EchoDelay,
     // 0Fh-7Fh (C0-C7): Echo filter coefficients
-    pub echo_coeff: [SignedMagnitude8; 8],
+    pub echo_filter_coeff: [SignedMagnitude8; 8],
 }
 
+impl Registers {
+    pub fn new() -> Self {
+        Self {
+            raw_values: [0; 0x80].into(),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy)]
 pub struct ChannelRegisters {
     // X0h, X1h (VOL): Left and right channel volume, signed
     pub volume: LeftRight,
     // X2h, X3h (P): Sample pitch
     pub pitch: SamplePitch,
-    // X4h (SRCN; sometimes SCRN, which might be a typo): Sample source entry
+    // X4h (SRCN; sometimes SCRN, which might be a typo): Sample source entry in BRR directory (DIR)
     pub source_number: u8,
     // X5h, X6h (ADSR): Attack-Decay-Sustain-Release envelope control
     pub adsr_control: AdsrControl,
     // X7h (GAIN): Gain control
     pub gain_control: GainControl,
     // X8h (ENVX) and X9h (OUTX) are read-only and dynamic
+}
+
+impl ChannelRegisters {
+    // DO NOT SUBMIT: This seems to imply that this struct encapsulates an actual channel; rename and rework as such
+    pub fn read_reg(&self, reg_i: u8) -> u8 {
+        match reg_i {
+            0x0 => self.volume.left.0,
+            0x1 => self.volume.right.0,
+            0x2 => self.pitch.lo_byte(),
+            0x3 => self.pitch.hi_byte(),
+            0x4 => self.source_number,
+            0x5 => self.adsr_control.lo_byte(),
+            0x6 => self.adsr_control.hi_byte(),
+            0x7 => self.gain_control.0,
+            0x8 => 0, // TODO: ENVX
+            0x9 => 0, // TODO: GAIN
+            _ => panic!("Invalid channel register index {reg_i}"),
+        }
+    }
+
+    pub fn write_reg(&mut self, reg_i: u8, data: u8) {
+        match reg_i {
+            0x0 => self.volume.left.0 = data,
+            0x1 => self.volume.right.0 = data,
+            0x2 => self.pitch.set_lo_byte(data),
+            0x3 => self.pitch.set_hi_byte(data),
+            0x4 => self.source_number = data,
+            0x5 => self.adsr_control.set_lo_byte(data),
+            0x6 => self.adsr_control.set_hi_byte(data),
+            0x7 => self.gain_control.0 = data,
+            0x8 => {} // TODO: ENVX
+            0x9 => {} // TODO: GAIN
+            _ => panic!("Invalid channel register index {reg_i}"),
+        }
+    }
 }
 
 bitfield! {

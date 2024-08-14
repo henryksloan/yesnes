@@ -77,7 +77,7 @@ impl SNES {
         self.cpu.borrow_mut().reset();
         self.bus.borrow_mut().reset();
         self.ppu.borrow_mut().reset();
-        SMP::reset(self.smp.clone());
+        self.smp.borrow_mut().reset();
         self.scheduler =
             Self::create_scheduler(self.cpu.clone(), self.ppu.clone(), self.smp.clone());
     }

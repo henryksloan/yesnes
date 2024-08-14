@@ -18,6 +18,6 @@ impl Into<i8> for SignedMagnitude8 {
 // a common pattern in DSP registers (e.g. volume).
 #[derive(Clone, Copy, Default)]
 pub struct LeftRight {
-    left: SignedMagnitude8,
-    right: SignedMagnitude8,
+    pub left: SignedMagnitude8,
+    pub right: SignedMagnitude8,
 }

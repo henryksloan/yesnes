@@ -102,19 +102,14 @@ pub struct IoRegisters {
     // Ports written by CPU, read by SMP
     pub external_ports: [u8; 4],
     pub control: ControlRegister,
-    // TODO: Currently DSP stub
     pub dsp_addr: u8,
-    pub dsp_data: Vec<u8>,
     pub timer_divider_reloads: [u8; 3],
     pub timers: [u8; 3],
 }
 
 impl IoRegisters {
     pub fn new() -> Self {
-        Self {
-            dsp_data: vec![0; 0x80],
-            ..Default::default()
-        }
+        Default::default()
     }
 }
 

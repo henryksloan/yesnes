@@ -420,10 +420,10 @@ impl SMP {
         &mut self.reg
     }
 
-    pub fn debug_pitch(&mut self, channel_n: usize) -> u64 {
+    pub fn debug_pitch(&mut self, channel_n: u8) -> u64 {
         assert!(channel_n < 8);
-        let p = self.io_reg.dsp_data[0x10 * channel_n + 2] as u64
-            | ((0x3F & self.io_reg.dsp_data[0x10 * channel_n + 3] as u64) << 8);
+        let p = self.dsp.read_reg(0x10 * channel_n + 2) as u64
+            | ((0x3F & self.dsp.read_reg(0x10 * channel_n + 3) as u64) << 8);
         // let p = 0x38;
         // let p = 0x1000;
         // (p * 32_000) / 0x1000
@@ -439,8 +439,6 @@ impl SMP {
         self.io_reg.external_ports.fill(0);
         self.io_reg.control.0 = 0xB0;
         self.io_reg.dsp_addr = 0xFF;
-        // TODO: Apparently should be DSP[7Fh]
-        self.io_reg.dsp_data.fill(0);
         self.divider_8khz = 0;
         self.divider_64khz = 0;
         self.io_reg.timer_divider_reloads.fill(0xFF);
@@ -702,7 +700,7 @@ impl SMP {
             // 0x00F0 => todo!("IO reg read {addr:#06X}"),
             0x00F1 => 0,
             0x00F2 => self.io_reg.dsp_addr,
-            0x00F3 => self.io_reg.dsp_data[self.io_reg.dsp_addr as usize % 0x80],
+            0x00F3 => self.dsp.read_reg(self.io_reg.dsp_addr),
             0x00F4..=0x00F7 => self.io_reg.external_ports[addr as usize - 0x00F4],
             0x00F8..=0x00F9 => self.ram[addr as usize],
             0x00FA..=0x00FC => 0,
@@ -750,13 +748,11 @@ impl SMP {
                 0x00F2 => smp.borrow_mut().io_reg.dsp_addr = data,
                 0x00F3 => {
                     let dsp_addr = smp.borrow_mut().io_reg.dsp_addr;
-                    if dsp_addr < 0x80 {
-                        smp.borrow_mut().io_reg.dsp_data[dsp_addr as usize] = data;
-                    }
+                    smp.borrow_mut().dsp.write_reg(dsp_addr, data);
                 }
                 0x00F4..=0x00F7 => {
                     yield YieldReason::Sync(Device::CPU);
-                    smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data
+                    smp.borrow_mut().io_reg.internal_ports[addr as usize - 0x00F4] = data;
                 }
                 0x00F8..=0x00F9 => smp.borrow_mut().ram[addr as usize] = data,
                 0x00FA..=0x00FC => {
