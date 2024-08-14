@@ -13,3 +13,11 @@ impl Into<i8> for SignedMagnitude8 {
         (-1 * self.sign() as i8) * self.magnitude() as i8
     }
 }
+
+// A pair of signed magnitude integers for left and right channels,
+// a common pattern in DSP registers (e.g. volume).
+#[derive(Clone, Copy, Default)]
+pub struct LeftRight {
+    left: SignedMagnitude8,
+    right: SignedMagnitude8,
+}

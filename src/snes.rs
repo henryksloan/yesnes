@@ -71,6 +71,8 @@ impl SNES {
         self.bus.borrow_mut().load_cart(cart_path);
     }
 
+    // DO NOT SUBMIT: Currently, new() leaves components in a bad state, and reset() must be called
+    // to initialize them. Either document that or change it (leaning towards keeping that behavior).
     pub fn reset(&mut self) {
         self.cpu.borrow_mut().reset();
         self.bus.borrow_mut().reset();

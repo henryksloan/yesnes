@@ -2,6 +2,8 @@ pub mod registers;
 
 pub use registers::{IoRegisters, Registers, StatusRegister};
 
+use super::DSP;
+
 use crate::cpu::yield_ticks;
 use crate::scheduler::*;
 
@@ -367,6 +369,7 @@ struct AddressBit {
 
 /// The S-SMP, i.e. the SPC700 audio coprocessor
 pub struct SMP {
+    dsp: DSP,
     reg: Registers,
     io_reg: IoRegisters,
     divider_8khz: u8,
@@ -386,6 +389,7 @@ pub struct SMP {
 impl SMP {
     pub fn new() -> Self {
         Self {
+            dsp: DSP::new(),
             reg: Registers::new(),
             io_reg: IoRegisters::new(),
             divider_8khz: 0,
@@ -426,25 +430,25 @@ impl SMP {
         (p * 500) / 0x1000
     }
 
-    pub fn reset(smp: Rc<RefCell<SMP>>) {
-        smp.borrow_mut().ram.fill(0);
-        smp.borrow_mut().ticks_run = 0;
-        smp.borrow_mut().io_reg = IoRegisters::new();
-        smp.borrow_mut().io_reg.internal_ports.fill(0);
-        smp.borrow_mut().io_reg.external_ports.fill(0);
-        smp.borrow_mut().io_reg.control.0 = 0xB0;
-        smp.borrow_mut().io_reg.dsp_addr = 0xFF;
+    pub fn reset(&mut self) {
+        self.dsp.reset();
+        self.ram.fill(0);
+        self.ticks_run = 0;
+        self.io_reg = IoRegisters::new();
+        self.io_reg.internal_ports.fill(0);
+        self.io_reg.external_ports.fill(0);
+        self.io_reg.control.0 = 0xB0;
+        self.io_reg.dsp_addr = 0xFF;
         // TODO: Apparently should be DSP[7Fh]
-        smp.borrow_mut().io_reg.dsp_data.fill(0);
-        smp.borrow_mut().divider_8khz = 0;
-        smp.borrow_mut().divider_64khz = 0;
-        smp.borrow_mut().io_reg.timer_divider_reloads.fill(0xFF);
-        smp.borrow_mut().io_reg.timers.fill(0);
-        smp.borrow_mut().reg = Registers::new();
-        // TODO: Simplify
-        smp.borrow_mut().reg.pc = ignore_yields!(Self::read_u16(smp.clone(), RESET_VECTOR));
-        smp.borrow_mut().reg.sp = 0xEF;
-        smp.borrow_mut().stopped = false;
+        self.io_reg.dsp_data.fill(0);
+        self.divider_8khz = 0;
+        self.divider_64khz = 0;
+        self.io_reg.timer_divider_reloads.fill(0xFF);
+        self.io_reg.timers.fill(0);
+        self.reg = Registers::new();
+        self.reg.pc = self.peak_u16(RESET_VECTOR);
+        self.reg.sp = 0xEF;
+        self.stopped = false;
     }
 
     pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceCoroutine + 'a {
