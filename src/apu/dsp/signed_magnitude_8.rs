@@ -1,0 +1,15 @@
+use bitfield::bitfield;
+
+bitfield! {
+  #[derive(Clone, Copy, Default)]
+  pub struct SignedMagnitude8(u8);
+  impl Debug;
+  pub magnitude, _: 6, 0;
+  pub sign, _: 7;
+}
+
+impl Into<i8> for SignedMagnitude8 {
+    fn into(self) -> i8 {
+        (-1 * self.sign() as i8) * self.magnitude() as i8
+    }
+}

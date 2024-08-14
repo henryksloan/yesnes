@@ -365,7 +365,7 @@ struct AddressBit {
     pub invert: bool,
 }
 
-/// The SMP, i.e. the SPC700 audio coprocessor
+/// The S-SMP, i.e. the SPC700 audio coprocessor
 pub struct SMP {
     reg: Registers,
     io_reg: IoRegisters,
