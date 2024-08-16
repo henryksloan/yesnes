@@ -16,15 +16,16 @@ pub struct Registers {
     // DO NOT SUBMIT: add/document 4Ch (KON) and 5Ch (KOF)
     // 6Ch (FLG): Main control flags
     pub flags: ControlFlags,
-    // DO NOT SUBMIT: add/document 7Ch (ENDX)
+    // 7Ch (ENDX): Resettable bits set when a channel reaches the end of a BRR sample
+    pub endx: PerChannel,
     // 0Dh (EFB): Echo feedback
     pub echo_feedback: SignedMagnitude8,
     // 2Dh (PMON): Pitch modulation enablement
     pub pitch_modulation_enable: PitchModulationEnable,
     // 3Dh (NON): Controls which channels are noise channels
-    pub noise_enable: NoiseEnable,
+    pub noise_enable: PerChannel,
     // 4Dh (EON): Controls which channels have echo
-    pub echo_enable: EchoEnable,
+    pub echo_enable: PerChannel,
     // 5Dh (DIR): High byte of BRR sample directory address, indexed by SRCN for each channel
     pub brr_directory_hi8: u8,
     // 6Dh (ESA): High byte of the echo memory region
@@ -142,32 +143,28 @@ bitfield! {
 }
 
 #[derive(Clone, Copy, Default, Debug)]
+pub struct PerChannel(pub u8);
+
+impl PerChannel {
+    pub fn channel(&self, channel_i: usize) -> bool {
+        assert!(channel_i < 8);
+        (self.0 >> channel_i) & 1 == 1
+    }
+
+    pub fn set_channel(&mut self, channel_i: usize, val: bool) {
+        assert!(channel_i < 8);
+        let mask = (val as u8) << channel_i;
+        self.0 = (self.0 & !mask) | mask;
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug)]
 pub struct PitchModulationEnable(pub u8);
 
 impl PitchModulationEnable {
     pub fn channel_enabled(&self, channel_i: usize) -> bool {
         // Pitch modulation is controlled by the next lowest channel, so channel 0 can't use it
         assert!(channel_i > 1 && channel_i < 8);
-        (self.0 >> channel_i) & 1 == 1
-    }
-}
-
-#[derive(Clone, Copy, Default, Debug)]
-pub struct NoiseEnable(pub u8);
-
-impl NoiseEnable {
-    pub fn channel_enabled(&self, channel_i: usize) -> bool {
-        assert!(channel_i < 8);
-        (self.0 >> channel_i) & 1 == 1
-    }
-}
-
-#[derive(Clone, Copy, Default, Debug)]
-pub struct EchoEnable(pub u8);
-
-impl EchoEnable {
-    pub fn channel_enabled(&self, channel_i: usize) -> bool {
-        assert!(channel_i < 8);
         (self.0 >> channel_i) & 1 == 1
     }
 }

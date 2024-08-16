@@ -1,24 +1,103 @@
+pub mod channel;
 pub mod registers;
 pub mod signed_magnitude_8;
 
-pub use registers::Registers;
-pub use signed_magnitude_8::SignedMagnitude8;
+use channel::Channel;
+use registers::Registers;
 
 /// The S-DSP, the digital signal processor of the APU
 pub struct DSP {
     reg: Registers,
+    channels: [Channel; 8],
 }
 
 impl DSP {
     pub fn new() -> Self {
         Self {
             reg: Registers::new(),
+            channels: [Channel::default(); 8],
         }
     }
 
     pub fn reset(&mut self) {
         self.reg = Registers::new();
         self.reg.flags.0 = 0xE0;
+        for channel in &mut self.channels {
+            *channel = Channel::default();
+            channel.released = true;
+        }
+    }
+
+    // DO NOT SUBMIT: Converge on a common "tick"/"step", "clock"/"tick" terminology
+    pub fn tick(&mut self, apu_ram: &Box<[u8; 0x10000]>) {
+        for channel_i in 0..8 {
+            let new_pitch_counter = self.channels[channel_i].pitch_remainder
+                + self.reg.channels[channel_i].pitch.pitch();
+            self.channels[channel_i].brr_cursor += (new_pitch_counter / 0x1000) as usize;
+            self.channels[channel_i].pitch_remainder = new_pitch_counter % 0x1000;
+            if self.channels[channel_i].brr_cursor >= 16 {
+                // The max pitch is 0x3FFF, so it's impossible to skip an entire sample buffer
+                // DO NOT SUBMIT: Do we always start from the beginning of the next?
+                self.channels[channel_i].brr_cursor %= 16;
+                let brr_header = self.channels[channel_i].brr_header(apu_ram);
+                if brr_header.end_flag() {
+                    // DO NOT SUBMIT: fullsnes says that we "jump to Loop-address" regardless of loop_flag, but that *at least* seems irrelavent
+                    self.reg.endx.set_channel(channel_i, true);
+                    if brr_header.loop_flag() {
+                        self.channels[channel_i].brr_cursor = 0;
+                        // Set the channel's new BRR address to the loop address from the directory table
+                        // DO NOT SUBMIT: Refactor this and the KON addr check
+                        // let dir_addr = ((self.reg.brr_directory_hi8 as usize) << 8)
+                        //     | (self.reg.channels[channel_i].source_number as usize * 4);
+                        let dir_addr = (self.reg.brr_directory_hi8 as usize * 0x100)
+                            + (self.reg.channels[channel_i].source_number as usize * 4);
+                        self.channels[channel_i].brr_block_addr =
+                            ((apu_ram[(dir_addr + 3) % 0x10000] as u16) << 8)
+                                | (apu_ram[(dir_addr + 2) % 0x10000] as u16);
+                    } else {
+                        self.channels[channel_i].released = true;
+                    }
+                } else {
+                    // Continue to the next 9-byte BRR block
+                    self.channels[channel_i].brr_block_addr =
+                        self.channels[channel_i].brr_block_addr.wrapping_add(9);
+                }
+            }
+        }
+    }
+
+    pub fn debug_get_value(&mut self, channel_i: usize, apu_ram: &Box<[u8; 0x10000]>) -> i16 {
+        assert!(channel_i < 8);
+        if self.channels[channel_i].released {
+            return 0;
+        }
+        let brr_header = self.channels[channel_i].brr_header(apu_ram);
+        // The block address points to the header, so add 1 for the first actual sample address
+        let brr_base = self.channels[channel_i].brr_block_addr as usize + 1;
+        let (brr_byte, brr_nibble) = (
+            self.channels[channel_i].brr_cursor / 2,
+            1 - (self.channels[channel_i].brr_cursor % 2),
+        );
+        let sample = {
+            let nibble = (apu_ram[brr_base + brr_byte] >> (4 * brr_nibble)) & 0xF;
+            let signed_nibble = ((nibble << 4) as i8) >> 4;
+            // DO NOT SUBMIT: shift=13..15 might be a special case?
+            ((signed_nibble as i16) << brr_header.shift()) >> 1
+        };
+        let scale_sample = |val: i16, numer: i32, denom: i32| ((val as i32 * numer) / denom) as i16;
+        let prev_two = &mut self.channels[channel_i].prev_two_samples;
+        let result = match brr_header.filter() {
+            0 => sample,
+            1 => sample.saturating_add(scale_sample(prev_two[0], 15, 16)),
+            2 => sample
+                .saturating_add(scale_sample(prev_two[0], 61, 32))
+                .saturating_add(scale_sample(prev_two[1], 15, 16)),
+            3 | _ => sample
+                .saturating_add(scale_sample(prev_two[0], 115, 64))
+                .saturating_add(scale_sample(prev_two[1], 13, 16)),
+        };
+        *prev_two = [sample, prev_two[0]];
+        result
     }
 
     pub fn read_reg(&self, reg_i: u8) -> u8 {
@@ -35,7 +114,7 @@ impl DSP {
                 0x2 => self.reg.echo_volume.left.0,
                 0x3 => self.reg.echo_volume.right.0,
                 0x6 => self.reg.flags.0,
-                0x7 => self.reg.raw_values[read_reg_i as usize], // DO NOT SUBMIT: ENDX
+                0x7 => self.reg.endx.0,
                 _ => self.reg.raw_values[read_reg_i as usize],
             },
             (global_reg_i, 0xD) => match global_reg_i {
@@ -56,7 +135,8 @@ impl DSP {
         }
     }
 
-    pub fn write_reg(&mut self, reg_i: u8, data: u8) {
+    // DO NOT SUBMIT: Maybe just make apu_ram an Rc<RefCell>... :(
+    pub fn write_reg(&mut self, reg_i: u8, data: u8, apu_ram: &Box<[u8; 0x10000]>) {
         // The top half of the DSP address space is a read-only mirror of the bottom half
         if reg_i >= 0x80 {
             return;
@@ -72,8 +152,35 @@ impl DSP {
                 0x1 => self.reg.main_volume.right.0 = data,
                 0x2 => self.reg.echo_volume.left.0 = data,
                 0x3 => self.reg.echo_volume.right.0 = data,
+                0x4 => {
+                    // KON: Start playing a note
+                    // DO NOT SUBMIT: KON and KOF are clocked at 16000Hz... see fullsnes
+                    for channel_i in 0..8 {
+                        if (data >> channel_i) & 1 == 1 {
+                            let dir_addr = (self.reg.brr_directory_hi8 as usize * 0x100)
+                                + (self.reg.channels[channel_i].source_number as usize * 4);
+                            self.channels[channel_i].brr_block_addr =
+                                ((apu_ram[(dir_addr + 1) % 0x10000] as u16) << 8)
+                                    | (apu_ram[dir_addr % 0x10000] as u16);
+                            self.channels[channel_i].brr_cursor = 0;
+                            // self.channels[channel_i].pitch_remainder = 0;
+                            self.channels[channel_i].released = false;
+                            // DO NOT SUBMIT: Does anything flush prev_two_samples?
+                        }
+                    }
+                }
+                0x5 => {
+                    // KOF: Put channel in released state
+                    for channel_i in 0..8 {
+                        if (data >> channel_i) & 1 == 1 {
+                            // DO NOT SUBMIT: "released" is actually an ADSR state, so this should decay to zero at a constant rate (not instant)
+                            self.channels[channel_i].released = true;
+                        }
+                    }
+                }
+                // DO NOT SUBMIT: If soft reset, key off all, zero envelope
                 0x6 => self.reg.flags.0 = data,
-                0x7 => {} // DO NOT SUBMIT: ACK ENDX
+                0x7 => self.reg.endx.0 = 0,
                 _ => {}
             },
             (global_reg_i, 0xD) => match global_reg_i {

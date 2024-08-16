@@ -181,16 +181,38 @@ impl AppWindow for ScreenWindow {
                     let sample_ratio = 32000. / self.audio_sample_rate.0 as f32;
                     // let sample_ratio = 1.;
                     let adjusted_samples = (sample_ratio * num_samples as f32) as usize;
-                    let smp_pitch = snes.debug_take_audio(adjusted_samples);
+                    // let smp_pitch = snes.debug_take_pitch(adjusted_samples);
                     // while debug_audio_buffer.len() < 2 * (self.audio_sample_rate.0 as usize / 60) {
+                    // for i in 0..num_samples {
+                    //     // while debug_audio_buffer.len() < self.audio_sample_rate.0 as usize {
+                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)());
+                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)(440.));
+                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)(smp_pitch[i].0));
+                    //     debug_audio_buffer.push_back((self.debug_audio_generator)(
+                    //         smp_pitch[(i as f32 * sample_ratio) as usize % adjusted_samples].0,
+                    //     ));
+                    // }
+
+                    let smp_val = snes.debug_take_audio(adjusted_samples);
+                    // for i in 0..num_samples {
+                    //     // while debug_audio_buffer.len() < self.audio_sample_rate.0 as usize {
+                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)());
+                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)(440.));
+                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)(smp_pitch[i].0));
+                    //     debug_audio_buffer.push_back(
+                    //         smp_val[(i as f32 * sample_ratio) as usize % adjusted_samples],
+                    //     );
+                    // }
+
+                    // Simple linear interpolation
                     for i in 0..num_samples {
-                        // while debug_audio_buffer.len() < self.audio_sample_rate.0 as usize {
-                        // debug_audio_buffer.push_back((self.debug_audio_generator)());
-                        // debug_audio_buffer.push_back((self.debug_audio_generator)(440.));
-                        // debug_audio_buffer.push_back((self.debug_audio_generator)(smp_pitch[i].0));
-                        debug_audio_buffer.push_back((self.debug_audio_generator)(
-                            smp_pitch[(i as f32 * sample_ratio) as usize % adjusted_samples].0,
-                        ));
+                        let intermediate_i = i as f32 * sample_ratio;
+                        let fract = (i as f32 * sample_ratio).fract();
+                        let val = (smp_val[(intermediate_i.floor()) as usize % adjusted_samples].0
+                            * fract)
+                            + (smp_val[(intermediate_i.ceil()) as usize % adjusted_samples].0
+                                * (1.0 - fract));
+                        debug_audio_buffer.push_back((val, val));
                     }
                 }
             }
