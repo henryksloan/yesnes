@@ -60,13 +60,15 @@ impl DSP {
                         self.channels[channel_i].brr_block_addr.wrapping_add(9);
                 }
             }
+            // DO NOT SUBMIT: Might have to separate this for e.g. pitch modulation
+            self.tick_channel(channel_i, apu_ram);
         }
     }
 
-    pub fn get_output(&mut self, apu_ram: &Box<[u8; 0x10000]>) -> (i16, i16) {
+    pub fn get_output(&mut self) -> (i16, i16) {
         let (mut sum_left, mut sum_right) = (0i16, 0i16);
         for channel_i in 0..8 {
-            let channel_out = self.get_channel_output(channel_i, apu_ram);
+            let channel_out = self.channels[channel_i].output;
             // DO NOT SUBMIT: Make this arithmetic/signed magnitude better
             // DO NOT SUBMIT: fullsnes says "with 16bit overflow handling (after each addition)"... what?
             sum_left = sum_left.wrapping_add(
@@ -88,10 +90,10 @@ impl DSP {
         (sum_left, sum_right)
     }
 
-    fn get_channel_output(&mut self, channel_i: usize, apu_ram: &Box<[u8; 0x10000]>) -> i16 {
+    fn tick_channel(&mut self, channel_i: usize, apu_ram: &Box<[u8; 0x10000]>) {
         assert!(channel_i < 8);
         if self.channels[channel_i].released {
-            return 0;
+            return;
         }
         let brr_header = self.channels[channel_i].brr_header(apu_ram);
         // The block address points to the header, so add 1 for the first actual sample address
@@ -108,7 +110,7 @@ impl DSP {
         };
         let scale_sample = |val: i16, numer: i32, denom: i32| ((val as i32 * numer) / denom) as i16;
         let prev_two = &mut self.channels[channel_i].prev_two_samples;
-        let result = match brr_header.filter() {
+        let mut result = match brr_header.filter() {
             0 => sample,
             1 => sample.saturating_add(scale_sample(prev_two[0], 15, 16)),
             2 => sample
@@ -119,7 +121,24 @@ impl DSP {
                 .saturating_add(scale_sample(prev_two[1], 13, 16)),
         };
         *prev_two = [sample, prev_two[0]];
-        result
+
+        let envelope_val = if self.reg.channels[channel_i].adsr_control.adsr_enable() {
+            // DO NOT SUBMIT
+            0x7FF
+        } else {
+            if self.reg.channels[channel_i].gain_control.custom_gain() {
+                // DO NOT SUBMIT
+                0x7FF
+            } else {
+                self.reg.channels[channel_i].gain_control.fixed_volume() as u16 * 16
+            }
+        };
+        self.reg.channels[channel_i].envx = (envelope_val >> 4) as u8;
+
+        result = ((result as i32 * envelope_val as i32) / 0x800) as i16;
+
+        self.channels[channel_i].output = result;
+        self.reg.channels[channel_i].outx = (result >> 8) as u8;
     }
 
     pub fn read_reg(&self, reg_i: u8) -> u8 {

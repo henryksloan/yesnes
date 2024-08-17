@@ -13,6 +13,9 @@ pub struct Channel {
     pub pitch_remainder: u16,
     // DO NOT SUBMIT: I think this is actually part of an envelope Attack/Delay/Sustain/Release state machine
     pub released: bool,
+    // The output of the channel, updated at 32000Hz. The high byte is exposed via VxOUTX.
+    // DO NOT SUBMIT: Adopt SignedMagnitude throughout?
+    pub output: i16,
     // For BRR filtering; [sample i-1, sample i-2]
     pub prev_two_samples: [i16; 2],
 }

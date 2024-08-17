@@ -62,7 +62,10 @@ pub struct ChannelRegisters {
     pub adsr_control: AdsrControl,
     // X7h (GAIN): Gain control
     pub gain_control: GainControl,
-    // X8h (ENVX) and X9h (OUTX) are read-only and dynamic
+    // X8h (ENVX) The high 7 bits of the channel's 11-bit envelope
+    pub envx: u8,
+    // X9h (OUTX): The high byte of the channel's output
+    pub outx: u8,
 }
 
 impl ChannelRegisters {
@@ -77,8 +80,8 @@ impl ChannelRegisters {
             0x5 => self.adsr_control.lo_byte(),
             0x6 => self.adsr_control.hi_byte(),
             0x7 => self.gain_control.0,
-            0x8 => 0, // TODO: ENVX
-            0x9 => 0, // TODO: GAIN
+            0x8 => self.envx,
+            0x9 => self.outx,
             _ => panic!("Invalid channel register index {reg_i}"),
         }
     }
@@ -93,8 +96,10 @@ impl ChannelRegisters {
             0x5 => self.adsr_control.set_lo_byte(data),
             0x6 => self.adsr_control.set_hi_byte(data),
             0x7 => self.gain_control.0 = data,
-            0x8 => {} // TODO: ENVX
-            0x9 => {} // TODO: GAIN
+            // These two registers are technically writable, but they are overwritten every tick
+            // TODO: Should these writes reflect in the actual output? Maybe not?
+            0x8 => self.envx = data,
+            0x9 => self.outx = data,
             _ => panic!("Invalid channel register index {reg_i}"),
         }
     }

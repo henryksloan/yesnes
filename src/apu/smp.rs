@@ -674,7 +674,7 @@ impl SMP {
                 smp.borrow_mut().debug_dsp_divider -= 32;
                 let smp = &mut *smp.borrow_mut();
                 smp.dsp.tick(&smp.ram);
-                let audio_output = smp.dsp.get_output(&smp.ram);
+                let audio_output = smp.dsp.get_output();
                 if smp.debug_audio_buffer.len() < 32000 {
                     smp.debug_audio_buffer.push_back((
                         // DO NOT SUBMIT: Temporarily attenuating to save my ears
