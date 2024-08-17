@@ -69,7 +69,6 @@ pub struct ChannelRegisters {
 }
 
 impl ChannelRegisters {
-    // DO NOT SUBMIT: This seems to imply that this struct encapsulates an actual channel; rename and rework as such
     pub fn read_reg(&self, reg_i: u8) -> u8 {
         match reg_i {
             0x0 => self.volume.left.0,

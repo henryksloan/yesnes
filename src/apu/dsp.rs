@@ -9,13 +9,40 @@ use registers::Registers;
 pub struct DSP {
     reg: Registers,
     channels: [Channel; 8],
+    // A timer that is zero on reset and decrements each DSP tick (32000Hz), wrapping up to 0x77FF
+    rate_counter: u16,
 }
+
+// rate_counter triggers ADSR/GAIN/noise events when (counter + offset) % period != 0
+// Where counter and offset are selected from these tables based on rate registers.
+const RATE_COUNTER_MAX: u16 = 0x77FF;
+#[rustfmt::skip]
+const RATE_COUNTER_PERIODS: [u16; 32] = [
+    // V=0 represents an infinite period; this value ensures (counter + offset) % period != 0
+    // (since the corresponding offset is 536)
+    0xFFFF,
+          2048, 1536,
+    1280, 1024,  768,
+     640,  512,  384,
+     320,  256,  192,
+     160,  128,   96,
+      80,   64,   48,
+      40,   32,   24,
+      20,   16,   12,
+      10,    8,    6,
+       5,    4,    3,
+       2,    1
+];
+// Each column of the period table has a delay offset w.r.t. rate_counter. This table is indexed by
+// the appropriate rate register modulo 3.
+const RATE_COUNTER_OFFSETS: [u16; 3] = [536, 0, 1024];
 
 impl DSP {
     pub fn new() -> Self {
         Self {
             reg: Registers::new(),
             channels: [Channel::default(); 8],
+            rate_counter: 0,
         }
     }
 
@@ -26,6 +53,7 @@ impl DSP {
             *channel = Channel::default();
             channel.released = true;
         }
+        self.rate_counter = 0;
     }
 
     // DO NOT SUBMIT: Converge on a common "tick"/"step", "clock"/"tick" terminology
@@ -92,7 +120,68 @@ impl DSP {
             }
             // DO NOT SUBMIT: Might have to separate this for e.g. pitch modulation
             self.tick_channel(channel_i);
+            self.rate_counter = self.rate_counter.wrapping_sub(1).min(RATE_COUNTER_MAX);
         }
+    }
+
+    // ADSR/GAIN/noise operations are clocked by the rate_counter according to the period and
+    // offset tables. This function returns whether the operation should be applied on the current DSP tick.
+    fn rate_operation_applies(&self, rate: u8) -> bool {
+        (self.rate_counter + RATE_COUNTER_OFFSETS[rate as usize % 3])
+            % RATE_COUNTER_PERIODS[rate as usize]
+            == 0
+    }
+
+    fn tick_channel(&mut self, channel_i: usize) {
+        assert!(channel_i < 8);
+
+        // The Release state applies regardless of the ADSR and GAIN settings
+        if self.channels[channel_i].released {
+            self.channels[channel_i].envelope_level =
+                self.channels[channel_i].envelope_level.saturating_sub(8);
+        }
+        // DO NOT SUBMIT: Bind self.reg.channels[channel_i] etc. to reference variables
+        if self.reg.channels[channel_i].adsr_control.adsr_enable() {
+            // DO NOT SUBMIT
+            self.channels[channel_i].envelope_level = 0x7FF;
+        } else {
+            if self.reg.channels[channel_i].gain_control.custom_gain() {
+                if self.rate_operation_applies(self.reg.channels[channel_i].gain_control.rate()) {
+                    self.channels[channel_i].envelope_level =
+                        match self.reg.channels[channel_i].gain_control.mode() {
+                            // Linear decrease
+                            0 => self.channels[channel_i].envelope_level.saturating_sub(32),
+                            // Exponential decrease
+                            1 => self.channels[channel_i]
+                                .envelope_level
+                                .saturating_sub((self.channels[channel_i].envelope_level >> 8) + 1),
+                            // Linear increase
+                            2 => self.channels[channel_i].envelope_level.saturating_add(32),
+                            // Bent increase
+                            3 => self.channels[channel_i].envelope_level.saturating_add(
+                                if self.channels[channel_i].envelope_level < 0x600 {
+                                    32
+                                } else {
+                                    8
+                                },
+                            ),
+                            // DO NOT SUBMIT: This is useful, use it throughout
+                            _ => unreachable!(),
+                        };
+                }
+            } else {
+                self.channels[channel_i].envelope_level =
+                    self.reg.channels[channel_i].gain_control.fixed_volume() as u16 * 16;
+            };
+        };
+        let envelope_level = self.channels[channel_i].envelope_level;
+        self.reg.channels[channel_i].envx = (envelope_level >> 4) as u8;
+
+        let mut result = self.channels[channel_i].playing_sample;
+        result = ((result as i32 * envelope_level as i32) / 0x800) as i16;
+
+        self.channels[channel_i].output = result;
+        self.reg.channels[channel_i].outx = (result >> 8) as u8;
     }
 
     pub fn get_output(&mut self) -> (i16, i16) {
@@ -118,33 +207,6 @@ impl DSP {
             ((sum_right as i32 * Into::<i8>::into(self.reg.main_volume.right) as i32) >> 7) as i16;
         // DO NOT SUBMIT: Mute and "final phase inversion"
         (sum_left, sum_right)
-    }
-
-    fn tick_channel(&mut self, channel_i: usize) {
-        assert!(channel_i < 8);
-        if self.channels[channel_i].released {
-            return;
-        }
-
-        let envelope_level = if self.reg.channels[channel_i].adsr_control.adsr_enable() {
-            // DO NOT SUBMIT
-            0x7FF
-        } else {
-            if self.reg.channels[channel_i].gain_control.custom_gain() {
-                // DO NOT SUBMIT
-                0x7FF
-            } else {
-                self.reg.channels[channel_i].gain_control.fixed_volume() as u16 * 16
-            }
-        };
-        self.channels[channel_i].envelope_level = envelope_level;
-        self.reg.channels[channel_i].envx = (envelope_level >> 4) as u8;
-
-        let mut result = self.channels[channel_i].playing_sample;
-        result = ((result as i32 * envelope_level as i32) / 0x800) as i16;
-
-        self.channels[channel_i].output = result;
-        self.reg.channels[channel_i].outx = (result >> 8) as u8;
     }
 
     pub fn read_reg(&self, reg_i: u8) -> u8 {
@@ -209,8 +271,10 @@ impl DSP {
                                 ((apu_ram[(dir_addr + 1) % 0x10000] as u16) << 8)
                                     | (apu_ram[dir_addr % 0x10000] as u16);
                             self.channels[channel_i].brr_cursor = 0;
+                            // DO NOT SUBMIT: What about pitch_remainder?
                             // self.channels[channel_i].pitch_remainder = 0;
                             self.channels[channel_i].released = false;
+                            self.channels[channel_i].envelope_level = 0;
                             // DO NOT SUBMIT: Does anything flush prev_two_samples?
                         }
                     }
