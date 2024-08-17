@@ -78,7 +78,6 @@ pub struct ScreenWindow {
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
     lock_fps: bool,
-    debug_audio_generator: Box<dyn FnMut(f32) -> (f32, f32)>,
     debug_audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>,
     audio_sample_rate: SampleRate,
     audio_stream: Stream,
@@ -94,16 +93,6 @@ impl ScreenWindow {
         let (audio_stream, sample_rate) = make_audio_stream(debug_audio_buffer.clone());
         audio_stream.pause().unwrap();
 
-        let amplitude = 0.01; // up to 1.0
-        let mut sample_clock = 0f32;
-        let next_value = move |freq: f32| {
-            sample_clock = (sample_clock + 1.0) % sample_rate.0 as f32;
-            let result = amplitude
-                // * (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate.0 as f32).sin();
-                * (sample_clock * freq * 2.0 * std::f32::consts::PI / sample_rate.0 as f32).sin();
-            (result, result)
-        };
-
         Self {
             id,
             title,
@@ -114,7 +103,6 @@ impl ScreenWindow {
             frame_history: FrameHistory::new(),
             previous_frame_instant: None,
             lock_fps: true,
-            debug_audio_generator: Box::new(next_value),
             debug_audio_buffer,
             audio_sample_rate: sample_rate,
             audio_stream,
@@ -170,40 +158,13 @@ impl AppWindow for ScreenWindow {
                 }
 
                 if let Ok(mut debug_audio_buffer) = self.debug_audio_buffer.lock() {
-                    // for i in 0..self.audio_sample_rate.0 / 60 {
-                    // while debug_audio_buffer.len() < 3 * (self.audio_sample_rate.0 as usize / 60) / 2 {
-                    // println!("{}", debug_audio_buffer.len());
                     let num_samples = (2 * (self.audio_sample_rate.0 as usize / 60))
                         .saturating_sub(debug_audio_buffer.len());
-                    // let num_samples = (self.audio_sample_rate.0 as usize / 60)
-                    //     .saturating_sub(debug_audio_buffer.len());
-                    // let smp_pitch = snes.debug_take_audio(num_samples);
                     let sample_ratio = 32000. / self.audio_sample_rate.0 as f32;
                     // let sample_ratio = 1.;
                     let adjusted_samples = (sample_ratio * num_samples as f32) as usize;
-                    // let smp_pitch = snes.debug_take_pitch(adjusted_samples);
-                    // while debug_audio_buffer.len() < 2 * (self.audio_sample_rate.0 as usize / 60) {
-                    // for i in 0..num_samples {
-                    //     // while debug_audio_buffer.len() < self.audio_sample_rate.0 as usize {
-                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)());
-                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)(440.));
-                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)(smp_pitch[i].0));
-                    //     debug_audio_buffer.push_back((self.debug_audio_generator)(
-                    //         smp_pitch[(i as f32 * sample_ratio) as usize % adjusted_samples].0,
-                    //     ));
-                    // }
 
                     let smp_val = snes.debug_take_audio(adjusted_samples);
-                    // for i in 0..num_samples {
-                    //     // while debug_audio_buffer.len() < self.audio_sample_rate.0 as usize {
-                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)());
-                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)(440.));
-                    //     // debug_audio_buffer.push_back((self.debug_audio_generator)(smp_pitch[i].0));
-                    //     debug_audio_buffer.push_back(
-                    //         smp_val[(i as f32 * sample_ratio) as usize % adjusted_samples],
-                    //     );
-                    // }
-
                     // Simple linear interpolation
                     for i in 0..num_samples {
                         let intermediate_i = i as f32 * sample_ratio;

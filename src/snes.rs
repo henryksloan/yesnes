@@ -128,19 +128,6 @@ impl SNES {
         DebugSmp::new(self.smp.clone())
     }
 
-    pub fn debug_take_pitch(&mut self, samples: usize) -> Vec<(f32, f32)> {
-        let mut buffer = vec![(0.0, 0.0); samples];
-        for i in 0..samples {
-            if let Some(value) = self.smp.borrow_mut().debug_pitch_buffer.pop_front() {
-                buffer[i] = value;
-            } else {
-                println!("AAA {i}");
-                break;
-            }
-        }
-        buffer
-    }
-
     pub fn debug_take_audio(&mut self, samples: usize) -> Vec<(f32, f32)> {
         let mut buffer = vec![(0.0, 0.0); samples];
         for i in 0..samples {
@@ -166,9 +153,9 @@ mod tests {
     fn bench_1_frame(b: &mut Bencher) {
         let mut snes = SNES::new();
         // TODO: Fill in some local testdata
-        snes.load_cart("");
-        snes.reset();
-        b.iter(move || while !snes.run_instruction_debug(Device::CPU, None).1 {});
+        // snes.load_cart("");
+        // snes.reset();
+        // b.iter(move || while !snes.run_instruction_debug(Device::CPU, None).1 {});
     }
 
     // #[bench]

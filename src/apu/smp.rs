@@ -383,7 +383,6 @@ pub struct SMP {
     pub breakpoint_addrs: HashSet<u16>,
     debug_log: bool, // TODO: Remove this debugging tool
     debug_dsp_divider: u8,
-    pub debug_pitch_buffer: VecDeque<(f32, f32)>,
     pub debug_audio_buffer: VecDeque<(f32, f32)>,
 }
 
@@ -403,7 +402,6 @@ impl SMP {
             breakpoint_addrs: HashSet::new(),
             debug_log: false,
             debug_dsp_divider: 0,
-            debug_pitch_buffer: VecDeque::with_capacity(32000),
             debug_audio_buffer: VecDeque::with_capacity(32000),
         }
     }
@@ -653,7 +651,7 @@ impl SMP {
                 if smp.divider_8khz >= 128 {
                     smp.divider_8khz -= 128;
                     for i in 0..2 {
-                        smp.timer_dividers[i] += n_clocks;
+                        smp.timer_dividers[i] = smp.timer_dividers[i].wrapping_add(1);
                         if smp.timer_dividers[i] >= smp.io_reg.timer_divider_reloads[i] {
                             smp.timer_dividers[i] -= smp.io_reg.timer_divider_reloads[i];
                             smp.io_reg.timers[i] = smp.io_reg.timers[i].wrapping_add(1)
@@ -663,7 +661,7 @@ impl SMP {
                 smp.divider_64khz += n_clocks;
                 if smp.divider_64khz >= 16 {
                     smp.divider_64khz -= 16;
-                    smp.timer_dividers[2] += n_clocks;
+                    smp.timer_dividers[2] = smp.timer_dividers[2].wrapping_add(1);
                     if smp.timer_dividers[2] >= smp.io_reg.timer_divider_reloads[2] {
                         smp.timer_dividers[2] -= smp.io_reg.timer_divider_reloads[2];
                         smp.io_reg.timers[2] = smp.io_reg.timers[2].wrapping_add(1)
@@ -674,11 +672,6 @@ impl SMP {
             smp.borrow_mut().debug_dsp_divider += n_clocks;
             if smp.borrow_mut().debug_dsp_divider >= 32 {
                 smp.borrow_mut().debug_dsp_divider -= 32;
-                if smp.borrow_mut().debug_pitch_buffer.len() < 32000 {
-                    let smp = &mut *smp.borrow_mut();
-                    let pitch = smp.debug_pitch(0) as f32;
-                    smp.debug_pitch_buffer.push_back((pitch, pitch));
-                }
                 if smp.borrow_mut().debug_audio_buffer.len() < 32000 {
                     let smp = &mut *smp.borrow_mut();
                     // DO NOT SUBMIT: Generating samples has side-effects, and should
@@ -704,20 +697,10 @@ impl SMP {
         }
     }
 
-    pub fn debug_pitch(&mut self, channel_i: u8) -> u64 {
-        assert!(channel_i < 8);
-        let p = self.dsp.read_reg(0x10 * channel_i + 2) as u64
-            | ((0x3F & self.dsp.read_reg(0x10 * channel_i + 3) as u64) << 8);
-        // let p = 0x38;
-        // let p = 0x1000;
-        // (p * 32_000) / 0x1000
-        (p * 500) / 0x1000
-    }
-
     pub fn debug_val(&mut self, channel_i: usize) -> f32 {
         assert!(channel_i < 8);
         // DO NOT SUBMIT: Temporarily attenuating to save my ears
-        0.1 * ((self.dsp.debug_get_value(channel_i, &self.ram) as f32) / (i16::MAX as f32))
+        0.2 * ((self.dsp.debug_get_value(channel_i, &self.ram) as f32) / (i16::MAX as f32))
     }
 
     fn peak_io_reg(&self, addr: u16) -> u8 {

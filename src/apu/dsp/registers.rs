@@ -43,6 +43,11 @@ impl Registers {
             ..Default::default()
         }
     }
+
+    pub fn brr_dir_base(&self, channel_i: usize) -> u16 {
+        (self.brr_directory_hi8 as u16 * 0x100)
+            .wrapping_add((self.channels[channel_i].source_number as u16 * 4))
+    }
 }
 
 #[derive(Default, Clone, Copy)]

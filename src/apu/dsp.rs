@@ -44,13 +44,10 @@ impl DSP {
                     // DO NOT SUBMIT: fullsnes says that we "jump to Loop-address" regardless of loop_flag, but that *at least* seems irrelavent
                     self.reg.endx.set_channel(channel_i, true);
                     if brr_header.loop_flag() {
+                        // DO NOT SUBMIT: Does this start from the beginning of the next?
                         self.channels[channel_i].brr_cursor = 0;
                         // Set the channel's new BRR address to the loop address from the directory table
-                        // DO NOT SUBMIT: Refactor this and the KON addr check
-                        // let dir_addr = ((self.reg.brr_directory_hi8 as usize) << 8)
-                        //     | (self.reg.channels[channel_i].source_number as usize * 4);
-                        let dir_addr = (self.reg.brr_directory_hi8 as usize * 0x100)
-                            + (self.reg.channels[channel_i].source_number as usize * 4);
+                        let dir_addr = self.reg.brr_dir_base(channel_i) as usize;
                         self.channels[channel_i].brr_block_addr =
                             ((apu_ram[(dir_addr + 3) % 0x10000] as u16) << 8)
                                 | (apu_ram[(dir_addr + 2) % 0x10000] as u16);
@@ -157,8 +154,7 @@ impl DSP {
                     // DO NOT SUBMIT: KON and KOF are clocked at 16000Hz... see fullsnes
                     for channel_i in 0..8 {
                         if (data >> channel_i) & 1 == 1 {
-                            let dir_addr = (self.reg.brr_directory_hi8 as usize * 0x100)
-                                + (self.reg.channels[channel_i].source_number as usize * 4);
+                            let dir_addr = self.reg.brr_dir_base(channel_i) as usize;
                             self.channels[channel_i].brr_block_addr =
                                 ((apu_ram[(dir_addr + 1) % 0x10000] as u16) << 8)
                                     | (apu_ram[dir_addr % 0x10000] as u16);
