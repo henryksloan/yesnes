@@ -118,10 +118,10 @@ bitfield! {
   #[derive(Clone, Copy, Default)]
   pub struct AdsrControl(u16);
   impl Debug;
-  pub attack_rate, _: 3, 0;
-  pub decay_rate, _: 6, 4;
+  pub u8, attack_rate, _: 3, 0;
+  pub u8, decay_rate, _: 6, 4;
   pub adsr_enable, _: 7;
-  pub sustain_rate, _: 12, 8;
+  pub u8, sustain_rate, _: 12, 8;
   pub sustain_level, _: 15, 13;
 
   pub u8, lo_byte, set_lo_byte: 7, 0;
@@ -139,6 +139,9 @@ bitfield! {
   pub mode, _: 6, 5;
   // Selects between 0=direct and 1=custom gain modes
   pub custom_gain, _: 7;
+  // If VxGAIN is in use, the ADSR state still changes, but the sustain_level boundary is read
+  // from VxGAIN instead of VxADSR.
+  pub u16, garbage_boundary, _: 7, 5;
 }
 
 bitfield! {

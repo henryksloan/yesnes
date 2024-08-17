@@ -2,7 +2,7 @@ pub mod channel;
 pub mod registers;
 pub mod signed_magnitude_8;
 
-use channel::Channel;
+use channel::{AdsrState, Channel};
 use registers::Registers;
 
 /// The S-DSP, the digital signal processor of the APU
@@ -37,6 +37,13 @@ const RATE_COUNTER_PERIODS: [u16; 32] = [
 // the appropriate rate register modulo 3.
 const RATE_COUNTER_OFFSETS: [u16; 3] = [536, 0, 1024];
 
+// ADSR/GAIN/noise operations are clocked by the rate_counter according to the period and
+// offset tables. This function returns whether the operation should be applied given the counter value.
+fn rate_operation_applies(rate_counter: u16, rate: u8) -> bool {
+    (rate_counter + RATE_COUNTER_OFFSETS[rate as usize % 3]) % RATE_COUNTER_PERIODS[rate as usize]
+        == 0
+}
+
 impl DSP {
     pub fn new() -> Self {
         Self {
@@ -51,7 +58,7 @@ impl DSP {
         self.reg.flags.0 = 0xE0;
         for channel in &mut self.channels {
             *channel = Channel::default();
-            channel.released = true;
+            channel.adsr_state = AdsrState::Release;
         }
         self.rate_counter = 0;
     }
@@ -80,7 +87,7 @@ impl DSP {
                             ((apu_ram[(dir_addr + 3) % 0x10000] as u16) << 8)
                                 | (apu_ram[(dir_addr + 2) % 0x10000] as u16);
                     } else {
-                        self.channels[channel_i].released = true;
+                        self.channels[channel_i].adsr_state = AdsrState::Release;
                     }
                 } else {
                     // Continue to the next 9-byte BRR block
@@ -101,6 +108,9 @@ impl DSP {
                     let nibble = (apu_ram[brr_base + brr_byte] >> (4 * brr_nibble)) & 0xF;
                     let signed_nibble = ((nibble << 4) as i8) >> 4;
                     // DO NOT SUBMIT: shift=13..15 might be a special case?
+                    if brr_header.shift() >= 13 {
+                        println!("CCC");
+                    }
                     ((signed_nibble as i16) << brr_header.shift()) >> 1
                 };
                 let scale_sample =
@@ -120,65 +130,94 @@ impl DSP {
             }
             // DO NOT SUBMIT: Might have to separate this for e.g. pitch modulation
             self.tick_channel(channel_i);
-            self.rate_counter = self.rate_counter.wrapping_sub(1).min(RATE_COUNTER_MAX);
         }
-    }
-
-    // ADSR/GAIN/noise operations are clocked by the rate_counter according to the period and
-    // offset tables. This function returns whether the operation should be applied on the current DSP tick.
-    fn rate_operation_applies(&self, rate: u8) -> bool {
-        (self.rate_counter + RATE_COUNTER_OFFSETS[rate as usize % 3])
-            % RATE_COUNTER_PERIODS[rate as usize]
-            == 0
+        self.rate_counter = self.rate_counter.wrapping_sub(1).min(RATE_COUNTER_MAX);
     }
 
     fn tick_channel(&mut self, channel_i: usize) {
         assert!(channel_i < 8);
 
-        // The Release state applies regardless of the ADSR and GAIN settings
-        if self.channels[channel_i].released {
-            self.channels[channel_i].envelope_level =
-                self.channels[channel_i].envelope_level.saturating_sub(8);
-        }
         // DO NOT SUBMIT: Bind self.reg.channels[channel_i] etc. to reference variables
+        let envelope_level = &mut self.channels[channel_i].envelope_level;
+        // The Release state applies regardless of the ADSR and GAIN settings
+        if self.channels[channel_i].adsr_state == AdsrState::Release {
+            // DO NOT SUBMIT: This should be "Step=-800h when BRR-end"
+            *envelope_level = envelope_level.saturating_sub(8);
+        }
         if self.reg.channels[channel_i].adsr_control.adsr_enable() {
-            // DO NOT SUBMIT
-            self.channels[channel_i].envelope_level = 0x7FF;
+            let (rate, step) = match self.channels[channel_i].adsr_state {
+                AdsrState::Attack => {
+                    let attack_rate = self.reg.channels[channel_i].adsr_control.attack_rate();
+                    (
+                        attack_rate * 2 + 1,
+                        if attack_rate == 0xF { 1024 } else { 32 },
+                    )
+                }
+                AdsrState::Decay => (
+                    self.reg.channels[channel_i].adsr_control.decay_rate() * 2 + 16,
+                    -((((*envelope_level as i16).wrapping_sub(1)) >> 8) + 1),
+                ),
+                AdsrState::Sustain => (
+                    self.reg.channels[channel_i].adsr_control.sustain_rate(),
+                    -((((*envelope_level as i16).wrapping_sub(1)) >> 8) + 1),
+                ),
+                // The Release-mode diminution is done above, unconditionally
+                AdsrState::Release => (0, 0),
+            };
+            if rate_operation_applies(self.rate_counter, rate) {
+                *envelope_level = envelope_level.saturating_add_signed(step);
+            }
         } else {
             if self.reg.channels[channel_i].gain_control.custom_gain() {
-                if self.rate_operation_applies(self.reg.channels[channel_i].gain_control.rate()) {
-                    self.channels[channel_i].envelope_level =
-                        match self.reg.channels[channel_i].gain_control.mode() {
-                            // Linear decrease
-                            0 => self.channels[channel_i].envelope_level.saturating_sub(32),
-                            // Exponential decrease
-                            1 => self.channels[channel_i]
-                                .envelope_level
-                                .saturating_sub((self.channels[channel_i].envelope_level >> 8) + 1),
-                            // Linear increase
-                            2 => self.channels[channel_i].envelope_level.saturating_add(32),
-                            // Bent increase
-                            3 => self.channels[channel_i].envelope_level.saturating_add(
-                                if self.channels[channel_i].envelope_level < 0x600 {
-                                    32
-                                } else {
-                                    8
-                                },
-                            ),
-                            // DO NOT SUBMIT: This is useful, use it throughout
-                            _ => unreachable!(),
-                        };
+                let apply = rate_operation_applies(
+                    self.rate_counter,
+                    self.reg.channels[channel_i].gain_control.rate(),
+                );
+                if apply {
+                    let step = match self.reg.channels[channel_i].gain_control.mode() {
+                        // Linear decrease
+                        0 => -32,
+                        // Exponential decrease
+                        1 => -((((*envelope_level as i16).wrapping_sub(1)) >> 8) + 1),
+                        // Linear increase
+                        2 => 32,
+                        // Bent increase
+                        3 => {
+                            if *envelope_level < 0x600 {
+                                32
+                            } else {
+                                8
+                            }
+                        }
+                        // DO NOT SUBMIT: This is useful, use it throughout
+                        _ => unreachable!(),
+                    };
+                    *envelope_level = envelope_level.saturating_add_signed(step);
                 }
             } else {
-                self.channels[channel_i].envelope_level =
+                *envelope_level =
                     self.reg.channels[channel_i].gain_control.fixed_volume() as u16 * 16;
             };
         };
-        let envelope_level = self.channels[channel_i].envelope_level;
-        self.reg.channels[channel_i].envx = (envelope_level >> 4) as u8;
+        *envelope_level = (*envelope_level).min(0x7FF);
+        self.reg.channels[channel_i].envx = (*envelope_level >> 4) as u8;
+
+        // If VxGAIN is in use, the ADSR state still changes, but the sustain_level boundary is read
+        // from VxGAIN instead of VxADSR.
+        let sustain_level = if self.reg.channels[channel_i].adsr_control.adsr_enable() {
+            self.reg.channels[channel_i].adsr_control.sustain_level()
+        } else {
+            self.reg.channels[channel_i].gain_control.garbage_boundary()
+        };
+        let sustain_boundary = (sustain_level + 1) * 0x100;
+        self.channels[channel_i].adsr_state = match self.channels[channel_i].adsr_state {
+            AdsrState::Attack if *envelope_level >= 0x7E0 => AdsrState::Decay,
+            AdsrState::Decay if *envelope_level <= sustain_boundary => AdsrState::Sustain,
+            _ => self.channels[channel_i].adsr_state,
+        };
 
         let mut result = self.channels[channel_i].playing_sample;
-        result = ((result as i32 * envelope_level as i32) / 0x800) as i16;
+        result = ((result as i32 * *envelope_level as i32) / 0x800) as i16;
 
         self.channels[channel_i].output = result;
         self.reg.channels[channel_i].outx = (result >> 8) as u8;
@@ -273,7 +312,7 @@ impl DSP {
                             self.channels[channel_i].brr_cursor = 0;
                             // DO NOT SUBMIT: What about pitch_remainder?
                             // self.channels[channel_i].pitch_remainder = 0;
-                            self.channels[channel_i].released = false;
+                            self.channels[channel_i].adsr_state = AdsrState::Attack;
                             self.channels[channel_i].envelope_level = 0;
                             // DO NOT SUBMIT: Does anything flush prev_two_samples?
                         }
@@ -283,8 +322,7 @@ impl DSP {
                     // KOF: Put channel in released state
                     for channel_i in 0..8 {
                         if (data >> channel_i) & 1 == 1 {
-                            // DO NOT SUBMIT: "released" is actually an ADSR state, so this should decay to zero at a constant rate (not instant)
-                            self.channels[channel_i].released = true;
+                            self.channels[channel_i].adsr_state = AdsrState::Release;
                         }
                     }
                 }

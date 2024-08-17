@@ -11,8 +11,7 @@ pub struct Channel {
     // incrementing the cursor each time it crosses a multiple of 0x1000. Therefore, "between ticks",
     // the counter is at some offset equal to the remainder of the previous division by 0x1000.
     pub pitch_remainder: u16,
-    // DO NOT SUBMIT: I think this is actually part of an envelope Attack/Delay/Sustain/Release state machine
-    pub released: bool,
+    pub adsr_state: AdsrState,
     pub playing_sample: i16,
     // The current 11-bit envelope level
     pub envelope_level: u16,
@@ -21,6 +20,19 @@ pub struct Channel {
     pub output: i16,
     // For BRR filtering; [sample i-1, sample i-2]
     pub prev_two_samples: [i16; 2],
+}
+
+// The state of the Attack-Decay-Sustain-Release envelope. The state changes depending on the
+// envelope level, regardless of the ADSR and GAIN registers. If GAIN is in use, the
+// Attack/Decay/Sustain modes are ignored, while the Release state (triggered by KOF)
+// always reduces the envelope level at 8 units per tick.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum AdsrState {
+    Attack,
+    Decay,
+    Sustain,
+    #[default]
+    Release,
 }
 
 impl Channel {
