@@ -60,8 +60,38 @@ impl DSP {
                         self.channels[channel_i].brr_block_addr.wrapping_add(9);
                 }
             }
+            // Decompress and load new sample is a new one has been reached
+            if new_pitch_counter >= 0x1000 {
+                let brr_header = self.channels[channel_i].brr_header(apu_ram);
+                // The block address points to the header, so add 1 for the first actual sample address
+                let brr_base = self.channels[channel_i].brr_block_addr as usize + 1;
+                let (brr_byte, brr_nibble) = (
+                    self.channels[channel_i].brr_cursor / 2,
+                    1 - (self.channels[channel_i].brr_cursor % 2),
+                );
+                let sample = {
+                    let nibble = (apu_ram[brr_base + brr_byte] >> (4 * brr_nibble)) & 0xF;
+                    let signed_nibble = ((nibble << 4) as i8) >> 4;
+                    // DO NOT SUBMIT: shift=13..15 might be a special case?
+                    ((signed_nibble as i16) << brr_header.shift()) >> 1
+                };
+                let scale_sample =
+                    |val: i16, numer: i32, denom: i32| ((val as i32 * numer) / denom) as i16;
+                let prev_two = &mut self.channels[channel_i].prev_two_samples;
+                self.channels[channel_i].playing_sample = match brr_header.filter() {
+                    0 => sample,
+                    1 => sample.saturating_add(scale_sample(prev_two[0], 15, 16)),
+                    2 => sample
+                        .saturating_add(scale_sample(prev_two[0], 61, 32))
+                        .saturating_add(scale_sample(prev_two[1], 15, 16)),
+                    3 | _ => sample
+                        .saturating_add(scale_sample(prev_two[0], 115, 64))
+                        .saturating_add(scale_sample(prev_two[1], 13, 16)),
+                };
+                *prev_two = [sample, prev_two[0]];
+            }
             // DO NOT SUBMIT: Might have to separate this for e.g. pitch modulation
-            self.tick_channel(channel_i, apu_ram);
+            self.tick_channel(channel_i);
         }
     }
 
@@ -90,39 +120,13 @@ impl DSP {
         (sum_left, sum_right)
     }
 
-    fn tick_channel(&mut self, channel_i: usize, apu_ram: &Box<[u8; 0x10000]>) {
+    fn tick_channel(&mut self, channel_i: usize) {
         assert!(channel_i < 8);
         if self.channels[channel_i].released {
             return;
         }
-        let brr_header = self.channels[channel_i].brr_header(apu_ram);
-        // The block address points to the header, so add 1 for the first actual sample address
-        let brr_base = self.channels[channel_i].brr_block_addr as usize + 1;
-        let (brr_byte, brr_nibble) = (
-            self.channels[channel_i].brr_cursor / 2,
-            1 - (self.channels[channel_i].brr_cursor % 2),
-        );
-        let sample = {
-            let nibble = (apu_ram[brr_base + brr_byte] >> (4 * brr_nibble)) & 0xF;
-            let signed_nibble = ((nibble << 4) as i8) >> 4;
-            // DO NOT SUBMIT: shift=13..15 might be a special case?
-            ((signed_nibble as i16) << brr_header.shift()) >> 1
-        };
-        let scale_sample = |val: i16, numer: i32, denom: i32| ((val as i32 * numer) / denom) as i16;
-        let prev_two = &mut self.channels[channel_i].prev_two_samples;
-        let mut result = match brr_header.filter() {
-            0 => sample,
-            1 => sample.saturating_add(scale_sample(prev_two[0], 15, 16)),
-            2 => sample
-                .saturating_add(scale_sample(prev_two[0], 61, 32))
-                .saturating_add(scale_sample(prev_two[1], 15, 16)),
-            3 | _ => sample
-                .saturating_add(scale_sample(prev_two[0], 115, 64))
-                .saturating_add(scale_sample(prev_two[1], 13, 16)),
-        };
-        *prev_two = [sample, prev_two[0]];
 
-        let envelope_val = if self.reg.channels[channel_i].adsr_control.adsr_enable() {
+        let envelope_level = if self.reg.channels[channel_i].adsr_control.adsr_enable() {
             // DO NOT SUBMIT
             0x7FF
         } else {
@@ -133,9 +137,11 @@ impl DSP {
                 self.reg.channels[channel_i].gain_control.fixed_volume() as u16 * 16
             }
         };
-        self.reg.channels[channel_i].envx = (envelope_val >> 4) as u8;
+        self.channels[channel_i].envelope_level = envelope_level;
+        self.reg.channels[channel_i].envx = (envelope_level >> 4) as u8;
 
-        result = ((result as i32 * envelope_val as i32) / 0x800) as i16;
+        let mut result = self.channels[channel_i].playing_sample;
+        result = ((result as i32 * envelope_level as i32) / 0x800) as i16;
 
         self.channels[channel_i].output = result;
         self.reg.channels[channel_i].outx = (result >> 8) as u8;
