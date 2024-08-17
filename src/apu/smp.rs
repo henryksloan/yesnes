@@ -672,22 +672,16 @@ impl SMP {
             smp.borrow_mut().debug_dsp_divider += n_clocks;
             if smp.borrow_mut().debug_dsp_divider >= 32 {
                 smp.borrow_mut().debug_dsp_divider -= 32;
-                if smp.borrow_mut().debug_audio_buffer.len() < 32000 {
-                    let smp = &mut *smp.borrow_mut();
-                    // DO NOT SUBMIT: Generating samples has side-effects, and should
-                    // happen every tick. Don't block it on buffer filled.
-                    // let val = smp.debug_val(0);
-                    let val = {
-                        let mut sum = 0.0;
-                        for i in 0..8 {
-                            sum += smp.debug_val(i) as f64;
-                        }
-                        (sum / 8.0) as f32
-                    };
-                    smp.debug_audio_buffer.push_back((val, val));
-                }
                 let smp = &mut *smp.borrow_mut();
                 smp.dsp.tick(&smp.ram);
+                let audio_output = smp.dsp.get_output(&smp.ram);
+                if smp.debug_audio_buffer.len() < 32000 {
+                    smp.debug_audio_buffer.push_back((
+                        // DO NOT SUBMIT: Temporarily attenuating to save my ears
+                        0.3 * ((audio_output.0 as f32) / (i16::MAX as f32)),
+                        0.3 * ((audio_output.1 as f32) / (i16::MAX as f32)),
+                    ));
+                }
             }
 
             // DO NOT SUBMIT: Explain this and maybe generalize
@@ -695,12 +689,6 @@ impl SMP {
                 yield YieldReason::Sync(Device::CPU);
             }
         }
-    }
-
-    pub fn debug_val(&mut self, channel_i: usize) -> f32 {
-        assert!(channel_i < 8);
-        // DO NOT SUBMIT: Temporarily attenuating to save my ears
-        0.2 * ((self.dsp.debug_get_value(channel_i, &self.ram) as f32) / (i16::MAX as f32))
     }
 
     fn peak_io_reg(&self, addr: u16) -> u8 {

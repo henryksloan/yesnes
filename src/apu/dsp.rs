@@ -63,7 +63,32 @@ impl DSP {
         }
     }
 
-    pub fn debug_get_value(&mut self, channel_i: usize, apu_ram: &Box<[u8; 0x10000]>) -> i16 {
+    pub fn get_output(&mut self, apu_ram: &Box<[u8; 0x10000]>) -> (i16, i16) {
+        let (mut sum_left, mut sum_right) = (0i16, 0i16);
+        for channel_i in 0..8 {
+            let channel_out = self.get_channel_output(channel_i, apu_ram);
+            // DO NOT SUBMIT: Make this arithmetic/signed magnitude better
+            // DO NOT SUBMIT: fullsnes says "with 16bit overflow handling (after each addition)"... what?
+            sum_left = sum_left.wrapping_add(
+                ((channel_out as i32
+                    * Into::<i8>::into(self.reg.channels[channel_i].volume.left) as i32)
+                    >> 7) as i16,
+            );
+            sum_right = sum_right.wrapping_add(
+                ((channel_out as i32
+                    * Into::<i8>::into(self.reg.channels[channel_i].volume.right) as i32)
+                    >> 7) as i16,
+            );
+        }
+        sum_left =
+            ((sum_left as i32 * Into::<i8>::into(self.reg.main_volume.left) as i32) >> 7) as i16;
+        sum_right =
+            ((sum_right as i32 * Into::<i8>::into(self.reg.main_volume.right) as i32) >> 7) as i16;
+        // DO NOT SUBMIT: Mute and "final phase inversion"
+        (sum_left, sum_right)
+    }
+
+    fn get_channel_output(&mut self, channel_i: usize, apu_ram: &Box<[u8; 0x10000]>) -> i16 {
         assert!(channel_i < 8);
         if self.channels[channel_i].released {
             return 0;

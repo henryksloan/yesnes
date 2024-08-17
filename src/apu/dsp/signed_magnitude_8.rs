@@ -10,7 +10,7 @@ bitfield! {
 
 impl Into<i8> for SignedMagnitude8 {
     fn into(self) -> i8 {
-        (-1 * self.sign() as i8) * self.magnitude() as i8
+        ((-2 * self.sign() as i8) + 1) * self.magnitude() as i8
     }
 }
 
