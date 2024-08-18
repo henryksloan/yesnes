@@ -111,7 +111,6 @@ macro_rules! push_instrs {
             $(
             fn [<push_ $reg>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    yield_all!(CPU::idle(cpu.clone()));
                     let data = cpu.borrow_mut().reg.[<get_ $reg>]();
                     yield_all!(CPU::[<stack_push_ $kind>](cpu.clone(), data));
                 }
@@ -173,8 +172,7 @@ macro_rules! branch_instrs {
                     if cpu.borrow_mut().reg.p.$flag == $val {
                         cpu.borrow_mut().reg.pc = dest_pc;
                         yield_all!(CPU::idle(cpu.clone()));
-                        // TODO: Is this right? Maybe only for emulation mode...
-                        if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
+                        if cpu.borrow().reg.p.e && (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
                             yield_all!(CPU::idle(cpu.clone()));
                         }
                     }
@@ -194,9 +192,14 @@ macro_rules! branch_instrs {
 }
 
 macro_rules! instr {
-    ($cpu_rc: ident, $instr_f:ident) => {
+    ($cpu_rc: ident, $instr_f:ident, implied) => {{
+        // "Implied" instructions do a dummy read despite having no operand
+        let _ = yield_ticks!($cpu_rc, CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
         yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone()))
-    };
+    }};
+    ($cpu_rc: ident, $instr_f:ident, relative) => {{
+        yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone()))
+    }};
     ($cpu_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {{
         let data = yield_ticks!($cpu_rc, CPU::$addr_mode_f($cpu_rc.clone(), false));
         yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone(), data))
@@ -216,9 +219,9 @@ macro_rules! instr {
     ($cpu_rc: ident, $instr_f:ident, MFlag, $addr_mode_f:ident) => {
         instr!($cpu_rc, $instr_f, flag: m, $addr_mode_f)
     };
-    ($cpu_rc: ident, $instr_f:ident, NoFlag, implied) => {
-        instr!($cpu_rc, $instr_f)
-    };
+    // ($cpu_rc: ident, $instr_f:ident, NoFlag, implied) => {
+    //     instr!($cpu_rc, $instr_f)
+    // };
     ($cpu_rc: ident, $instr_f:ident, NoFlag, $addr_mode_f:ident) => {
         instr!($cpu_rc, $instr_f, $addr_mode_f)
     };
@@ -333,6 +336,8 @@ pub struct CPU {
     pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
     pub controller_states: [u16; 4],
     pub breakpoint_addrs: HashSet<u24>,
+    // DO NOT SUBMIT
+    debug_cycles: u64,
 }
 
 impl CPU {
@@ -364,6 +369,7 @@ impl CPU {
             debug_frame: None,
             controller_states: [0; 4],
             breakpoint_addrs: HashSet::new(),
+            debug_cycles: 0,
         }
     }
 
@@ -400,6 +406,7 @@ impl CPU {
             channel_regs.hdma_line_counter.0 = 0xFF;
             channel_regs.unused_byte = 0xFF;
         }
+        self.debug_cycles = 0;
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceCoroutine + 'a {
@@ -439,16 +446,16 @@ impl CPU {
                 (sep, NoFlag; 0xE2=>immediate)
                 (xba, NoFlag; 0xEB=>implied)
                 (xce, NoFlag; 0xFB=>implied)
-                (branch_n_clear, NoFlag; 0x10=>implied)
-                (branch_n_set, NoFlag; 0x30=>implied)
-                (branch_v_clear, NoFlag; 0x50=>implied)
-                (branch_v_set, NoFlag; 0x70=>implied)
-                (branch_c_clear, NoFlag; 0x90=>implied)
-                (branch_c_set, NoFlag; 0xB0=>implied)
-                (branch_z_clear, NoFlag; 0xD0=>implied)
-                (branch_z_set, NoFlag; 0xF0=>implied)
-                (bra, NoFlag; 0x80=>implied)
-                (brl, NoFlag; 0x82=>implied)
+                (branch_n_clear, NoFlag; 0x10=>relative)
+                (branch_n_set, NoFlag; 0x30=>relative)
+                (branch_v_clear, NoFlag; 0x50=>relative)
+                (branch_v_set, NoFlag; 0x70=>relative)
+                (branch_c_clear, NoFlag; 0x90=>relative)
+                (branch_c_set, NoFlag; 0xB0=>relative)
+                (branch_z_clear, NoFlag; 0xD0=>relative)
+                (branch_z_set, NoFlag; 0xF0=>relative)
+                (bra, NoFlag; 0x80=>relative)
+                (brl, NoFlag; 0x82=>relative)
                 (jsr, NoFlag; 0x20=>absolute, 0xFC=>absolute_indirect_indexed)
                 (jmp, NoFlag; 0x4C=>absolute, 0x6C=>absolute_indirect,
                  0x7C=>absolute_indirect_indexed)
@@ -735,6 +742,7 @@ impl CPU {
     // TODO: Add idle cycles in various places where IO cycles are involved
     // See https://archive.org/details/vl65c816datasheetvlsi1988ocrbm/page/n9/mode/1up
     fn idle<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<()> + 'a {
+        cpu.borrow_mut().debug_cycles += 1;
         CPU::step(cpu, 6)
     }
 
@@ -1053,6 +1061,7 @@ impl CPU {
     fn read_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         #[coroutine]
         move || {
+            cpu.borrow_mut().debug_cycles += 1;
             let region_cycles = cpu.borrow().region_cycles(addr);
             // yield_all!(CPU::step(cpu.clone(), region_cycles - 4));
             {
@@ -1160,6 +1169,7 @@ impl CPU {
     fn write_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24, data: u8) -> impl Yieldable<()> + 'a {
         #[coroutine]
         move || {
+            cpu.borrow_mut().debug_cycles += 1;
             let region_cycles = cpu.borrow().region_cycles(addr);
             yield_all!(Bus::write_u8(cpu.borrow_mut().bus.clone(), addr, data));
             yield_all!(CPU::step(cpu.clone(), region_cycles));
@@ -1348,6 +1358,9 @@ impl CPU {
         #[coroutine]
         move || {
             let direct_addr = u24(fetch!(cpu) as u32);
+            if cpu.borrow().reg.d & 0xFF != 0 {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
             Pointer::new_wrap_u16(addr, long)
         }
@@ -1357,6 +1370,9 @@ impl CPU {
         #[coroutine]
         move || {
             let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_x() as u32);
+            if cpu.borrow().reg.d & 0xFF != 0 {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
             Pointer::new_wrap_u16(addr, long)
         }
@@ -1366,6 +1382,9 @@ impl CPU {
         #[coroutine]
         move || {
             let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_y() as u32);
+            if cpu.borrow().reg.d & 0xFF != 0 {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             let addr = CPU::direct_addr(cpu.clone(), direct_addr);
             Pointer::new_wrap_u16(addr, long)
         }
@@ -1523,6 +1542,11 @@ impl CPU {
         move || {
             let offset = cpu.borrow().reg.get_x() as u32;
             let indirect_addr = u24(fetch!(cpu) as u32 + offset);
+            yield_all!(CPU::idle(cpu.clone()));
+            // Non-aligned direct accesses take an extra cycle
+            if cpu.borrow().reg.d & 0xFF != 0 {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             let bank_addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(
@@ -1541,6 +1565,9 @@ impl CPU {
         move || {
             let offset = cpu.borrow().reg.get_y() as u32;
             let indirect_addr = u24(fetch!(cpu) as u32);
+            if cpu.borrow().reg.d & 0xFF != 0 {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             let bank_addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
@@ -1555,6 +1582,9 @@ impl CPU {
         #[coroutine]
         move || {
             let indirect_addr = u24(fetch!(cpu) as u32);
+            if cpu.borrow().reg.d & 0xFF != 0 {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             let addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
@@ -1570,6 +1600,9 @@ impl CPU {
         #[coroutine]
         move || {
             let indirect_addr = u24(fetch!(cpu) as u32);
+            if cpu.borrow().reg.d & 0xFF != 0 {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             // TODO: Check this logic; namely, the overflow of adding y
             let addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
@@ -1586,6 +1619,7 @@ impl CPU {
         #[coroutine]
         move || {
             let addr = u24(fetch!(cpu) as u32).wrapping_add_lo16(cpu.borrow().reg.get_sp() as i16);
+            yield_all!(CPU::idle(cpu.clone()));
             Pointer::new(addr, long)
         }
     }
@@ -1677,6 +1711,7 @@ impl CPU {
             let a = cpu.borrow().reg.get_a();
             let zero = (cpu.borrow().reg.get_a() & data) == 0;
             cpu.borrow_mut().reg.p.z = zero;
+            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, data & !a));
         }
     }
@@ -1688,6 +1723,7 @@ impl CPU {
             let a = cpu.borrow().reg.get_a();
             let zero = (cpu.borrow().reg.get_a() & data) == 0;
             cpu.borrow_mut().reg.p.z = zero;
+            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, data | a));
         }
     }
@@ -2321,6 +2357,7 @@ impl CPU {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let result = CPU::shift_with_carry(cpu.clone(), data, true);
+            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
         }
     }
@@ -2339,6 +2376,7 @@ impl CPU {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let result = CPU::shift_with_carry(cpu.clone(), data, false);
+            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
         }
     }
@@ -2564,6 +2602,7 @@ mod tests {
                         members[1].as_u8().unwrap(),
                     ));
                 }
+                cpu.borrow_mut().debug_cycles = 0;
                 snes.run_instruction_debug(Device::CPU, None);
                 let after = &test["final"];
                 {
@@ -2591,6 +2630,12 @@ mod tests {
                         test
                     );
                 }
+                assert_eq!(
+                    cpu.borrow().debug_cycles,
+                    test["cycles"].len() as u64,
+                    "{}",
+                    test
+                );
             }
         }
     }

@@ -153,19 +153,7 @@ mod tests {
         let mut snes = SNES::new();
         // TODO: Fill in some local testdata
         // snes.load_cart("");
-        // snes.reset();
-        // b.iter(move || while !snes.run_instruction_debug(Device::CPU, None).1 {});
+        snes.reset();
+        b.iter(move || while !snes.run_instruction_debug(Device::CPU, None).1 {});
     }
-
-    // #[bench]
-    // fn bench_600_frame(b: &mut Bencher) {
-    //     let mut snes = SNES::new();
-    //     snes.load_cart("");
-    //     snes.reset();
-    //     b.iter(move || {
-    //         for _ in 0..600 {
-    //             while !snes.run_instruction_debug(Device::CPU).1 {}
-    //         }
-    //     });
-    // }
 }
