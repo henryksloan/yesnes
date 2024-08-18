@@ -526,7 +526,7 @@ impl CPU {
                 (ldy, XFlag; 0xA0=>immediate, 0xA4=>direct, 0xAC=>absolute,
                  0xB4=>direct_x, 0xBC=>absolute_x)
                 (stz, MFlag; 0x64=>direct, 0x74=>direct_x, 0x9C=>absolute,
-                 0x9E=>absolute_x)
+                 0x9E=>absolute_x_write)
                 (sta, MFlag; 0x81=>indexed_indirect, 0x83=>stack_relative,
                  0x85=>direct, 0x87=>indirect_long, 0x8D=>absolute,
                  0x8F=>absolute_long, 0x91=>indirect_indexed_write,
@@ -1564,6 +1564,7 @@ impl CPU {
                 ((yield_all!(CPU::read_u8(cpu.clone(), indirect_addr + 1u32)) as u32) << 8)
                     | addr_lo
             });
+            yield_all!(CPU::idle(cpu.clone()));
             Pointer::new(addr, true)
         }
     }
@@ -1814,6 +1815,7 @@ impl CPU {
                 cpu.borrow_mut().reg.p.m = true;
                 cpu.borrow_mut().reg.p.x_or_b = true;
             }
+            yield_all!(CPU::idle(cpu.clone()));
         }
     }
 
@@ -1823,13 +1825,13 @@ impl CPU {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let p = cpu.borrow().reg.get_p();
             cpu.borrow_mut().reg.set_p(p | data as u8);
+            yield_all!(CPU::idle(cpu.clone()));
         }
     }
 
     fn xba<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::idle(cpu.clone()));
             let a = cpu.borrow().reg.a;
             let (hi, lo) = (a >> 8, a & 0xFF);
@@ -2236,7 +2238,9 @@ impl CPU {
         #[coroutine]
         move || {
             let return_pc = cpu.borrow().reg.pc.lo16().wrapping_sub(1);
-            yield_all!(CPU::idle(cpu.clone()));
+            if !pointer.long {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
             cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
             cpu.borrow_mut().reg.pc |= pointer.addr.lo16();
@@ -2419,8 +2423,7 @@ impl CPU {
             let dest_pc = source_pc.wrapping_add_lo16(offset + 1);
             cpu.borrow_mut().reg.pc = dest_pc;
             yield_all!(CPU::idle(cpu.clone()));
-            // TODO: Is this right? Maybe only for emulation mode...
-            if (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
+            if cpu.borrow().reg.p.e && (source_pc & 0x100u16).raw() != (dest_pc & 0x100u16).raw() {
                 yield_all!(CPU::idle(cpu.clone()));
             }
         }
@@ -2440,9 +2443,14 @@ impl CPU {
 
     // Return instructions
 
-    fn return_op<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl InstructionCoroutine + 'a {
+    fn return_op<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        long: bool,
+        stack_relative: bool,
+    ) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
+            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
             let addr = yield_all!(CPU::stack_pull_u16(cpu.clone()));
             cpu.borrow_mut().reg.pc |= addr.wrapping_add(1);
@@ -2451,20 +2459,24 @@ impl CPU {
                 let pb = yield_all!(CPU::stack_pull_u8(cpu.clone())) as u32;
                 cpu.borrow_mut().reg.pc |= pb << 16;
             }
+            if stack_relative {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
         }
     }
 
     fn rts<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        CPU::return_op(cpu, false)
+        CPU::return_op(cpu, false, true)
     }
 
     fn rtl<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        CPU::return_op(cpu, true)
+        CPU::return_op(cpu, true, false)
     }
 
     fn rti<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
+            yield_all!(CPU::idle(cpu.clone()));
             let p = yield_all!(CPU::stack_pull_u8(cpu.clone()));
             cpu.borrow_mut().reg.set_p(p);
             cpu.borrow_mut().reg.pc = {
@@ -2496,7 +2508,6 @@ impl CPU {
     fn push_pb<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             let data = cpu.borrow_mut().reg.pc.bank();
             yield_all!(CPU::stack_push_u8(cpu.clone(), data));
         }
@@ -2533,9 +2544,11 @@ impl CPU {
     }
 
     // WDM is "Reserved 1or Future Expansion"; it does nothing, but takes one operand
-    fn wdm<'a>(_: Rc<RefCell<CPU>>, _: Pointer) -> impl InstructionCoroutine + 'a {
+    fn wdm<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
         #[coroutine]
-        move || {}
+        move || {
+            let _ = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+        }
     }
 
     flag_instrs!();
