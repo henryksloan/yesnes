@@ -78,6 +78,39 @@ macro_rules! n_bits {
     };
 }
 
+macro_rules! flag_instrs {
+    ($flag:ident, clear) => {
+        paste! {
+            fn [<cl $flag>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
+                #[coroutine]
+                move || {
+                    cpu.borrow_mut().reg.p.$flag = false;
+                }
+            }
+        }
+    };
+    ($flag:ident, set) => {
+        paste! {
+            fn [<se $flag>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
+                #[coroutine]
+                move || {
+                    cpu.borrow_mut().reg.p.$flag = true;
+                }
+            }
+        }
+    };
+    ($($flag:ident),+) => {
+        $(
+        flag_instrs!($flag, set);
+        flag_instrs!($flag, clear);
+        )+
+    };
+    () => {
+        flag_instrs!(c, i, d);
+        flag_instrs!(v, clear);
+    };
+}
+
 macro_rules! pull_instrs {
     // kind decides whether the bit-width depends on some flag (X or M),
     // or is unconditional (u8 or u16)
@@ -1770,56 +1803,6 @@ impl CPU {
         }
     }
 
-    // TODO: Make a macro for these flag instructions?
-    fn clc<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            cpu.borrow_mut().reg.p.c = false;
-        }
-    }
-
-    fn cli<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            cpu.borrow_mut().reg.p.i = false;
-        }
-    }
-
-    fn cld<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            cpu.borrow_mut().reg.p.d = false;
-        }
-    }
-
-    fn clv<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            cpu.borrow_mut().reg.p.v = false;
-        }
-    }
-
-    fn sec<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            cpu.borrow_mut().reg.p.c = true;
-        }
-    }
-
-    fn sei<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            cpu.borrow_mut().reg.p.i = true;
-        }
-    }
-
-    fn sed<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            cpu.borrow_mut().reg.p.d = true;
-        }
-    }
-
     fn rep<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
@@ -2555,6 +2538,7 @@ impl CPU {
         move || {}
     }
 
+    flag_instrs!();
     pull_instrs!();
     push_instrs!();
     transfer_instrs!();
