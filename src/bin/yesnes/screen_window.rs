@@ -1,13 +1,70 @@
 use super::app_window::AppWindow;
-use std::time::Instant;
 
 use yesnes::frame_history::FrameHistory;
 use yesnes::snes::SNES;
 
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{SampleRate, Stream, StreamConfig};
 use eframe::egui::{Color32, ColorImage, TextureHandle};
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+fn write_data(output: &mut [f32], channels: usize, audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>) {
+    let mut values = vec![(0.0, 0.0); output.len() / channels];
+    {
+        let mut buffer = audio_buffer.lock().unwrap();
+        for i in 0..values.len() {
+            if let Some(value) = buffer.pop_front() {
+                values[i] = value;
+            } else {
+                break;
+            }
+        }
+    }
+    for (i, frame) in output.chunks_mut(channels).enumerate() {
+        let value = values[i];
+        for sample in frame.iter_mut() {
+            *sample = if i % 2 == 0 { value.0 } else { value.1 };
+        }
+    }
+}
+
+fn make_audio_stream(audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>) -> (Stream, SampleRate) {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .expect("no output device available");
+    let supported_configs_range = device
+        .supported_output_configs()
+        .expect("error while querying configs");
+    let supported_config = supported_configs_range
+        // TODO: Will forcing f32 not work on some systems?
+        .filter(|config| config.sample_format() == cpal::SampleFormat::F32)
+        .next()
+        .expect("No supported audio config")
+        .with_max_sample_rate();
+    let err_fn = |err| eprintln!("an error occurred on the output audio stream: {}", err);
+    let config: StreamConfig = supported_config.into();
+
+    let sample_rate = config.sample_rate;
+    let channels = config.channels as usize;
+
+    let stream = device
+        .build_output_stream(
+            &config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                // write_data(data, channels, &mut next_value)
+                write_data(data, channels, audio_buffer.clone())
+            },
+            err_fn,
+            None,
+        )
+        .unwrap();
+    (stream, sample_rate)
+}
 
 pub struct ScreenWindow {
     id: egui::Id,
@@ -19,12 +76,21 @@ pub struct ScreenWindow {
     frame_history: FrameHistory,
     previous_frame_instant: Option<Instant>,
     lock_fps: bool,
+    debug_audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>,
+    audio_sample_rate: SampleRate,
+    audio_stream: Stream,
 }
 
 impl ScreenWindow {
     pub fn new(title: String, snes: Arc<Mutex<SNES>>, frame_ready: Arc<AtomicBool>) -> Self {
         let id = egui::Id::new(&title);
         let image = ColorImage::new([256, 224], Color32::BLACK);
+
+        let debug_audio_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(32000)));
+
+        let (audio_stream, sample_rate) = make_audio_stream(debug_audio_buffer.clone());
+        audio_stream.pause().unwrap();
+
         Self {
             id,
             title,
@@ -35,6 +101,9 @@ impl ScreenWindow {
             frame_history: FrameHistory::new(),
             previous_frame_instant: None,
             lock_fps: true,
+            debug_audio_buffer,
+            audio_sample_rate: sample_rate,
+            audio_stream,
         }
     }
 }
@@ -45,10 +114,16 @@ impl AppWindow for ScreenWindow {
     }
 
     fn show_impl(&mut self, ctx: &egui::Context, paused: bool, focused: bool) {
-        while !paused && !self.frame_ready.load(Ordering::Relaxed) {
-            std::hint::spin_loop();
+        if paused {
+            self.audio_stream.pause().unwrap();
+        } else {
+            self.audio_stream.play().unwrap();
         }
-        {
+
+        if !paused {
+            while !self.frame_ready.load(Ordering::Relaxed) {
+                std::hint::spin_loop();
+            }
             // TODO: Much of this need not happen under the lock
             let mut frame = None;
             if let Ok(mut snes) = self.snes.lock() {
@@ -78,6 +153,32 @@ impl AppWindow for ScreenWindow {
                         controller_state
                     });
                     snes.set_controller_state(0, controller_state);
+                }
+
+                if let Ok(mut debug_audio_buffer) = self.debug_audio_buffer.lock() {
+                    let num_samples = (2 * (self.audio_sample_rate.0 as usize / 60))
+                        .saturating_sub(debug_audio_buffer.len());
+                    let sample_ratio = 32000. / self.audio_sample_rate.0 as f32;
+                    // let sample_ratio = 1.;
+                    let adjusted_samples = (sample_ratio * num_samples as f32) as usize;
+
+                    let smp_val = snes.debug_take_audio(adjusted_samples);
+                    // Simple linear interpolation
+                    for i in 0..num_samples {
+                        let intermediate_i = i as f32 * sample_ratio;
+                        let fract = (i as f32 * sample_ratio).fract();
+                        let left = (smp_val[(intermediate_i.floor()) as usize % adjusted_samples]
+                            .0
+                            * fract)
+                            + (smp_val[(intermediate_i.ceil()) as usize % adjusted_samples].0
+                                * (1.0 - fract));
+                        let right = (smp_val[(intermediate_i.floor()) as usize % adjusted_samples]
+                            .1
+                            * fract)
+                            + (smp_val[(intermediate_i.ceil()) as usize % adjusted_samples].1
+                                * (1.0 - fract));
+                        debug_audio_buffer.push_back((left, right));
+                    }
                 }
             }
             if let Some(frame) = frame {

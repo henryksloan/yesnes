@@ -1,9 +1,11 @@
-use std::time::Instant;
 use yesnes::Device;
+
+use std::path::PathBuf;
+use std::time::Instant;
 
 fn main() {
     let mut snes = yesnes::snes::SNES::new();
-    let cart_path = std::env::args().nth(1).expect("Expected a rom file");
+    let cart_path = PathBuf::from(std::env::args().nth(1).expect("Expected a rom file"));
     snes.load_cart(&cart_path);
     snes.reset();
     loop {

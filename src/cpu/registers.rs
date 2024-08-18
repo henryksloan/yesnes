@@ -338,6 +338,7 @@ impl DmaSetup {
             0b010 | 0b110 => &[0, 0],
             0b101 => &[0, 1, 0, 1],
             0b011 | 0b111 => &[0, 0, 1, 1],
+            // TODO: Consider using unreachable!() throughout
             0b100 | _ => &[0, 1, 2, 3],
         }
     }

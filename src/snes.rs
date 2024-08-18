@@ -71,11 +71,13 @@ impl SNES {
         self.bus.borrow_mut().load_cart(cart_path);
     }
 
+    // TODO: Currently, new() leaves components in a bad state, and reset() must be called
+    // to initialize them. Either document that or change it (leaning towards keeping that behavior).
     pub fn reset(&mut self) {
         self.cpu.borrow_mut().reset();
         self.bus.borrow_mut().reset();
         self.ppu.borrow_mut().reset();
-        SMP::reset(self.smp.clone());
+        self.smp.borrow_mut().reset();
         self.scheduler =
             Self::create_scheduler(self.cpu.clone(), self.ppu.clone(), self.smp.clone());
     }
@@ -113,9 +115,8 @@ impl SNES {
     }
 
     pub fn set_controller_state(&mut self, controller_i: usize, data: u16) {
-        if controller_i < 4 {
-            self.cpu.borrow_mut().controller_states[controller_i] = data;
-        }
+        assert!(controller_i < 4);
+        self.cpu.borrow_mut().controller_states[controller_i] = data;
     }
 
     pub fn make_debug_cpu(&self) -> DebugCpu {
@@ -124,6 +125,19 @@ impl SNES {
 
     pub fn make_debug_smp(&self) -> DebugSmp {
         DebugSmp::new(self.smp.clone())
+    }
+
+    pub fn debug_take_audio(&mut self, samples: usize) -> Vec<(f32, f32)> {
+        let mut buffer = vec![(0.0, 0.0); samples];
+        for i in 0..samples {
+            if let Some(value) = self.smp.borrow_mut().debug_audio_buffer.pop_front() {
+                buffer[i] = value;
+            } else {
+                println!("BBB {i}");
+                break;
+            }
+        }
+        buffer
     }
 }
 
@@ -138,9 +152,9 @@ mod tests {
     fn bench_1_frame(b: &mut Bencher) {
         let mut snes = SNES::new();
         // TODO: Fill in some local testdata
-        snes.load_cart("");
-        snes.reset();
-        b.iter(move || while !snes.run_instruction_debug(Device::CPU, None).1 {});
+        // snes.load_cart("");
+        // snes.reset();
+        // b.iter(move || while !snes.run_instruction_debug(Device::CPU, None).1 {});
     }
 
     // #[bench]

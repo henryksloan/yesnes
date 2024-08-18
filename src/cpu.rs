@@ -1055,39 +1055,42 @@ impl CPU {
         move || {
             let region_cycles = cpu.borrow().region_cycles(addr);
             // yield_all!(CPU::step(cpu.clone(), region_cycles - 4));
-            let n_clocks = region_cycles - 4;
-            // TODO: This is literally copied from step() to fix a huge performance bug. Inlining doesn't seem to achieve that,
-            // but it would be great to root-cause and fix the performance issue more cleanly (and perhaps in other places like write()).
-            let (aligned_clocks, poll_offset) = {
-                let mut cpu = cpu.borrow_mut();
-                cpu.ticks_run += n_clocks;
-                let ticks_mod_4 = cpu.ticks_mod_4;
-                cpu.ticks_mod_4 = ticks_mod_4.wrapping_add(n_clocks as u8) % 4;
-                let aligned_clocks = n_clocks.saturating_sub((4 - ticks_mod_4 as u64) % 2);
-                // If the first of two PPU ticks for this poll cycle has already happened
-                // (i.e. on clocks 1 and 2 of the poll cycle) then the next PPU tick should not trigger a poll.
-                let poll_offset = (ticks_mod_4 == 1 || ticks_mod_4 == 2) as u64;
-                (aligned_clocks, poll_offset)
-            };
-            // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
-            for ppu_tick in 0..((aligned_clocks + 1) / 2) {
-                let scanline = yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
-                if scanline {
-                    yield_all!(CPU::on_scanline_start(cpu.clone()));
-                }
-                if ppu_tick % 2 == poll_offset {
+            {
+                let n_clocks = region_cycles - 4;
+                // TODO: This is literally copied from step() to fix a huge performance bug. Inlining doesn't seem to achieve that,
+                // but it would be great to root-cause and fix the performance issue more cleanly (and perhaps in other places like write()).
+                let (aligned_clocks, poll_offset) = {
                     let mut cpu = cpu.borrow_mut();
-                    let irq_mode = cpu.io_reg.interrupt_control.h_v_irq();
-                    let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
-                    let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
-                    let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
-                    let scanline = cpu.ppu_counter.borrow().scanline;
-                    cpu.irq_enqueued |= match irq_mode {
-                        0 => false,
-                        1 => h_dot == h_scan_count,
-                        2 => scanline == v_scan_count && h_dot == 0,
-                        3 | _ => scanline == v_scan_count && h_dot == h_scan_count,
-                    };
+                    cpu.ticks_run += n_clocks;
+                    let ticks_mod_4 = cpu.ticks_mod_4;
+                    cpu.ticks_mod_4 = ticks_mod_4.wrapping_add(n_clocks as u8) % 4;
+                    let aligned_clocks = n_clocks.saturating_sub((4 - ticks_mod_4 as u64) % 2);
+                    // If the first of two PPU ticks for this poll cycle has already happened
+                    // (i.e. on clocks 1 and 2 of the poll cycle) then the next PPU tick should not trigger a poll.
+                    let poll_offset = (ticks_mod_4 == 1 || ticks_mod_4 == 2) as u64;
+                    (aligned_clocks, poll_offset)
+                };
+                // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
+                for ppu_tick in 0..((aligned_clocks + 1) / 2) {
+                    let scanline =
+                        yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                    if scanline {
+                        yield_all!(CPU::on_scanline_start(cpu.clone()));
+                    }
+                    if ppu_tick % 2 == poll_offset {
+                        let mut cpu = cpu.borrow_mut();
+                        let irq_mode = cpu.io_reg.interrupt_control.h_v_irq();
+                        let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
+                        let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
+                        let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
+                        let scanline = cpu.ppu_counter.borrow().scanline;
+                        cpu.irq_enqueued |= match irq_mode {
+                            0 => false,
+                            1 => h_dot == h_scan_count,
+                            2 => scanline == v_scan_count && h_dot == 0,
+                            3 | _ => scanline == v_scan_count && h_dot == h_scan_count,
+                        };
+                    }
                 }
             }
             {
@@ -1098,7 +1101,45 @@ impl CPU {
                 }
             }
             let data = yield_all!(Bus::read_u8(cpu.borrow_mut().bus.clone(), addr));
-            yield_all!(CPU::step(cpu.clone(), 4));
+            // yield_all!(CPU::step(cpu.clone(), 4));
+            {
+                let n_clocks = 4;
+                // TODO: This is literally copied from step() to fix a huge performance bug. Inlining doesn't seem to achieve that,
+                // but it would be great to root-cause and fix the performance issue more cleanly (and perhaps in other places like write()).
+                let (aligned_clocks, poll_offset) = {
+                    let mut cpu = cpu.borrow_mut();
+                    cpu.ticks_run += n_clocks;
+                    let ticks_mod_4 = cpu.ticks_mod_4;
+                    cpu.ticks_mod_4 = ticks_mod_4.wrapping_add(n_clocks as u8) % 4;
+                    let aligned_clocks = n_clocks.saturating_sub((4 - ticks_mod_4 as u64) % 2);
+                    // If the first of two PPU ticks for this poll cycle has already happened
+                    // (i.e. on clocks 1 and 2 of the poll cycle) then the next PPU tick should not trigger a poll.
+                    let poll_offset = (ticks_mod_4 == 1 || ticks_mod_4 == 2) as u64;
+                    (aligned_clocks, poll_offset)
+                };
+                // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
+                for ppu_tick in 0..((aligned_clocks + 1) / 2) {
+                    let scanline =
+                        yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                    if scanline {
+                        yield_all!(CPU::on_scanline_start(cpu.clone()));
+                    }
+                    if ppu_tick % 2 == poll_offset {
+                        let mut cpu = cpu.borrow_mut();
+                        let irq_mode = cpu.io_reg.interrupt_control.h_v_irq();
+                        let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
+                        let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
+                        let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
+                        let scanline = cpu.ppu_counter.borrow().scanline;
+                        cpu.irq_enqueued |= match irq_mode {
+                            0 => false,
+                            1 => h_dot == h_scan_count,
+                            2 => scanline == v_scan_count && h_dot == 0,
+                            3 | _ => scanline == v_scan_count && h_dot == h_scan_count,
+                        };
+                    }
+                }
+            }
             data
         }
     }
@@ -2457,6 +2498,7 @@ mod tests {
 
     #[test]
     // TODO: Consider factoring out this test setup (and improving reporting with a custom harness, maybe parallelize)
+    // TODO: Test cycle-accuracy
     fn tom_harte() {
         let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_dir.push("testdata/65816/v1/");

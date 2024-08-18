@@ -52,6 +52,7 @@ pub enum EmuThreadMessage {
     UntilDebugPoint(Device, DebugPoint),
 }
 
+// TODO: Consider ripping out multithreading. It only really helps for messaging, which could be handled in other ways
 pub fn run_emu_thread(
     snes: Arc<Mutex<SNES>>,
     // TODO: This could potentially be simplified by having the client sending dynamic Arcs (?) on-demand
