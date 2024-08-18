@@ -62,7 +62,7 @@ impl DSP {
         self.rate_counter = 0;
     }
 
-    // DO NOT SUBMIT: Converge on a common "tick"/"step", "clock"/"tick" terminology
+    // TODO: Converge on a common "tick"/"step", "clock"/"tick" terminology
     pub fn tick(&mut self, apu_ram: &Box<[u8; 0x10000]>) {
         for channel_i in 0..8 {
             let new_pitch_counter = self.channels[channel_i].pitch_remainder
@@ -138,28 +138,29 @@ impl DSP {
     fn tick_channel(&mut self, channel_i: usize) {
         assert!(channel_i < 8);
 
-        // DO NOT SUBMIT: Bind self.reg.channels[channel_i] etc. to reference variables
-        let envelope_level = &mut self.channels[channel_i].envelope_level;
+        let channel = &mut self.channels[channel_i];
+        let channel_regs = &mut self.reg.channels[channel_i];
+        let envelope_level = &mut channel.envelope_level;
         // The Release state applies regardless of the ADSR and GAIN settings
-        if self.channels[channel_i].adsr_state == AdsrState::Release {
+        if channel.adsr_state == AdsrState::Release {
             // TODO: I think a KOF while playing such an end-block causes a fast release (-0x800 per sample)
             *envelope_level = envelope_level.saturating_sub(8);
         }
-        if self.reg.channels[channel_i].adsr_control.adsr_enable() {
-            let (rate, step) = match self.channels[channel_i].adsr_state {
+        if channel_regs.adsr_control.adsr_enable() {
+            let (rate, step) = match channel.adsr_state {
                 AdsrState::Attack => {
-                    let attack_rate = self.reg.channels[channel_i].adsr_control.attack_rate();
+                    let attack_rate = channel_regs.adsr_control.attack_rate();
                     (
                         attack_rate * 2 + 1,
                         if attack_rate == 0xF { 1024 } else { 32 },
                     )
                 }
                 AdsrState::Decay => (
-                    self.reg.channels[channel_i].adsr_control.decay_rate() * 2 + 16,
+                    channel_regs.adsr_control.decay_rate() * 2 + 16,
                     -((((*envelope_level as i16).wrapping_sub(1)) >> 8) + 1),
                 ),
                 AdsrState::Sustain => (
-                    self.reg.channels[channel_i].adsr_control.sustain_rate(),
+                    channel_regs.adsr_control.sustain_rate(),
                     -((((*envelope_level as i16).wrapping_sub(1)) >> 8) + 1),
                 ),
                 // The Release-mode decay is done above, unconditionally
@@ -169,13 +170,11 @@ impl DSP {
                 *envelope_level = envelope_level.saturating_add_signed(step);
             }
         } else {
-            if self.reg.channels[channel_i].gain_control.custom_gain() {
-                let apply = rate_operation_applies(
-                    self.rate_counter,
-                    self.reg.channels[channel_i].gain_control.rate(),
-                );
+            if channel_regs.gain_control.custom_gain() {
+                let apply =
+                    rate_operation_applies(self.rate_counter, channel_regs.gain_control.rate());
                 if apply {
-                    let step = match self.reg.channels[channel_i].gain_control.mode() {
+                    let step = match channel_regs.gain_control.mode() {
                         // Linear decrease
                         0 => -32,
                         // Exponential decrease
@@ -195,36 +194,35 @@ impl DSP {
                     *envelope_level = envelope_level.saturating_add_signed(step);
                 }
             } else {
-                *envelope_level =
-                    self.reg.channels[channel_i].gain_control.fixed_volume() as u16 * 16;
+                *envelope_level = channel_regs.gain_control.fixed_volume() as u16 * 16;
             };
         };
         *envelope_level = (*envelope_level).min(0x7FF);
         if self.reg.flags.soft_reset() {
             *envelope_level = 0;
-            self.channels[channel_i].adsr_state = AdsrState::Release;
+            channel.adsr_state = AdsrState::Release;
         }
-        self.reg.channels[channel_i].envx = (*envelope_level >> 4) as u8;
+        channel_regs.envx = (*envelope_level >> 4) as u8;
 
         // If VxGAIN is in use, the ADSR state still changes, but the sustain_level boundary is read
         // from VxGAIN instead of VxADSR.
-        let sustain_level = if self.reg.channels[channel_i].adsr_control.adsr_enable() {
-            self.reg.channels[channel_i].adsr_control.sustain_level()
+        let sustain_level = if channel_regs.adsr_control.adsr_enable() {
+            channel_regs.adsr_control.sustain_level()
         } else {
-            self.reg.channels[channel_i].gain_control.garbage_boundary()
+            channel_regs.gain_control.garbage_boundary()
         };
         let sustain_boundary = (sustain_level + 1) * 0x100;
-        self.channels[channel_i].adsr_state = match self.channels[channel_i].adsr_state {
+        channel.adsr_state = match channel.adsr_state {
             AdsrState::Attack if *envelope_level >= 0x7E0 => AdsrState::Decay,
             AdsrState::Decay if *envelope_level <= sustain_boundary => AdsrState::Sustain,
-            _ => self.channels[channel_i].adsr_state,
+            _ => channel.adsr_state,
         };
 
-        let mut result = self.channels[channel_i].playing_sample;
+        let mut result = channel.playing_sample;
         result = ((result as i32 * *envelope_level as i32) / 0x800) as i16;
 
         self.channels[channel_i].output = result;
-        self.reg.channels[channel_i].outx = (result >> 8) as u8;
+        channel_regs.outx = (result >> 8) as u8;
     }
 
     pub fn get_output(&mut self) -> (i16, i16) {
@@ -305,7 +303,7 @@ impl DSP {
                 0x3 => self.reg.echo_volume.right = data as i8,
                 0x4 => {
                     // KON: Start playing a note
-                    // DO NOT SUBMIT: KON and KOF are clocked at 16000Hz... see fullsnes
+                    // TODO: KON and KOF are clocked at 16000Hz... see fullsnes
                     // TODO: 5 empty samples upon KON
                     for channel_i in 0..8 {
                         if (data >> channel_i) & 1 == 1 {
