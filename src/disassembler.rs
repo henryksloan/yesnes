@@ -120,18 +120,18 @@ impl<D: DebugProcessor> Disassembler<D> {
                 AnalysisStep::BranchAndContinue(dest_addr) => {
                     self.analyze(dest_addr, &mut analysis_state.clone());
                     // TODO: Factor out this address change
-                    addr = D::Address::try_from(addr.into() + (usize::from(operand_bytes) + 1))
-                        .unwrap_or_default();
+                    addr =
+                        D::Address::try_from(addr.into() + (operand_bytes + 1)).unwrap_or_default();
                 }
                 AnalysisStep::Call(dest_addr) => {
                     self.analyze(dest_addr, analysis_state);
-                    addr = D::Address::try_from(addr.into() + (usize::from(operand_bytes) + 1))
-                        .unwrap_or_default();
+                    addr =
+                        D::Address::try_from(addr.into() + (operand_bytes + 1)).unwrap_or_default();
                 }
                 AnalysisStep::Branch(dest_addr) => addr = dest_addr,
                 AnalysisStep::Continue => {
-                    addr = D::Address::try_from(addr.into() + (usize::from(operand_bytes) + 1))
-                        .unwrap_or_default();
+                    addr =
+                        D::Address::try_from(addr.into() + (operand_bytes + 1)).unwrap_or_default();
                 }
             }
         }

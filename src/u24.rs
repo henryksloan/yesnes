@@ -76,9 +76,9 @@ impl fmt::LowerHex for u24 {
     }
 }
 
-impl Into<usize> for u24 {
-    fn into(self) -> usize {
-        self.raw()
+impl From<u24> for usize {
+    fn from(num: u24) -> usize {
+        num.raw()
     }
 }
 
@@ -180,12 +180,12 @@ impl<T: Into<i32>> Shr<T> for u24 {
     type Output = Self;
 
     fn shr(self, other: T) -> Self {
-        Self(self.0 << other.into())
+        Self(self.0 >> other.into())
     }
 }
 
 impl<T: Into<i32>> ShrAssign<T> for u24 {
     fn shr_assign(&mut self, other: T) {
-        *self = *self << other
+        *self = *self >> other
     }
 }

@@ -145,7 +145,6 @@ impl eframe::App for YesnesApp {
             // Set the active window ID to the topmost (last-in-order) Area in the Middle order class
             self.active_window_id = memory
                 .layer_ids()
-                .into_iter()
                 .filter(|layer_id| layer_id.order == egui::Order::Middle)
                 .map(|layer_id| layer_id.id)
                 .last();

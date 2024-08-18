@@ -769,7 +769,7 @@ impl SMP {
         if self.test_mode {
             return self.ram[addr as usize];
         }
-        let data = match addr {
+        match addr {
             0x0000..=0x00EF => self.ram[addr as usize],
             0x00F0..=0x00FF => self.peak_io_reg(addr),
             0x0100..=0xFFBF => self.ram[addr as usize],
@@ -780,8 +780,7 @@ impl SMP {
                     self.ram[addr as usize]
                 }
             }
-        };
-        data
+        }
     }
 
     pub fn peak_u16(&self, addr: u16) -> u16 {
@@ -848,9 +847,8 @@ impl SMP {
             }
             // All writes always go to ram, even if they also go to e.g. IO
             smp.borrow_mut().ram[addr as usize] = data;
-            match addr {
-                0x00F0..=0x00FF => yield_all!(SMP::write_io_reg(smp.clone(), addr, data)),
-                _ => {}
+            if let 0x00F0..=0x00FF = addr {
+                yield_all!(SMP::write_io_reg(smp.clone(), addr, data))
             }
             // TODO: Some clock cycles before the write, depending on region
             yield_all!(SMP::step(smp.clone(), 1));
@@ -930,8 +928,7 @@ impl SMP {
         #[coroutine]
         move || {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-            let direct_addr = direct_page_base + fetch!(smp) as u16;
-            direct_addr
+            direct_page_base + fetch!(smp) as u16
         }
     }
 
@@ -939,9 +936,7 @@ impl SMP {
         #[coroutine]
         move || {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-            let direct_addr =
-                direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16;
-            direct_addr
+            direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16
         }
     }
 
@@ -949,9 +944,7 @@ impl SMP {
         #[coroutine]
         move || {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-            let direct_addr =
-                direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.y)) as u16;
-            direct_addr
+            direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.y)) as u16
         }
     }
 
@@ -993,7 +986,7 @@ impl SMP {
     fn absolute_bit<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<AddressBit> + 'a {
         #[coroutine]
         move || {
-            let operand = fetch_u16!(smp) as u16;
+            let operand = fetch_u16!(smp);
             AddressBit {
                 addr: operand & 0x1FFF,
                 bit: (operand >> 13) as u8,
@@ -1005,7 +998,7 @@ impl SMP {
     fn absolute_not_bit<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<AddressBit> + 'a {
         #[coroutine]
         move || {
-            let operand = fetch_u16!(smp) as u16;
+            let operand = fetch_u16!(smp);
             AddressBit {
                 addr: operand & 0x1FFF,
                 bit: (operand >> 13) as u8,
@@ -1060,16 +1053,12 @@ impl SMP {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr =
                 direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16;
-            // let direct_addr = direct_page_base | (fetch!(smp) as u16 + smp.borrow().reg.x as u16);
-            let indirect_addr = {
-                let addr_lo = yield_all!(SMP::read_u8(smp.clone(), direct_addr as u16)) as u16;
-                let addr_hi = yield_all!(SMP::read_u8(
-                    smp.clone(),
-                    (direct_addr & 0xFF00) | (direct_addr.wrapping_add(1) & 0xFF)
-                )) as u16;
-                (addr_hi << 8) | addr_lo
-            };
-            indirect_addr
+            let addr_lo = yield_all!(SMP::read_u8(smp.clone(), direct_addr)) as u16;
+            let addr_hi = yield_all!(SMP::read_u8(
+                smp.clone(),
+                (direct_addr & 0xFF00) | (direct_addr.wrapping_add(1) & 0xFF)
+            )) as u16;
+            (addr_hi << 8) | addr_lo
         }
     }
 
@@ -1337,7 +1326,7 @@ impl SMP {
         #[coroutine]
         move || {
             let a = smp.borrow().reg.a;
-            let result = (a >> 4) | (a << 4);
+            let result = a.rotate_left(4);
             smp.borrow_mut().reg.a = result;
             smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
             smp.borrow_mut().reg.psw.z = result == 0;

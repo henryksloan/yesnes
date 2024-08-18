@@ -24,8 +24,8 @@ bitfield! {
   pub flip_y, _: 7;
 }
 
-impl Into<ObjAttributes> for u8 {
-    fn into(self) -> ObjAttributes {
-        ObjAttributes(self)
+impl From<u8> for ObjAttributes {
+    fn from(num: u8) -> ObjAttributes {
+        ObjAttributes(num)
     }
 }

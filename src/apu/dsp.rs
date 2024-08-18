@@ -63,7 +63,7 @@ impl DSP {
     }
 
     // TODO: Converge on a common "tick"/"step", "clock"/"tick" terminology
-    pub fn tick(&mut self, apu_ram: &Box<[u8; 0x10000]>) {
+    pub fn tick(&mut self, apu_ram: &[u8; 0x10000]) {
         for channel_i in 0..8 {
             let new_pitch_counter = self.channels[channel_i].pitch_remainder
                 + self.reg.channels[channel_i].pitch.pitch();
@@ -120,9 +120,10 @@ impl DSP {
                     2 => sample
                         .saturating_add(scale_sample(prev_two[0], 61, 32))
                         .saturating_add(scale_sample(prev_two[1], 15, 16)),
-                    3 | _ => sample
+                    3 => sample
                         .saturating_add(scale_sample(prev_two[0], 115, 64))
                         .saturating_add(scale_sample(prev_two[1], 13, 16)),
+                    _ => unreachable!(),
                 };
                 *prev_two = [sample, prev_two[0]];
             }
@@ -169,34 +170,32 @@ impl DSP {
             if rate_operation_applies(self.rate_counter, rate) {
                 *envelope_level = envelope_level.saturating_add_signed(step);
             }
-        } else {
-            if channel_regs.gain_control.custom_gain() {
-                let apply =
-                    rate_operation_applies(self.rate_counter, channel_regs.gain_control.rate());
-                if apply {
-                    let step = match channel_regs.gain_control.mode() {
-                        // Linear decrease
-                        0 => -32,
-                        // Exponential decrease
-                        1 => -((((*envelope_level as i16).wrapping_sub(1)) >> 8) + 1),
-                        // Linear increase
-                        2 => 32,
-                        // Bent increase
-                        3 => {
-                            if *envelope_level < 0x600 {
-                                32
-                            } else {
-                                8
-                            }
+        } else if channel_regs.gain_control.custom_gain() {
+            let apply = rate_operation_applies(self.rate_counter, channel_regs.gain_control.rate());
+            if apply {
+                let step = match channel_regs.gain_control.mode() {
+                    // Linear decrease
+                    0 => -32,
+                    // Exponential decrease
+                    1 => -((((*envelope_level as i16).wrapping_sub(1)) >> 8) + 1),
+                    // Linear increase
+                    2 => 32,
+                    // Bent increase
+                    3 => {
+                        if *envelope_level < 0x600 {
+                            32
+                        } else {
+                            8
                         }
-                        _ => unreachable!(),
-                    };
-                    *envelope_level = envelope_level.saturating_add_signed(step);
-                }
-            } else {
-                *envelope_level = channel_regs.gain_control.fixed_volume() as u16 * 16;
-            };
+                    }
+                    _ => unreachable!(),
+                };
+                *envelope_level = envelope_level.saturating_add_signed(step);
+            }
+        } else {
+            *envelope_level = channel_regs.gain_control.fixed_volume() as u16 * 16;
         };
+
         *envelope_level = (*envelope_level).min(0x7FF);
         if self.reg.flags.soft_reset() {
             *envelope_level = 0;
@@ -285,7 +284,7 @@ impl DSP {
         }
     }
 
-    pub fn write_reg(&mut self, reg_i: u8, data: u8, apu_ram: &Box<[u8; 0x10000]>) {
+    pub fn write_reg(&mut self, reg_i: u8, data: u8, apu_ram: &[u8; 0x10000]) {
         // The top half of the DSP address space is a read-only mirror of the bottom half
         if reg_i >= 0x80 {
             return;

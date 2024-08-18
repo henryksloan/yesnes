@@ -251,16 +251,16 @@ impl DebugProcessor for DebugCpu {
                     disassembled.instruction_data.instruction, disassembled.instruction_data.mode
                 ),
             };
-            return AnalysisStep::Branch(dest_addr);
+            AnalysisStep::Branch(dest_addr)
         } else if disassembled.is_return()
             || (disassembled.is_indirect()
                 && (disassembled.is_call() || disassembled.is_unconditional_branch()))
         {
             // We either hit a return or an indirect call/branch. Either way, we can't
             // correctly disassemble past this point.
-            return AnalysisStep::Break;
+            AnalysisStep::Break
         } else {
-            return AnalysisStep::Continue;
+            AnalysisStep::Continue
         }
     }
 

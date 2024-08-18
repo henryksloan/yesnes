@@ -718,7 +718,8 @@ impl CPU {
                         0 => false,
                         1 => h_dot == h_scan_count,
                         2 => scanline == v_scan_count && h_dot == 0,
-                        3 | _ => scanline == v_scan_count && h_dot == h_scan_count,
+                        3 => scanline == v_scan_count && h_dot == h_scan_count,
+                        _ => unreachable!(),
                     };
                     cpu.timer_irq_flag |= cpu.irq_enqueued;
                 }
@@ -783,7 +784,7 @@ impl CPU {
             0x4212 => {
                 let hblank = {
                     let h_count = self.ppu_counter.borrow().h_ticks / 4;
-                    h_count < 22 || h_count > 277
+                    !(22..=277).contains(&h_count)
                 };
                 let vblank = self.ppu_counter.borrow().scanline > 224;
                 ((vblank as u8) << 7) | ((hblank as u8) << 6)
@@ -914,7 +915,7 @@ impl CPU {
                 let unit_size = io_reg_offsets.len();
                 let io_reg_base = channel_regs.io_reg;
                 for i in 0..n_bytes {
-                    let io_reg = io_reg_base.wrapping_add(io_reg_offsets[i as usize % unit_size]);
+                    let io_reg = io_reg_base.wrapping_add(io_reg_offsets[i % unit_size]);
                     let io_reg_addr = u24(0x2100 | io_reg as u32);
                     if io_to_cpu {
                         let data = yield_all!(CPU::read_u8(cpu.clone(), io_reg_addr));
@@ -1020,7 +1021,6 @@ impl CPU {
                             let old_indirect_addr = cpu.borrow().io_reg.dma_channels[channel_i]
                                 .indirect_addr_or_byte_count
                                 .0;
-                            channel_regs.indirect_addr_or_byte_count.0;
                             cpu.borrow_mut().io_reg.dma_channels[channel_i]
                                 .indirect_addr_or_byte_count
                                 .0 = old_indirect_addr.wrapping_add_lo16(1);
@@ -1088,7 +1088,8 @@ impl CPU {
                             0 => false,
                             1 => h_dot == h_scan_count,
                             2 => scanline == v_scan_count && h_dot == 0,
-                            3 | _ => scanline == v_scan_count && h_dot == h_scan_count,
+                            3 => scanline == v_scan_count && h_dot == h_scan_count,
+                            _ => unreachable!(),
                         };
                     }
                 }
@@ -1135,7 +1136,8 @@ impl CPU {
                             0 => false,
                             1 => h_dot == h_scan_count,
                             2 => scanline == v_scan_count && h_dot == 0,
-                            3 | _ => scanline == v_scan_count && h_dot == h_scan_count,
+                            3 => scanline == v_scan_count && h_dot == h_scan_count,
+                            _ => unreachable!(),
                         };
                     }
                 }
@@ -1244,11 +1246,10 @@ impl CPU {
         move || {
             let sp = cpu.borrow().reg.get_sp();
             cpu.borrow_mut().reg.set_sp(sp.wrapping_add(1));
-            let val = yield_all!(CPU::read_u8(
+            yield_all!(CPU::read_u8(
                 cpu.clone(),
                 u24(cpu.borrow().reg.get_sp() as u32)
-            ));
-            val
+            ))
         }
     }
 
@@ -1488,8 +1489,8 @@ impl CPU {
             let indirect_addr = {
                 let pb = cpu.borrow().reg.pc.bank();
                 let addr_lo = fetch!(cpu) as u16;
-                let lo16 = (((fetch!(cpu) as u16) << 8) | addr_lo)
-                    .wrapping_add(cpu.borrow().reg.get_x() as u16);
+                let lo16 =
+                    (((fetch!(cpu) as u16) << 8) | addr_lo).wrapping_add(cpu.borrow().reg.get_x());
                 u24(((pb as u32) << 16) | lo16 as u32)
             };
             // TODO: Use read_u16 to simplify some of these addressing modes
@@ -2093,7 +2094,7 @@ impl CPU {
                     bcd_a + bcd_to_bin(mem_val) as i32 + carry as i32
                 };
                 cpu.borrow_mut().reg.p.c = temp >= bcd_max;
-                bin_to_bcd((temp % bcd_max).abs() as u16)
+                bin_to_bcd((temp % bcd_max).unsigned_abs() as u16)
             } else {
                 let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
                 cpu.borrow_mut().reg.p.c = if subtract {

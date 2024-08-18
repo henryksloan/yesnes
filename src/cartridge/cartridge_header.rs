@@ -69,7 +69,7 @@ impl CartridgeHeader {
     }
 
     pub fn checksum_valid(&self) -> bool {
-        return !self.checksum == self.checksum_complement;
+        (!self.checksum) == self.checksum_complement
     }
 }
 

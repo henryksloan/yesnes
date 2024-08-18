@@ -58,8 +58,8 @@ enum SubLayer {
 }
 
 impl SubLayer {
-    pub fn to_layer(&self) -> Layer {
-        match *self {
+    pub fn to_layer(self) -> Layer {
+        match self {
             SubLayer::Obj(_) => Layer::Obj,
             SubLayer::Bg(bg_n, _) => Layer::Bg(bg_n),
         }
@@ -76,9 +76,10 @@ fn layer_priority_order(bg_mode: u8, mode1_bg3_priority: bool) -> &'static [SubL
         } else {
             &[Obj(3), Bg(1, 1), Bg(2, 1), Obj(2), Bg(1, 0), Bg(2, 0), Obj(1), Bg(3, 1), Obj(0), Bg(3, 0)]
         }
-        2 | 3 | 4 | 5 => &[Obj(3), Bg(1, 1), Obj(2), Bg(2, 1), Obj(1), Bg(1, 0), Obj(0), Bg(2, 0)],
+        2..=5 => &[Obj(3), Bg(1, 1), Obj(2), Bg(2, 1), Obj(1), Bg(1, 0), Obj(0), Bg(2, 0)],
         6 => &[Obj(3), Bg(1, 1), Obj(2), Obj(1), Bg(1, 0), Obj(0)],
-        7 | _ => &[Obj(3), Obj(2), Bg(2, 1), Obj(1), Bg(1, 0), Obj(0), Bg(2, 0)],
+        7 => &[Obj(3), Obj(2), Bg(2, 1), Obj(1), Bg(1, 0), Obj(0), Bg(2, 0)],
+        _ => panic!("Invalid background mode {bg_mode}"),
     }
 }
 
@@ -182,10 +183,11 @@ impl PPU {
             1 => &[4, 4, 2],
             2 => &[4, 4], // TODO: Offset-per-pixel
             3 => &[8, 4],
-            4 => &[8, 2],  // TODO: Offset-per-pixel
-            5 => &[4, 2],  // TODO: Hi-res
-            6 => &[4],     // TODO: Hi-res and Offset-per-pixel
-            7 | _ => &[8], // TODO: Rotation/scaling
+            4 => &[8, 2], // TODO: Offset-per-pixel
+            5 => &[4, 2], // TODO: Hi-res
+            6 => &[4],    // TODO: Hi-res and Offset-per-pixel
+            7 => &[8],    // TODO: Rotation/scaling
+            _ => unreachable!(),
         };
         if self.io_reg.bg_mode.bg_mode() == 7 {
             self.debug_render_scanline_mode7(draw_line);
@@ -372,7 +374,8 @@ impl PPU {
             0 => (32, 32),
             1 => (64, 32),
             2 => (32, 64),
-            3 | _ => (64, 64),
+            3 => (64, 64),
+            _ => unreachable!(),
         };
         let render_line = scanline as usize + self.io_reg.bg_scroll[bg_i].v.val as usize;
         let row = (render_line / 8) % screen_rows;
@@ -389,7 +392,8 @@ impl PPU {
                 0 => 0,
                 1 => h_screen,
                 2 => v_screen,
-                3 | _ => (v_screen << 1) | h_screen,
+                3 => (v_screen << 1) | h_screen,
+                _ => unreachable!(),
             };
             let tile = self.vram
                 [(bg_addr + screen_i * 0x400 + ((row % 32) * 32) + (col % 32)) % self.vram.len()];
@@ -486,7 +490,7 @@ impl PPU {
             let mut tile_line_pixels = [None; 8];
             for bit_i in 0..8 {
                 let chr_data = (self.vram
-                    [(64 * chr_n as usize + 8 * line_offset as usize + bit_i) % self.vram.len()]
+                    [(64 * chr_n as usize + 8 * line_offset + bit_i) % self.vram.len()]
                     >> 8) as u8;
                 let palette_entry = self.cgram[chr_data as usize];
                 let pixel = [
@@ -605,7 +609,7 @@ impl PPU {
             for bit_i in 0..8 {
                 let pixel_x = {
                     let x = (x_lo8 as u16 + col_i * 8 + bit_i as u16) as i16 - (x_hi1 as i16 * 256);
-                    if x >= 255 || x < 0 {
+                    if !(0..255).contains(&x) {
                         continue;
                     }
                     x as usize
@@ -690,7 +694,7 @@ impl PPU {
                 }
                 if oam_addr >= 0x200 {
                     // Writes to the high 32 bytes of OAM are committed directly
-                    self.oam_hi[oam_addr as usize & 0x1F] = data;
+                    self.oam_hi[oam_addr & 0x1F] = data;
                 } else if !even_byte {
                     // Writes to the lower 512 bytes of OAM are committed in pairs when an odd address is written
                     self.oam_lo[oam_addr - 1] = self.io_reg.oam_even_latch;

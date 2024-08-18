@@ -220,7 +220,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
                     .rect_filled(gapless_rect, egui::Rounding::ZERO, egui::Color32::RED);
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::WHITE);
             }
-            if paused && row_addr == D::pc(&registers_mirror).into() {
+            if paused && row_addr == D::pc(registers_mirror).into() {
                 ui.style_mut().visuals.override_text_color = Some(egui::Color32::KHAKI);
             }
             let label = ui.monospace(format!("{:06X}", row_addr));
@@ -282,7 +282,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
                             self.breakpoint_addrs.insert(clicked_addr);
                         }
                         D::toggle_breakpoint_at(
-                            &maybe_snes_guard.as_ref().unwrap(),
+                            maybe_snes_guard.as_ref().unwrap(),
                             D::Address::try_from(clicked_addr).unwrap_or_default(),
                         );
                     }

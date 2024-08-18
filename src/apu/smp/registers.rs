@@ -38,6 +38,7 @@ pub struct StatusRegister {
     pub c: bool, // Carry flag
 }
 
+#[allow(clippy::identity_op)]
 impl StatusRegister {
     pub const fn new(data: u8) -> Self {
         Self {

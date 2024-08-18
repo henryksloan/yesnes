@@ -94,12 +94,12 @@ bitfield! {
 
 impl LayerEnable {
     pub fn bg_enabled(&self, bg_n: usize) -> bool {
-        assert!((1..=4).contains(&bg_n));
         match bg_n {
             1 => self.bg1_enable(),
             2 => self.bg2_enable(),
             3 => self.bg3_enable(),
-            4 | _ => self.bg4_enable(),
+            4 => self.bg4_enable(),
+            _ => panic!("Invalid background number {bg_n}"),
         }
     }
 }
@@ -139,7 +139,8 @@ impl ObjSizeBase {
             5 => [(32, 32), (64, 64)],
             // These two are undocumented.
             6 => [(16, 32), (32, 64)],
-            7 | _ => [(16, 32), (32, 32)],
+            7 => [(16, 32), (32, 32)],
+            _ => unreachable!(),
         }
     }
 
@@ -178,9 +179,7 @@ impl OamAddrPriority {
         } else {
             0
         };
-        (highest_priority..128)
-            .into_iter()
-            .chain((0..highest_priority).into_iter())
+        (highest_priority..128).chain(0..highest_priority)
     }
 }
 
@@ -292,7 +291,8 @@ impl VramAddrIncrMode {
         match self.step() {
             0b00 => 1,
             0b01 => 32,
-            0b10 | 0b11 | _ => 128,
+            0b10 | 0b11 => 128,
+            _ => unreachable!(),
         }
     }
 }

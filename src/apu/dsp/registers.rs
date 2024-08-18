@@ -162,6 +162,7 @@ bitfield! {
 pub struct PerChannel(pub u8);
 
 impl PerChannel {
+    #[expect(unused)]
     pub fn channel(&self, channel_i: usize) -> bool {
         assert!(channel_i < 8);
         (self.0 >> channel_i) & 1 == 1
@@ -178,6 +179,7 @@ impl PerChannel {
 pub struct PitchModulationEnable(pub u8);
 
 impl PitchModulationEnable {
+    #[expect(unused)]
     pub fn channel_enabled(&self, channel_i: usize) -> bool {
         // Pitch modulation is controlled by the next lowest channel, so channel 0 can't use it
         assert!(channel_i > 1 && channel_i < 8);
