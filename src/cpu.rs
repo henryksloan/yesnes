@@ -87,7 +87,6 @@ macro_rules! pull_instrs {
             fn [<pull_ $reg>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
                     yield_all!(CPU::idle(cpu.clone()));
-                    yield_all!(CPU::idle(cpu.clone()));
                     let data = yield_all!(CPU::[<stack_pull_ $kind>](cpu.clone()));
                     cpu.borrow_mut().reg.[<set_ $reg>](data);
                     cpu.borrow_mut().reg.p.n = ((data >> (n_bits!(cpu, $kind) - 1)) == 1);
@@ -131,7 +130,6 @@ macro_rules! transfer_instrs {
         paste! {
             fn [<transfer_ $from _ $to>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    yield_all!(CPU::idle(cpu.clone()));
                     let data = cpu.borrow().reg.$from & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
                     cpu.borrow_mut().reg.[<set_ $to>](data);
                     if n_bits!(cpu, $kind) == 16 {
@@ -500,19 +498,19 @@ impl CPU {
                  0x85=>direct, 0x87=>indirect_long, 0x8D=>absolute,
                  0x8F=>absolute_long, 0x91=>indirect_indexed_write,
                  0x92=>indirect, 0x93=>stack_relative_indirect_indexed,
-                 0x95=>direct_x, 0x97=>indirect_long_y, 0x99=>absolute_y,
-                 0x9D=>absolute_x, 0x9F=>absolute_long_x)
+                 0x95=>direct_x, 0x97=>indirect_long_y, 0x99=>absolute_y_write,
+                 0x9D=>absolute_x_write, 0x9F=>absolute_long_x)
                 (stx, XFlag; 0x86=>direct, 0x8E=>absolute, 0x96=>direct_y)
                 (sty, XFlag; 0x84=>direct, 0x8C=>absolute, 0x94=>direct_x)
                 (mvp, NoFlag; 0x44=>implied)
                 (mvn, NoFlag; 0x54=>implied)
                 (inc, MFlag; 0xE6=>direct, 0xEE=>absolute, 0xF6=>direct_x,
-                 0xFE=>absolute_x)
+                 0xFE=>absolute_x_write)
                 (ina, NoFlag; 0x1A=>implied)
                 (inx, NoFlag; 0xE8=>implied)
                 (iny, NoFlag; 0xC8=>implied)
                 (dec, MFlag; 0xC6=>direct, 0xCE=>absolute, 0xD6=>direct_x,
-                 0xDE=>absolute_x)
+                 0xDE=>absolute_x_write)
                 (dea, NoFlag; 0x3A=>implied)
                 (dex, NoFlag; 0xCA=>implied)
                 (dey, NoFlag; 0x88=>implied)
@@ -538,16 +536,16 @@ impl CPU {
                 (cpy, XFlag; 0xC0=>immediate, 0xC4=>direct, 0xCC=>absolute)
                 (asl_a, NoFlag; 0x0A=>implied)
                 (asl, MFlag; 0x06=>direct,  0x0E=>absolute, 0x16=>direct_x,
-                 0x1E=>absolute_x)
+                 0x1E=>absolute_x_write)
                 (lsr_a, NoFlag; 0x4A=>implied)
                 (lsr, MFlag; 0x46=>direct,  0x4E=>absolute, 0x56=>direct_x,
-                 0x5E=>absolute_x)
+                 0x5E=>absolute_x_write)
                 (rol_a, NoFlag; 0x2A=>implied)
                 (rol, MFlag; 0x26=>direct, 0x2E=>absolute, 0x36=>direct_x,
-                 0x3E=>absolute_x)
+                 0x3E=>absolute_x_write)
                 (ror_a, NoFlag; 0x6A=>implied)
                 (ror, MFlag; 0x66=>direct, 0x6E=>absolute, 0x76=>direct_x,
-                 0x7E=>absolute_x)
+                 0x7E=>absolute_x_write)
                 (nop, NoFlag; 0xEA=>implied)
                 (wdm, NoFlag; 0x42=>immediate)
                 (push_a, NoFlag; 0x48=>implied)
@@ -1401,32 +1399,48 @@ impl CPU {
         }
     }
 
-    fn absolute_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
+    fn absolute_offset_impl<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        long: bool,
+        write: bool,
+        offset: u32,
+    ) -> impl Yieldable<Pointer> + 'a {
         #[coroutine]
         move || {
-            let addr = {
-                let addr_lo = fetch!(cpu) as u32;
-                CPU::bank_addr(
-                    cpu.clone(),
-                    u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_x() as u32),
-                )
-            };
+            let addr_lo = fetch!(cpu) as u32;
+            let base_addr = u24(((fetch!(cpu) as u32) << 8) | addr_lo);
+            let offset_addr = base_addr + offset;
+            let addr = CPU::bank_addr(cpu.clone(), offset_addr);
+            // "Add 1 cycle for indexing across page boundaries, or write, or X=0.
+            //  When X=1 or in the emulation mode, this cycle contains invalid addresses"
+            if (base_addr.lo16() & 0xFF00 != offset_addr.lo16() & 0xFF00)
+                || write
+                || !cpu.borrow().reg.p.x_or_b
+            {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             Pointer::new(addr, long)
         }
     }
 
+    fn absolute_x<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
+        let offset = cpu.borrow().reg.get_x() as u32;
+        CPU::absolute_offset_impl(cpu, long, false, offset)
+    }
+
+    fn absolute_x_write<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
+        let offset = cpu.borrow().reg.get_x() as u32;
+        CPU::absolute_offset_impl(cpu, long, true, offset)
+    }
+
     fn absolute_y<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
-        #[coroutine]
-        move || {
-            let addr = {
-                let addr_lo = fetch!(cpu) as u32;
-                CPU::bank_addr(
-                    cpu.clone(),
-                    u24((((fetch!(cpu) as u32) << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32),
-                )
-            };
-            Pointer::new(addr, long)
-        }
+        let offset = cpu.borrow().reg.get_y() as u32;
+        CPU::absolute_offset_impl(cpu, long, false, offset)
+    }
+
+    fn absolute_y_write<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
+        let offset = cpu.borrow().reg.get_y() as u32;
+        CPU::absolute_offset_impl(cpu, long, true, offset)
     }
 
     fn absolute_long<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
@@ -1760,7 +1774,6 @@ impl CPU {
     fn clc<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.c = false;
         }
     }
@@ -1768,7 +1781,6 @@ impl CPU {
     fn cli<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.i = false;
         }
     }
@@ -1776,7 +1788,6 @@ impl CPU {
     fn cld<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.d = false;
         }
     }
@@ -1784,7 +1795,6 @@ impl CPU {
     fn clv<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.v = false;
         }
     }
@@ -1792,7 +1802,6 @@ impl CPU {
     fn sec<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.c = true;
         }
     }
@@ -1800,7 +1809,6 @@ impl CPU {
     fn sei<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.i = true;
         }
     }
@@ -1808,7 +1816,6 @@ impl CPU {
     fn sed<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             cpu.borrow_mut().reg.p.d = true;
         }
     }
@@ -1930,7 +1937,6 @@ impl CPU {
     fn transfer_a_sp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             let a = cpu.borrow().reg.a;
             cpu.borrow_mut().reg.set_sp(a);
         }
@@ -1939,7 +1945,6 @@ impl CPU {
     fn transfer_x_sp<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            yield_all!(CPU::idle(cpu.clone()));
             let x = cpu.borrow().reg.get_x();
             cpu.borrow_mut().reg.set_sp(x);
         }
@@ -2042,6 +2047,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer)).wrapping_add(1);
+            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
             // TODO: Simplify some of these functions with n_bits!()
             let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
@@ -2107,6 +2113,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer)).wrapping_sub(1);
+            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, data));
             let n_bits = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
                 8
@@ -2246,6 +2253,7 @@ impl CPU {
         #[coroutine]
         move || {
             let return_pc = cpu.borrow().reg.pc.lo16().wrapping_sub(1);
+            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
             cpu.borrow_mut().reg.pc &= 0xFF_0000u32;
             cpu.borrow_mut().reg.pc |= pointer.addr.lo16();
@@ -2258,6 +2266,7 @@ impl CPU {
             let return_pb = cpu.borrow().reg.pc.bank();
             let return_pc = cpu.borrow().reg.pc.lo16().wrapping_sub(1);
             yield_all!(CPU::stack_push_u8(cpu.clone(), return_pb));
+            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::stack_push_u16(cpu.clone(), return_pc));
             cpu.borrow_mut().reg.pc = pointer.addr;
         }
@@ -2339,6 +2348,7 @@ impl CPU {
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let result = CPU::rotate_through_carry(cpu.clone(), data, left);
+            yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
         }
     }
@@ -2495,7 +2505,6 @@ impl CPU {
         #[coroutine]
         move || {
             yield_all!(CPU::idle(cpu.clone()));
-            yield_all!(CPU::idle(cpu.clone()));
             let data = yield_all!(CPU::stack_pull_u8(cpu.clone()));
             cpu.borrow_mut().reg.set_p(data);
         }
@@ -2563,7 +2572,6 @@ mod tests {
 
     #[test]
     // TODO: Consider factoring out this test setup (and improving reporting with a custom harness, maybe parallelize)
-    // TODO: Test cycle-accuracy
     fn tom_harte() {
         let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_dir.push("testdata/65816/v1/");
