@@ -71,14 +71,14 @@ impl DSP {
             self.channels[channel_i].pitch_remainder = new_pitch_counter % 0x1000;
             if self.channels[channel_i].brr_cursor >= 16 {
                 // The max pitch is 0x3FFF, so it's impossible to skip an entire sample buffer
-                // DO NOT SUBMIT: Do we always start from the beginning of the next?
+                // TODO: Do we always start from the beginning of the next?
                 self.channels[channel_i].brr_cursor %= 16;
                 let brr_header = self.channels[channel_i].brr_header(apu_ram);
                 if brr_header.end_flag() {
-                    // DO NOT SUBMIT: fullsnes says that we "jump to Loop-address" regardless of loop_flag, but that *at least* seems irrelavent
+                    // TODO: fullsnes says that we "jump to Loop-address" regardless of loop_flag, but that *at least* seems irrelavent
                     self.reg.endx.set_channel(channel_i, true);
                     if brr_header.loop_flag() {
-                        // DO NOT SUBMIT: Does this start from the beginning of the next?
+                        // TODO: Should we always start from the beginning of the next?
                         self.channels[channel_i].brr_cursor = 0;
                         // Set the channel's new BRR address to the loop address from the directory table
                         let dir_addr = self.reg.brr_dir_base(channel_i) as usize;
@@ -87,6 +87,8 @@ impl DSP {
                                 | (apu_ram[(dir_addr + 2) % 0x10000] as u16);
                     } else {
                         self.channels[channel_i].adsr_state = AdsrState::Release;
+                        // The envelope is zeroes immediately upon BRR end
+                        self.channels[channel_i].envelope_level = 0;
                     }
                 } else {
                     // Continue to the next 9-byte BRR block
@@ -106,7 +108,7 @@ impl DSP {
                 let sample = {
                     let nibble = (apu_ram[brr_base + brr_byte] >> (4 * brr_nibble)) & 0xF;
                     let signed_nibble = ((nibble << 4) as i8) >> 4;
-                    // DO NOT SUBMIT: shift=13..15 might be a special case?
+                    // TODO: shift=13..15 is a special/illegal case?
                     ((signed_nibble as i16) << brr_header.shift()) >> 1
                 };
                 let scale_sample =
@@ -125,7 +127,9 @@ impl DSP {
                 *prev_two = [sample, prev_two[0]];
             }
             // TODO: Gaussian interpolation
-            // DO NOT SUBMIT: Might have to separate this for e.g. pitch modulation
+            // TODO: Pitch modulation
+            // TODO: Echo
+            // TODO: Noise
             self.tick_channel(channel_i);
         }
         self.rate_counter = self.rate_counter.wrapping_sub(1).min(RATE_COUNTER_MAX);
@@ -138,7 +142,7 @@ impl DSP {
         let envelope_level = &mut self.channels[channel_i].envelope_level;
         // The Release state applies regardless of the ADSR and GAIN settings
         if self.channels[channel_i].adsr_state == AdsrState::Release {
-            // DO NOT SUBMIT: This should be "Step=-800h when BRR-end". Same for soft-reset.
+            // TODO: I think a KOF while playing such an end-block causes a fast release (-0x800 per sample)
             *envelope_level = envelope_level.saturating_sub(8);
         }
         if self.reg.channels[channel_i].adsr_control.adsr_enable() {
@@ -158,7 +162,7 @@ impl DSP {
                     self.reg.channels[channel_i].adsr_control.sustain_rate(),
                     -((((*envelope_level as i16).wrapping_sub(1)) >> 8) + 1),
                 ),
-                // The Release-mode diminution is done above, unconditionally
+                // The Release-mode decay is done above, unconditionally
                 AdsrState::Release => (0, 0),
             };
             if rate_operation_applies(self.rate_counter, rate) {
@@ -186,7 +190,6 @@ impl DSP {
                                 8
                             }
                         }
-                        // DO NOT SUBMIT: This is useful, use it throughout
                         _ => unreachable!(),
                     };
                     *envelope_level = envelope_level.saturating_add_signed(step);
@@ -197,6 +200,10 @@ impl DSP {
             };
         };
         *envelope_level = (*envelope_level).min(0x7FF);
+        if self.reg.flags.soft_reset() {
+            *envelope_level = 0;
+            self.channels[channel_i].adsr_state = AdsrState::Release;
+        }
         self.reg.channels[channel_i].envx = (*envelope_level >> 4) as u8;
 
         // If VxGAIN is in use, the ADSR state still changes, but the sustain_level boundary is read
@@ -224,7 +231,6 @@ impl DSP {
         let (mut sum_left, mut sum_right) = (0i16, 0i16);
         for channel_i in 0..8 {
             let channel_out = self.channels[channel_i].output;
-            // DO NOT SUBMIT: fullsnes says "with 16bit overflow handling (after each addition)"... what?
             sum_left = sum_left.saturating_add(
                 ((channel_out as i32 * self.reg.channels[channel_i].volume.left as i32) >> 7)
                     as i16,
@@ -236,7 +242,10 @@ impl DSP {
         }
         sum_left = ((sum_left as i32 * self.reg.main_volume.left as i32) >> 7) as i16;
         sum_right = ((sum_right as i32 * self.reg.main_volume.right as i32) >> 7) as i16;
-        // DO NOT SUBMIT: Mute and "final phase inversion"
+        if self.reg.flags.mute_all() {
+            return (0, 0);
+        }
+        // These XORs perform a phase inversion
         (
             (sum_left as u16 ^ 0xFFFF) as i16,
             (sum_right as u16 ^ 0xFFFF) as i16,
@@ -278,7 +287,6 @@ impl DSP {
         }
     }
 
-    // DO NOT SUBMIT: Maybe just make apu_ram an Rc<RefCell>... :(
     pub fn write_reg(&mut self, reg_i: u8, data: u8, apu_ram: &Box<[u8; 0x10000]>) {
         // The top half of the DSP address space is a read-only mirror of the bottom half
         if reg_i >= 0x80 {
@@ -298,6 +306,7 @@ impl DSP {
                 0x4 => {
                     // KON: Start playing a note
                     // DO NOT SUBMIT: KON and KOF are clocked at 16000Hz... see fullsnes
+                    // TODO: 5 empty samples upon KON
                     for channel_i in 0..8 {
                         if (data >> channel_i) & 1 == 1 {
                             let dir_addr = self.reg.brr_dir_base(channel_i) as usize;
@@ -305,11 +314,11 @@ impl DSP {
                                 ((apu_ram[(dir_addr + 1) % 0x10000] as u16) << 8)
                                     | (apu_ram[dir_addr % 0x10000] as u16);
                             self.channels[channel_i].brr_cursor = 0;
-                            // DO NOT SUBMIT: What about pitch_remainder?
+                            // TODO: Does KON reset the pitch counter?
                             // self.channels[channel_i].pitch_remainder = 0;
                             self.channels[channel_i].adsr_state = AdsrState::Attack;
                             self.channels[channel_i].envelope_level = 0;
-                            // DO NOT SUBMIT: Does anything flush prev_two_samples?
+                            // TODO: Does anything flush prev_two_samples?
                         }
                     }
                 }
@@ -321,7 +330,6 @@ impl DSP {
                         }
                     }
                 }
-                // DO NOT SUBMIT: If soft reset, key off all, zero envelope
                 0x6 => self.reg.flags.0 = data,
                 0x7 => self.reg.endx.0 = 0,
                 _ => {}

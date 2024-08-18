@@ -41,10 +41,8 @@ fn make_audio_stream(audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>) -> (Stream,
         .supported_output_configs()
         .expect("error while querying configs");
     let supported_config = supported_configs_range
-        // DO NOT SUBMIT: Will forcing f32 not work on some systems?
+        // TODO: Will forcing f32 not work on some systems?
         .filter(|config| config.sample_format() == cpal::SampleFormat::F32)
-        // .find_map(|config| config.try_with_sample_rate(cpal::SampleRate(32000)))
-        // .find_map(|config| config.try_with_sample_rate(cpal::SampleRate(44100)))
         .next()
         .expect("No supported audio config")
         .with_max_sample_rate();

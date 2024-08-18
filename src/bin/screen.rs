@@ -9,6 +9,7 @@ use eframe::egui::{Color32, ColorImage, TextureHandle};
 use std::path::PathBuf;
 use std::time::Instant;
 
+// TODO: Add sound (ideally merge all this stuff with the debugger binary)
 struct YesnesApp {
     snes: SNES,
     frame_history: FrameHistory,

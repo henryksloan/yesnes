@@ -11,7 +11,7 @@ pub struct Registers {
     pub main_volume: LeftRight,
     // 2Ch, 3Ch (EVOL): Left and right echo channel volume, signed
     pub echo_volume: LeftRight,
-    // DO NOT SUBMIT: add/document 4Ch (KON) and 5Ch (KOF)
+    // 4Ch (KON) and 5Ch (KOF) as dynamic
     // 6Ch (FLG): Main control flags
     pub flags: ControlFlags,
     // 7Ch (ENDX): Resettable bits set when a channel reaches the end of a BRR sample

@@ -677,14 +677,16 @@ impl SMP {
                 let audio_output = smp.dsp.get_output();
                 if smp.debug_audio_buffer.len() < 32000 {
                     smp.debug_audio_buffer.push_back((
-                        // DO NOT SUBMIT: Temporarily attenuating to save my ears
+                        // TODO: Naively attenuating. Figure out a proper way to do that.
                         0.15 * ((audio_output.0 as f32) / (i16::MAX as f32)),
                         0.15 * ((audio_output.1 as f32) / (i16::MAX as f32)),
                     ));
                 }
             }
 
-            // DO NOT SUBMIT: Explain this and maybe generalize
+            // Resume the CPU if the SMP goes a while without checking the ports.
+            // TODO: bsnes uses this constant, but besides its relationship to the clock dividers,
+            // I'm not sure why it's significant.
             if ticks_run > 768 * 24 {
                 yield YieldReason::Sync(Device::CPU);
             }

@@ -6,7 +6,6 @@ pub struct Channel {
     pub brr_block_addr: u16,
     // The current nibble being played, 0..=15, where the high nibble of each byte comes first
     pub brr_cursor: usize,
-    // DO NOT SUBMIT: Verify this
     // Each channel effectively has a counter that increases by P (pitch register) each tick (32000Hz),
     // incrementing the cursor each time it crosses a multiple of 0x1000. Therefore, "between ticks",
     // the counter is at some offset equal to the remainder of the previous division by 0x1000.

@@ -18,8 +18,6 @@ pub const PPU_FREQ: u64 = CPU_FREQ;
 // maybe to accurately clock timers. If so, waitstates should be halved.
 pub const SMP_FREQ: u64 = 24_606_720 / 24;
 
-// DO NOT SUBMIT: It's easy to forget to yield to these... how to warn on that?
-// Filed https://github.com/rust-lang/rust/pull/129034 :)
 pub trait Yieldable<T> = Coroutine<Yield = YieldReason, Return = T>;
 pub trait DeviceCoroutine = Coroutine<Yield = YieldTicks, Return = !>;
 pub trait InstructionCoroutine = Yieldable<()>;
