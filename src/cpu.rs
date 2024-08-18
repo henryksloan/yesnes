@@ -219,9 +219,6 @@ macro_rules! instr {
     ($cpu_rc: ident, $instr_f:ident, MFlag, $addr_mode_f:ident) => {
         instr!($cpu_rc, $instr_f, flag: m, $addr_mode_f)
     };
-    // ($cpu_rc: ident, $instr_f:ident, NoFlag, implied) => {
-    //     instr!($cpu_rc, $instr_f)
-    // };
     ($cpu_rc: ident, $instr_f:ident, NoFlag, $addr_mode_f:ident) => {
         instr!($cpu_rc, $instr_f, $addr_mode_f)
     };
@@ -501,7 +498,7 @@ impl CPU {
                  0x9E=>absolute_x)
                 (sta, MFlag; 0x81=>indexed_indirect, 0x83=>stack_relative,
                  0x85=>direct, 0x87=>indirect_long, 0x8D=>absolute,
-                 0x8F=>absolute_long, 0x91=>indirect_indexed,
+                 0x8F=>absolute_long, 0x91=>indirect_indexed_write,
                  0x92=>indirect, 0x93=>stack_relative_indirect_indexed,
                  0x95=>direct_x, 0x97=>indirect_long_y, 0x99=>absolute_y,
                  0x9D=>absolute_x, 0x9F=>absolute_long_x)
@@ -1370,6 +1367,7 @@ impl CPU {
         #[coroutine]
         move || {
             let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_x() as u32);
+            yield_all!(CPU::idle(cpu.clone()));
             if cpu.borrow().reg.d & 0xFF != 0 {
                 yield_all!(CPU::idle(cpu.clone()));
             }
@@ -1382,6 +1380,7 @@ impl CPU {
         #[coroutine]
         move || {
             let direct_addr = u24(fetch!(cpu) as u32 + cpu.borrow().reg.get_y() as u32);
+            yield_all!(CPU::idle(cpu.clone()));
             if cpu.borrow().reg.d & 0xFF != 0 {
                 yield_all!(CPU::idle(cpu.clone()));
             }
@@ -1527,6 +1526,9 @@ impl CPU {
         #[coroutine]
         move || {
             let indirect_addr = u24(fetch!(cpu) as u32);
+            if cpu.borrow().reg.d & 0xFF != 0 {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             let addr = {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 // TODO: Normalize wrapping behavior/functions for 16 bit accesses throughout
@@ -1560,7 +1562,11 @@ impl CPU {
         }
     }
 
-    fn indirect_indexed<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
+    fn indirect_indexed_impl<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        long: bool,
+        write: bool,
+    ) -> impl Yieldable<Pointer> + 'a {
         #[coroutine]
         move || {
             let offset = cpu.borrow().reg.get_y() as u32;
@@ -1572,10 +1578,30 @@ impl CPU {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
                 u24((hi << 8) | lo)
-            } + offset;
-            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
+            };
+            let offset_addr = bank_addr + offset;
+            let addr = CPU::bank_addr(cpu.clone(), offset_addr);
+            // "Add 1 cycle for indexing across page boundaries, or write, or X=0.
+            //  When X=1 or in the emulation mode, this cycle contains invalid addresses"
+            if (bank_addr.lo16() & 0xFF00 != offset_addr.lo16() & 0xFF00)
+                || write
+                || !cpu.borrow().reg.p.x_or_b
+            {
+                yield_all!(CPU::idle(cpu.clone()));
+            }
             Pointer::new(addr, long)
         }
+    }
+
+    fn indirect_indexed<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
+        CPU::indirect_indexed_impl(cpu, long, false)
+    }
+
+    fn indirect_indexed_write<'a>(
+        cpu: Rc<RefCell<CPU>>,
+        long: bool,
+    ) -> impl Yieldable<Pointer> + 'a {
+        CPU::indirect_indexed_impl(cpu, long, true)
     }
 
     fn indirect_long<'a>(cpu: Rc<RefCell<CPU>>, long: bool) -> impl Yieldable<Pointer> + 'a {
@@ -1631,6 +1657,7 @@ impl CPU {
         #[coroutine]
         move || {
             let offset = fetch!(cpu) as i16;
+            yield_all!(CPU::idle(cpu.clone()));
             let stack_addr = u24(cpu.borrow().reg.get_sp() as u32).wrapping_add_lo16(offset);
             let addr_lo = yield_all!(CPU::read_u8(cpu.clone(), stack_addr)) as u32;
             // TODO: Normalize wrapping behavior/functions for 16 bit accesses throughout
@@ -1638,6 +1665,7 @@ impl CPU {
                 yield_all!(CPU::read_u8(cpu.clone(), stack_addr.wrapping_add_lo16(1))) as u32;
             let bank_addr = ((addr_hi << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32;
             let addr = CPU::bank_addr(cpu.clone(), u24(bank_addr));
+            yield_all!(CPU::idle(cpu.clone()));
             Pointer::new(addr, long)
         }
     }
@@ -2171,8 +2199,6 @@ impl CPU {
     ) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            // TODO: Really need to check the 8- and 16-bit flag logic
-
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let result = reg_val as i32 - data as i32;
 
