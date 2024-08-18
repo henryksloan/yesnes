@@ -29,25 +29,6 @@ pub const COP_VECTOR: u24 = u24(0xFFE4);
 pub const ABORT_VECTOR: u24 = u24(0xFFF8);
 pub const BRK_VECTOR: u24 = u24(0xFFE6);
 
-// DO NOT SUBMIT: Make this take ticks_to_yield itself and move it to scheduler
-macro_rules! yield_ticks {
-    ($cpu_rc:ident, $gen_expr:expr) => {{
-        let mut gen = $gen_expr;
-        loop {
-            match Pin::new(&mut gen).resume(()) {
-                CoroutineState::Yielded(yield_reason) => {
-                    let ticks_to_yield = $cpu_rc.borrow().ticks_run;
-                    $cpu_rc.borrow_mut().ticks_run = 0;
-                    yield (yield_reason, ticks_to_yield)
-                }
-                CoroutineState::Complete(out) => break out,
-            }
-        }
-    }};
-}
-
-pub(crate) use yield_ticks;
-
 macro_rules! n_bits {
     ($cpu_rc:ident, u8) => {
         8
@@ -220,24 +201,23 @@ macro_rules! branch_instrs {
 macro_rules! instr {
     ($cpu_rc: ident, $instr_f:ident, implied) => {{
         // "Implied" instructions do a dummy read despite having no operand
-        let _ = yield_ticks!($cpu_rc, CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
-        yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone()))
+        let _ = yield_all!(CPU::read_u8($cpu_rc.clone(), $cpu_rc.borrow().reg.pc));
+        yield_all!(CPU::$instr_f($cpu_rc.clone()))
     }};
     ($cpu_rc: ident, $instr_f:ident, relative) => {{
-        yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone()))
+        yield_all!(CPU::$instr_f($cpu_rc.clone()))
     }};
     ($cpu_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {{
-        let data = yield_ticks!($cpu_rc, CPU::$addr_mode_f($cpu_rc.clone(), false));
-        yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone(), data))
+        let data = yield_all!(CPU::$addr_mode_f($cpu_rc.clone(), false));
+        yield_all!(CPU::$instr_f($cpu_rc.clone(), data))
     }};
     // If the instruction depends on the X or M flag,
     // we pass true if the 16-bit variant should be used, else false
     ($cpu_rc: ident, $instr_f:ident, flag: $flag: ident, $addr_mode_f:ident) => {{
-        let data = yield_ticks!(
-            $cpu_rc,
+        let data = yield_all!(
             CPU::$addr_mode_f($cpu_rc.clone(), !$cpu_rc.borrow().reg.p.$flag)
         );
-        yield_ticks!($cpu_rc, CPU::$instr_f($cpu_rc.clone(), data))
+        yield_all!(CPU::$instr_f($cpu_rc.clone(), data))
     }};
     ($cpu_rc: ident, $instr_f:ident, XFlag, $addr_mode_f:ident) => {
         instr!($cpu_rc, $instr_f, flag: x_or_b, $addr_mode_f)
@@ -433,12 +413,24 @@ impl CPU {
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceCoroutine + 'a {
         #[coroutine]
+        move || {
+            let mut run_gen = CPU::run_loop(cpu.clone());
+            loop {
+                let CoroutineState::Yielded(yield_reason) = Pin::new(&mut run_gen).resume(());
+                let ticks_to_yield = std::mem::take(&mut cpu.borrow_mut().ticks_run);
+                yield (yield_reason, ticks_to_yield)
+            }
+        }
+    }
+
+    fn run_loop<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<!> + 'a {
+        #[coroutine]
         move || loop {
             if cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc) {
-                yield (YieldReason::Debug(DebugPoint::Breakpoint), 0);
+                yield YieldReason::Debug(DebugPoint::Breakpoint);
             }
             // print!("CPU {:#010X}", cpu.borrow().reg.pc.raw());
-            let opcode = yield_ticks!(cpu, CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
+            let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
             // TODO: Need to go through and use wrapping arithmetic where appropriate
             cpu.borrow_mut().progress_pc(1);
             // {
@@ -611,14 +603,14 @@ impl CPU {
             // TODO: Proper DMA activation and pause timing
             let dmas_enqueued = cpu.borrow_mut().dmas_enqueued.take();
             if let Some(dmas_enqueued) = dmas_enqueued {
-                yield_ticks!(cpu, CPU::run_dma(cpu.clone(), dmas_enqueued));
+                yield_all!(CPU::run_dma(cpu.clone(), dmas_enqueued));
             }
 
             if !cpu.borrow().hdma_setup_triggered_this_line {
                 let hdmas_ongoing = cpu.borrow_mut().hdmas_ongoing;
                 if let Some(hdmas_ongoing) = hdmas_ongoing {
                     cpu.borrow_mut().hdma_setup_triggered_this_line = true;
-                    yield_ticks!(cpu, CPU::setup_hdma(cpu.clone(), hdmas_ongoing));
+                    yield_all!(CPU::setup_hdma(cpu.clone(), hdmas_ongoing));
                 }
             }
 
@@ -626,7 +618,7 @@ impl CPU {
                 cpu.borrow_mut().hdma_pending_this_line = false;
                 let hdmas_ongoing = cpu.borrow_mut().hdmas_ongoing;
                 if let Some(hdmas_ongoing) = hdmas_ongoing {
-                    yield_ticks!(cpu, CPU::run_hdma(cpu.clone(), hdmas_ongoing));
+                    yield_all!(CPU::run_hdma(cpu.clone(), hdmas_ongoing));
                 }
             }
 
@@ -637,7 +629,7 @@ impl CPU {
                 } else {
                     NMI_VECTOR
                 };
-                yield_ticks!(cpu, CPU::interrupt(cpu.clone(), vector));
+                yield_all!(CPU::interrupt(cpu.clone(), vector));
             }
 
             if !cpu.borrow().reg.p.i && cpu.borrow().irq_enqueued {
@@ -647,13 +639,10 @@ impl CPU {
                 } else {
                     IRQ_VECTOR
                 };
-                yield_ticks!(cpu, CPU::interrupt(cpu.clone(), vector));
+                yield_all!(CPU::interrupt(cpu.clone(), vector));
             }
 
-            // TODO: I HATE this. Somehow want to yield ticks if we're doing a sync, but not for events.
-            // But I think it's good enough if we just attach ticks_run to whatever this function yield (like yield_all).
-            // In fact, this is wrong, as we're returning from the device generator without flushing our cycles.
-            yield (YieldReason::FinishedInstruction(Device::CPU), 0);
+            yield YieldReason::FinishedInstruction(Device::CPU);
         }
     }
 

@@ -4,7 +4,6 @@ pub use registers::{IoRegisters, Registers, StatusRegister};
 
 use super::DSP;
 
-use crate::cpu::yield_ticks;
 use crate::scheduler::*;
 
 use std::cell::RefCell;
@@ -310,14 +309,14 @@ macro_rules! set_clear_bit_instrs {
 
 macro_rules! instr {
     ($smp_rc: ident, $instr_f:ident) => {
-        yield_ticks!($smp_rc, SMP::$instr_f($smp_rc.clone()))
+        yield_all!(SMP::$instr_f($smp_rc.clone()))
     };
     ($smp_rc: ident, $instr_f:ident, implied) => {
         instr!($smp_rc, $instr_f)
     };
     ($smp_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {{
-        let data = yield_ticks!($smp_rc, SMP::$addr_mode_f($smp_rc.clone()));
-        yield_ticks!($smp_rc, SMP::$instr_f($smp_rc.clone(), data))
+        let data = yield_all!(SMP::$addr_mode_f($smp_rc.clone()));
+        yield_all!(SMP::$instr_f($smp_rc.clone(), data))
     }};
     ($smp_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {
         instr!($smp_rc, $instr_f, $addr_mode_f)
@@ -441,18 +440,30 @@ impl SMP {
 
     pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceCoroutine + 'a {
         #[coroutine]
+        move || {
+            let mut run_gen = SMP::run_loop(smp.clone());
+            loop {
+                let CoroutineState::Yielded(yield_reason) = Pin::new(&mut run_gen).resume(());
+                let ticks_to_yield = std::mem::take(&mut smp.borrow_mut().ticks_run);
+                yield (yield_reason, ticks_to_yield)
+            }
+        }
+    }
+
+    fn run_loop<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<!> + 'a {
+        #[coroutine]
         move || loop {
             if smp.borrow().stopped {
-                yield (YieldReason::FinishedInstruction(Device::SMP), 0);
+                yield YieldReason::FinishedInstruction(Device::SMP);
                 continue;
             }
             if smp.borrow().breakpoint_addrs.contains(&smp.borrow().reg.pc) {
-                yield (YieldReason::Debug(DebugPoint::Breakpoint), 0);
+                yield YieldReason::Debug(DebugPoint::Breakpoint);
             }
             if smp.borrow().debug_log {
                 print!("SMP {:#06X}", smp.borrow().reg.pc);
             }
-            let opcode = yield_ticks!(smp, SMP::read_u8(smp.clone(), smp.borrow().reg.pc));
+            let opcode = yield_all!(SMP::read_u8(smp.clone(), smp.borrow().reg.pc));
             smp.borrow_mut().progress_pc(1);
             if smp.borrow().debug_log {
                 let reg = &smp.borrow().reg;
@@ -631,7 +642,7 @@ impl SMP {
                 (stp; 0xEF=>implied, 0xFF=>implied)
             );
 
-            yield (YieldReason::FinishedInstruction(Device::SMP), 0);
+            yield YieldReason::FinishedInstruction(Device::SMP);
         }
     }
 

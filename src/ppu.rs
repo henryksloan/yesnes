@@ -2,7 +2,6 @@ pub mod counter;
 mod obj;
 mod registers;
 
-use crate::cpu::yield_ticks;
 use crate::scheduler::*;
 
 pub use counter::PpuCounter;
@@ -131,7 +130,11 @@ impl PPU {
         #[coroutine]
         move || loop {
             // TODO: This is scanline-granularity, and does no synchronization below that granularity.
-            yield_ticks!(ppu, PPU::step(ppu.clone(), 1364));
+            let mut step_gen = PPU::step(ppu.clone(), 1364);
+            while let CoroutineState::Yielded(yield_reason) = Pin::new(&mut step_gen).resume(()) {
+                let ticks_to_yield = std::mem::take(&mut ppu.borrow_mut().ticks_run);
+                yield (yield_reason, ticks_to_yield)
+            }
         }
     }
 
