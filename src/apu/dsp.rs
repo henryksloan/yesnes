@@ -108,9 +108,6 @@ impl DSP {
                     let nibble = (apu_ram[brr_base + brr_byte] >> (4 * brr_nibble)) & 0xF;
                     let signed_nibble = ((nibble << 4) as i8) >> 4;
                     // DO NOT SUBMIT: shift=13..15 might be a special case?
-                    if brr_header.shift() >= 13 {
-                        println!("CCC");
-                    }
                     ((signed_nibble as i16) << brr_header.shift()) >> 1
                 };
                 let scale_sample =
@@ -128,6 +125,7 @@ impl DSP {
                 };
                 *prev_two = [sample, prev_two[0]];
             }
+            // TODO: Gaussian interpolation
             // DO NOT SUBMIT: Might have to separate this for e.g. pitch modulation
             self.tick_channel(channel_i);
         }
@@ -141,7 +139,7 @@ impl DSP {
         let envelope_level = &mut self.channels[channel_i].envelope_level;
         // The Release state applies regardless of the ADSR and GAIN settings
         if self.channels[channel_i].adsr_state == AdsrState::Release {
-            // DO NOT SUBMIT: This should be "Step=-800h when BRR-end"
+            // DO NOT SUBMIT: This should be "Step=-800h when BRR-end". Same for soft-reset.
             *envelope_level = envelope_level.saturating_sub(8);
         }
         if self.reg.channels[channel_i].adsr_control.adsr_enable() {
@@ -229,23 +227,31 @@ impl DSP {
             let channel_out = self.channels[channel_i].output;
             // DO NOT SUBMIT: Make this arithmetic/signed magnitude better
             // DO NOT SUBMIT: fullsnes says "with 16bit overflow handling (after each addition)"... what?
-            sum_left = sum_left.wrapping_add(
+            // DO NOT SUBMIT: Is it signed magnitude or two's complement?
+            sum_left = sum_left.saturating_add(
                 ((channel_out as i32
-                    * Into::<i8>::into(self.reg.channels[channel_i].volume.left) as i32)
+                    // * Into::<i8>::into(self.reg.channels[channel_i].volume.left) as i32)
+                    * self.reg.channels[channel_i].volume.left.0 as i8 as i32)
                     >> 7) as i16,
             );
-            sum_right = sum_right.wrapping_add(
+            sum_right = sum_right.saturating_add(
                 ((channel_out as i32
-                    * Into::<i8>::into(self.reg.channels[channel_i].volume.right) as i32)
+                    // * Into::<i8>::into(self.reg.channels[channel_i].volume.right) as i32)
+                    * self.reg.channels[channel_i].volume.right.0 as i8 as i32)
                     >> 7) as i16,
             );
         }
         sum_left =
-            ((sum_left as i32 * Into::<i8>::into(self.reg.main_volume.left) as i32) >> 7) as i16;
+            // ((sum_left as i32 * Into::<i8>::into(self.reg.main_volume.left) as i32) >> 7) as i16;
+            ((sum_left as i32 * self.reg.main_volume.left.0 as i8 as i32) >> 7) as i16;
         sum_right =
-            ((sum_right as i32 * Into::<i8>::into(self.reg.main_volume.right) as i32) >> 7) as i16;
+            // ((sum_right as i32 * Into::<i8>::into(self.reg.main_volume.right) as i32) >> 7) as i16;
+            ((sum_right as i32 * self.reg.main_volume.right.0 as i8 as i32) >> 7) as i16;
         // DO NOT SUBMIT: Mute and "final phase inversion"
-        (sum_left, sum_right)
+        (
+            (sum_left as u16 ^ 0xFFFF) as i16,
+            (sum_right as u16 ^ 0xFFFF) as i16,
+        )
     }
 
     pub fn read_reg(&self, reg_i: u8) -> u8 {

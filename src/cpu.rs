@@ -2498,6 +2498,7 @@ mod tests {
 
     #[test]
     // TODO: Consider factoring out this test setup (and improving reporting with a custom harness, maybe parallelize)
+    // TODO: Test cycle-accuracy
     fn tom_harte() {
         let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_dir.push("testdata/65816/v1/");

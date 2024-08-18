@@ -169,11 +169,17 @@ impl AppWindow for ScreenWindow {
                     for i in 0..num_samples {
                         let intermediate_i = i as f32 * sample_ratio;
                         let fract = (i as f32 * sample_ratio).fract();
-                        let val = (smp_val[(intermediate_i.floor()) as usize % adjusted_samples].0
+                        let left = (smp_val[(intermediate_i.floor()) as usize % adjusted_samples]
+                            .0
                             * fract)
                             + (smp_val[(intermediate_i.ceil()) as usize % adjusted_samples].0
                                 * (1.0 - fract));
-                        debug_audio_buffer.push_back((val, val));
+                        let right = (smp_val[(intermediate_i.floor()) as usize % adjusted_samples]
+                            .1
+                            * fract)
+                            + (smp_val[(intermediate_i.ceil()) as usize % adjusted_samples].1
+                                * (1.0 - fract));
+                        debug_audio_buffer.push_back((left, right));
                     }
                 }
             }

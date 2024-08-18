@@ -678,8 +678,8 @@ impl SMP {
                 if smp.debug_audio_buffer.len() < 32000 {
                     smp.debug_audio_buffer.push_back((
                         // DO NOT SUBMIT: Temporarily attenuating to save my ears
-                        0.3 * ((audio_output.0 as f32) / (i16::MAX as f32)),
-                        0.3 * ((audio_output.1 as f32) / (i16::MAX as f32)),
+                        0.15 * ((audio_output.0 as f32) / (i16::MAX as f32)),
+                        0.15 * ((audio_output.1 as f32) / (i16::MAX as f32)),
                     ));
                 }
             }

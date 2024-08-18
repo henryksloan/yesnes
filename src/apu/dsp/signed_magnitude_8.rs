@@ -1,5 +1,6 @@
 use bitfield::bitfield;
 
+// DO NOT SUBMIT: Wait, are all these actually just two's complement?
 bitfield! {
   #[derive(Clone, Copy, Default)]
   pub struct SignedMagnitude8(u8);
