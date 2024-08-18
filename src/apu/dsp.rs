@@ -1,6 +1,5 @@
 pub mod channel;
 pub mod registers;
-pub mod signed_magnitude_8;
 
 use channel::{AdsrState, Channel};
 use registers::Registers;
@@ -225,28 +224,18 @@ impl DSP {
         let (mut sum_left, mut sum_right) = (0i16, 0i16);
         for channel_i in 0..8 {
             let channel_out = self.channels[channel_i].output;
-            // DO NOT SUBMIT: Make this arithmetic/signed magnitude better
             // DO NOT SUBMIT: fullsnes says "with 16bit overflow handling (after each addition)"... what?
-            // DO NOT SUBMIT: Is it signed magnitude or two's complement?
             sum_left = sum_left.saturating_add(
-                ((channel_out as i32
-                    // * Into::<i8>::into(self.reg.channels[channel_i].volume.left) as i32)
-                    * self.reg.channels[channel_i].volume.left.0 as i8 as i32)
-                    >> 7) as i16,
+                ((channel_out as i32 * self.reg.channels[channel_i].volume.left as i32) >> 7)
+                    as i16,
             );
             sum_right = sum_right.saturating_add(
-                ((channel_out as i32
-                    // * Into::<i8>::into(self.reg.channels[channel_i].volume.right) as i32)
-                    * self.reg.channels[channel_i].volume.right.0 as i8 as i32)
-                    >> 7) as i16,
+                ((channel_out as i32 * self.reg.channels[channel_i].volume.right as i32) >> 7)
+                    as i16,
             );
         }
-        sum_left =
-            // ((sum_left as i32 * Into::<i8>::into(self.reg.main_volume.left) as i32) >> 7) as i16;
-            ((sum_left as i32 * self.reg.main_volume.left.0 as i8 as i32) >> 7) as i16;
-        sum_right =
-            // ((sum_right as i32 * Into::<i8>::into(self.reg.main_volume.right) as i32) >> 7) as i16;
-            ((sum_right as i32 * self.reg.main_volume.right.0 as i8 as i32) >> 7) as i16;
+        sum_left = ((sum_left as i32 * self.reg.main_volume.left as i32) >> 7) as i16;
+        sum_right = ((sum_right as i32 * self.reg.main_volume.right as i32) >> 7) as i16;
         // DO NOT SUBMIT: Mute and "final phase inversion"
         (
             (sum_left as u16 ^ 0xFFFF) as i16,
@@ -263,16 +252,16 @@ impl DSP {
                 self.reg.channels[channel_i as usize].read_reg(channel_reg_i)
             }
             (global_reg_i, 0xC) => match global_reg_i {
-                0x0 => self.reg.main_volume.left.0,
-                0x1 => self.reg.main_volume.right.0,
-                0x2 => self.reg.echo_volume.left.0,
-                0x3 => self.reg.echo_volume.right.0,
+                0x0 => self.reg.main_volume.left as u8,
+                0x1 => self.reg.main_volume.right as u8,
+                0x2 => self.reg.echo_volume.left as u8,
+                0x3 => self.reg.echo_volume.right as u8,
                 0x6 => self.reg.flags.0,
                 0x7 => self.reg.endx.0,
                 _ => self.reg.raw_values[read_reg_i as usize],
             },
             (global_reg_i, 0xD) => match global_reg_i {
-                0x0 => self.reg.echo_feedback.0,
+                0x0 => self.reg.echo_feedback as u8,
                 0x2 => self.reg.pitch_modulation_enable.0,
                 0x3 => self.reg.noise_enable.0,
                 0x4 => self.reg.echo_enable.0,
@@ -283,7 +272,7 @@ impl DSP {
                 _ => self.reg.raw_values[read_reg_i as usize],
             },
             (echo_filter_coeff_i, 0xF) => {
-                self.reg.echo_filter_coeff[echo_filter_coeff_i as usize].0
+                self.reg.echo_filter_coeff[echo_filter_coeff_i as usize] as u8
             }
             _ => self.reg.raw_values[read_reg_i as usize],
         }
@@ -302,10 +291,10 @@ impl DSP {
                 self.reg.channels[channel_i as usize].write_reg(channel_reg_i, data);
             }
             (global_reg_i, 0xC) => match global_reg_i {
-                0x0 => self.reg.main_volume.left.0 = data,
-                0x1 => self.reg.main_volume.right.0 = data,
-                0x2 => self.reg.echo_volume.left.0 = data,
-                0x3 => self.reg.echo_volume.right.0 = data,
+                0x0 => self.reg.main_volume.left = data as i8,
+                0x1 => self.reg.main_volume.right = data as i8,
+                0x2 => self.reg.echo_volume.left = data as i8,
+                0x3 => self.reg.echo_volume.right = data as i8,
                 0x4 => {
                     // KON: Start playing a note
                     // DO NOT SUBMIT: KON and KOF are clocked at 16000Hz... see fullsnes
@@ -338,7 +327,7 @@ impl DSP {
                 _ => {}
             },
             (global_reg_i, 0xD) => match global_reg_i {
-                0x0 => self.reg.echo_feedback.0 = data,
+                0x0 => self.reg.echo_feedback = data as i8,
                 0x2 => self.reg.pitch_modulation_enable.0 = data,
                 0x3 => self.reg.noise_enable.0 = data,
                 0x4 => self.reg.echo_enable.0 = data,
@@ -349,7 +338,7 @@ impl DSP {
                 _ => {}
             },
             (echo_filter_coeff_i, 0xF) => {
-                self.reg.echo_filter_coeff[echo_filter_coeff_i as usize].0 = data;
+                self.reg.echo_filter_coeff[echo_filter_coeff_i as usize] = data as i8;
             }
             _ => {}
         }

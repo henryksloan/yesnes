@@ -1,5 +1,3 @@
-use super::signed_magnitude_8::{LeftRight, SignedMagnitude8};
-
 use arrayvec::ArrayVec;
 use bitfield::bitfield;
 
@@ -19,7 +17,7 @@ pub struct Registers {
     // 7Ch (ENDX): Resettable bits set when a channel reaches the end of a BRR sample
     pub endx: PerChannel,
     // 0Dh (EFB): Echo feedback
-    pub echo_feedback: SignedMagnitude8,
+    pub echo_feedback: i8,
     // 2Dh (PMON): Pitch modulation enablement
     pub pitch_modulation_enable: PitchModulationEnable,
     // 3Dh (NON): Controls which channels are noise channels
@@ -33,7 +31,7 @@ pub struct Registers {
     // 7Dh (EDL): Echo delay time
     pub echo_delay: EchoDelay,
     // 0Fh-7Fh (C0-C7): Echo filter coefficients
-    pub echo_filter_coeff: [SignedMagnitude8; 8],
+    pub echo_filter_coeff: [i8; 8],
 }
 
 impl Registers {
@@ -48,6 +46,12 @@ impl Registers {
         (self.brr_directory_hi8 as u16 * 0x100)
             .wrapping_add(self.channels[channel_i].source_number as u16 * 4)
     }
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct LeftRight {
+    pub left: i8,
+    pub right: i8,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -71,8 +75,8 @@ pub struct ChannelRegisters {
 impl ChannelRegisters {
     pub fn read_reg(&self, reg_i: u8) -> u8 {
         match reg_i {
-            0x0 => self.volume.left.0,
-            0x1 => self.volume.right.0,
+            0x0 => self.volume.left as u8,
+            0x1 => self.volume.right as u8,
             0x2 => self.pitch.lo_byte(),
             0x3 => self.pitch.hi_byte(),
             0x4 => self.source_number,
@@ -87,8 +91,8 @@ impl ChannelRegisters {
 
     pub fn write_reg(&mut self, reg_i: u8, data: u8) {
         match reg_i {
-            0x0 => self.volume.left.0 = data,
-            0x1 => self.volume.right.0 = data,
+            0x0 => self.volume.left = data as i8,
+            0x1 => self.volume.right = data as i8,
             0x2 => self.pitch.set_lo_byte(data),
             0x3 => self.pitch.set_hi_byte(data),
             0x4 => self.source_number = data,

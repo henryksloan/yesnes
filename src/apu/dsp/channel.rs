@@ -16,7 +16,6 @@ pub struct Channel {
     // The current 11-bit envelope level
     pub envelope_level: u16,
     // The output of the channel, updated at 32000Hz. The high byte is exposed via VxOUTX.
-    // DO NOT SUBMIT: Adopt SignedMagnitude throughout?
     pub output: i16,
     // For BRR filtering; [sample i-1, sample i-2]
     pub prev_two_samples: [i16; 2],
