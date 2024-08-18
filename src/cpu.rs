@@ -29,6 +29,7 @@ pub const COP_VECTOR: u24 = u24(0xFFE4);
 pub const ABORT_VECTOR: u24 = u24(0xFFF8);
 pub const BRK_VECTOR: u24 = u24(0xFFE6);
 
+// DO NOT SUBMIT: Make this take ticks_to_yield itself and move it to scheduler
 macro_rules! yield_ticks {
     ($cpu_rc:ident, $gen_expr:expr) => {{
         let mut gen = $gen_expr;
@@ -47,7 +48,6 @@ macro_rules! yield_ticks {
 
 pub(crate) use yield_ticks;
 
-// TODO: Replace some of these with e.g. index_reg_16_bits
 macro_rules! n_bits {
     ($cpu_rc:ident, u8) => {
         8
@@ -55,26 +55,21 @@ macro_rules! n_bits {
     ($cpu_rc:ident, u16) => {
         16
     };
-    ($cpu_rc:ident, m) => {
-        if $cpu_rc.borrow().reg.p.m || $cpu_rc.borrow().reg.p.e {
-            8
-        } else {
+    ($cond:expr) => {
+        if $cond {
             16
+        } else {
+            8
         }
+    };
+    ($cpu_rc:ident, m) => {
+        n_bits!($cpu_rc.borrow().reg.accumulator_16_bits())
     };
     ($cpu_rc:ident, x) => {
-        if $cpu_rc.borrow().reg.p.x_or_b || $cpu_rc.borrow().reg.p.e {
-            8
-        } else {
-            16
-        }
+        n_bits!($cpu_rc.borrow().reg.index_reg_16_bits())
     };
     ($cpu_rc:ident, e) => {
-        if $cpu_rc.borrow().reg.p.e {
-            8
-        } else {
-            16
-        }
+        n_bits!(!$cpu_rc.borrow().reg.p.e)
     };
 }
 
@@ -262,7 +257,6 @@ macro_rules! instrs {
             $(
                 $($opcode => instr!($cpu_rc, $instr_f, $flag, $addr_mode_f),)+
             )+
-            // _ => panic!("Invalid CPU opcode {:#04X} at {:#08X}", opcode_val, $cpu_rc.borrow().reg.pc.raw().wrapping_sub(1)),
         }
     };
 }
