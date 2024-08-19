@@ -810,7 +810,7 @@ impl CPU {
             }
             0x4218..=0x421F => {
                 let reg_off = addr.lo16() as usize - 0x4218;
-                let controller_state = self.controller_states[reg_off / 4];
+                let controller_state = self.controller_states[reg_off / 2];
                 (controller_state >> ((reg_off % 2) * 8)) as u8
             }
             0x4300..=0x437A => {
