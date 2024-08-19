@@ -788,7 +788,6 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
-            // TODO: Games seem to write this; why?
             0x4210 => {
                 let old_flag = self.vblank_nmi_flag;
                 self.vblank_nmi_flag = false;
@@ -799,7 +798,6 @@ impl CPU {
                 self.timer_irq_flag = false;
                 (old_flag as u8) << 7
             }
-            // TODO: Games seem to write this; why? Should probably just do thing?
             0x4212 => {
                 let hblank = {
                     let h_count = self.ppu_counter.borrow().h_ticks / 4;
@@ -807,6 +805,7 @@ impl CPU {
                 };
                 let vblank = self.ppu_counter.borrow().scanline > 224;
                 ((vblank as u8) << 7) | ((hblank as u8) << 6)
+                // TODO: Joypad auto-read busy flag
             }
             0x4218..=0x421F => {
                 let reg_off = addr.lo16() as usize - 0x4218;
@@ -883,6 +882,7 @@ impl CPU {
                 if self.io_reg.interrupt_control.h_v_irq() == 0 {
                     self.timer_irq_flag = false;
                 }
+                // TODO: Joypad auto-read enable
             }
             0x4207 => self.io_reg.h_scan_count.set_lo_byte(data),
             0x4208 => self.io_reg.h_scan_count.set_hi_byte(data),

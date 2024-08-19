@@ -32,5 +32,5 @@ pub mod debug_smp {
 }
 
 pub mod debug_point {
-    pub use crate::scheduler::yield_reason::{Access, AccessType, DebugPoint};
+    pub use crate::scheduler::{Access, AccessType, DebugPoint};
 }

@@ -1,13 +1,12 @@
-pub mod yield_reason;
-
-pub mod device;
 mod relative_clock;
+mod yield_reason;
 
-pub use device::Device;
 pub use relative_clock::RelativeClock;
-pub use yield_reason::{Access, AccessType, DebugPoint, YieldReason, YieldTicks};
+pub use yield_reason::{Access, AccessType, DebugPoint, Device};
 
-use std::ops::{Coroutine, CoroutineState};
+pub(crate) use yield_reason::*;
+
+use std::ops::CoroutineState;
 use std::pin::Pin;
 
 // Based on Higan's empirical numbers
@@ -17,11 +16,6 @@ pub const PPU_FREQ: u64 = CPU_FREQ;
 // TODO: There may be a reason to clock the APU at double this, e.g.
 // maybe to accurately clock timers. If so, waitstates should be halved.
 pub const SMP_FREQ: u64 = 24_606_720 / 24;
-
-pub trait Yieldable<T> = Coroutine<Yield = YieldReason, Return = T>;
-pub trait DeviceCoroutine = Coroutine<Yield = YieldTicks, Return = !>;
-pub trait InstructionCoroutine = Yieldable<()>;
-type BoxGen = Box<dyn Unpin + DeviceCoroutine>;
 
 struct DeviceThread {
     generator: BoxGen,
@@ -36,34 +30,6 @@ impl DeviceThread {
         }
     }
 }
-
-macro_rules! yield_all {
-    ($gen_expr:expr) => {{
-        let mut gen = $gen_expr;
-        loop {
-            match Pin::new(&mut gen).resume(()) {
-                CoroutineState::Yielded(yield_reason) => yield yield_reason,
-                CoroutineState::Complete(out) => break out,
-            }
-        }
-    }};
-}
-
-pub(crate) use yield_all;
-
-macro_rules! ignore_yields {
-    ($gen_expr:expr) => {{
-        let mut gen = $gen_expr;
-        loop {
-            match Pin::new(&mut gen).resume(()) {
-                CoroutineState::Complete(out) => break out,
-                _ => {}
-            }
-        }
-    }};
-}
-
-pub(crate) use ignore_yields;
 
 pub struct Scheduler {
     cpu: DeviceThread,
