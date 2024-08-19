@@ -58,51 +58,7 @@ impl Scheduler {
         }
     }
 
-    // TODO: These two functions (and more like them) can be abstracted nicely (arbitrary termination conditions)
-    pub fn run(&mut self) {
-        loop {
-            let yielded = self.resume();
-            match yielded {
-                CoroutineState::Yielded((yield_reason, n_ticks)) => {
-                    self.tick_curr_clocks(n_ticks);
-                    if let YieldReason::Sync(other_device) = yield_reason {
-                        self.curr_thread().waiting_for = Some(other_device);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn run_instruction(&mut self) {
-        loop {
-            let yielded = self.resume();
-            match yielded {
-                CoroutineState::Yielded((yield_reason, n_ticks)) => {
-                    self.tick_curr_clocks(n_ticks);
-                    match yield_reason {
-                        YieldReason::Sync(other_device) => {
-                            self.curr_thread().waiting_for = Some(other_device);
-                        }
-                        YieldReason::FinishedInstruction(_) => {
-                            break;
-                        }
-                        YieldReason::Debug(debug_point) => {
-                            if let DebugPoint::UnimplementedAccess(access) = debug_point {
-                                log::debug!(
-                                    "Unimplemented {:?} of {:#08}",
-                                    access.access_type,
-                                    access.addr
-                                );
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn run_instruction_debug(
+    pub fn run_instruction(
         &mut self,
         run_device: Device,
         stop_condition: Option<DebugPoint>,

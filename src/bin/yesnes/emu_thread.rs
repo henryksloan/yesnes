@@ -17,7 +17,7 @@ pub fn run_instruction_and_disassemble<D: DebugProcessor>(
     disassembler: &Mutex<Disassembler<D>>,
     stop_condition: Option<DebugPoint>,
 ) -> bool {
-    let (breakpoint, _) = snes.run_instruction_debug(D::DEVICE, stop_condition);
+    let (breakpoint, _) = snes.run_instruction(D::DEVICE, stop_condition);
     let registers = D::registers(snes);
     disassembler
         .lock()
@@ -33,7 +33,7 @@ pub fn run_frame_and_disassemble<D: DebugProcessor>(
     let mut breakpoint = false;
     let mut frame_ready = false;
     while !frame_ready {
-        (breakpoint, frame_ready) = snes.run_instruction_debug(D::DEVICE, None);
+        (breakpoint, frame_ready) = snes.run_instruction(D::DEVICE, None);
         let registers = D::registers(snes);
         disassembler
             .lock()

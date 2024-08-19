@@ -2617,7 +2617,7 @@ mod tests {
                     ));
                 }
                 cpu.borrow_mut().debug_cycles = 0;
-                snes.run_instruction_debug(Device::CPU, None);
+                snes.run_instruction(Device::CPU, None);
                 let after = &test["final"];
                 {
                     let reg = &cpu.borrow().reg;

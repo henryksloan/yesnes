@@ -82,22 +82,12 @@ impl SNES {
             Self::create_scheduler(self.cpu.clone(), self.ppu.clone(), self.smp.clone());
     }
 
-    pub fn run(&mut self) {
-        self.scheduler.run();
-    }
-
-    // TODO: This is kind of a nonsense function
-    pub fn run_instruction(&mut self) {
-        self.scheduler.run_instruction();
-    }
-
-    pub fn run_instruction_debug(
+    pub fn run_instruction(
         &mut self,
         run_device: Device,
         stop_condition: Option<DebugPoint>,
     ) -> (bool, bool) {
-        self.scheduler
-            .run_instruction_debug(run_device, stop_condition)
+        self.scheduler.run_instruction(run_device, stop_condition)
     }
 
     pub fn take_frame(&mut self) -> Option<[[[u8; 3]; 256]; 224]> {
@@ -154,6 +144,6 @@ mod tests {
         // TODO: Fill in some local testdata
         // snes.load_cart("");
         snes.reset();
-        b.iter(move || while !snes.run_instruction_debug(Device::CPU, None).1 {});
+        b.iter(move || while !snes.run_instruction(Device::CPU, None).1 {});
     }
 }

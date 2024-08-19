@@ -1820,7 +1820,7 @@ mod tests {
                     smp.borrow_mut().ram[members[0].as_usize().unwrap()] =
                         members[1].as_u8().unwrap();
                 }
-                snes.run_instruction_debug(Device::SMP, None);
+                snes.run_instruction(Device::SMP, None);
                 let after = &test["final"];
                 {
                     let reg = &smp.borrow().reg;
