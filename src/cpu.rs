@@ -392,7 +392,7 @@ impl CPU {
         self.reg.p.e = true;
         self.reg.set_sp(0x1FF);
 
-        // TODO: This reset function is very obviously incomplete, but modularizing e.g. interrupts will make it easier
+        // TODO: This reset function is incomplete, but modularizing e.g. interrupts will make it easier
         self.nmi_enqueued = false;
         self.irq_enqueued = false;
         self.timer_irq_flag = false;
@@ -429,22 +429,8 @@ impl CPU {
             if cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc) {
                 yield YieldReason::Debug(DebugPoint::Breakpoint);
             }
-            // print!("CPU {:#010X}", cpu.borrow().reg.pc.raw());
             let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
-            // TODO: Need to go through and use wrapping arithmetic where appropriate
             cpu.borrow_mut().progress_pc(1);
-            // {
-            //     let reg = &cpu.borrow().reg;
-            //     println!(
-            //         ": {opcode:#04X}    A:{:04X} X:{:04X} Y:{:04X} SP:{:04X} P:{:02X} E:{}",
-            //         reg.get_a(),
-            //         reg.get_x(),
-            //         reg.get_y(),
-            //         reg.get_sp(),
-            //         reg.get_p(),
-            //         if reg.p.e { 1 } else { 0 },
-            //     );
-            // }
 
             instrs!(cpu, opcode,
                 (brk, NoFlag; 0x0=>implied)
@@ -653,7 +639,7 @@ impl CPU {
     }
 
     fn on_scanline_start<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<()> + 'a {
-        // TODO: How expensive are nested generators for function calls? Are macros much cheaper
+        // TODO: How expensive are nested coroutines for function calls? Are macros much cheaper
         // by avoiding the nesting? If so, it would be worth finding a middle-ground.
         #[coroutine]
         move || {
@@ -750,8 +736,6 @@ impl CPU {
         }
     }
 
-    // TODO: Add idle cycles in various places where IO cycles are involved
-    // See https://archive.org/details/vl65c816datasheetvlsi1988ocrbm/page/n9/mode/1up
     fn idle<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<()> + 'a {
         cpu.borrow_mut().debug_cycles += 1;
         CPU::step(cpu, 6)

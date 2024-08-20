@@ -18,14 +18,14 @@ pub const PPU_FREQ: u64 = CPU_FREQ;
 pub const SMP_FREQ: u64 = 24_606_720 / 24;
 
 struct DeviceThread {
-    generator: BoxGen,
+    coroutine: BoxCoroutine,
     waiting_for: Option<Device>,
 }
 
 impl DeviceThread {
-    pub fn new(generator: BoxGen) -> Self {
+    pub fn new(coroutine: BoxCoroutine) -> Self {
         Self {
-            generator,
+            coroutine,
             waiting_for: None,
         }
     }
@@ -47,7 +47,7 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(cpu: BoxGen, ppu: BoxGen, smp: BoxGen) -> Self {
+    pub fn new(cpu: BoxCoroutine, ppu: BoxCoroutine, smp: BoxCoroutine) -> Self {
         Self {
             cpu: DeviceThread::new(cpu),
             ppu: DeviceThread::new(ppu),
@@ -121,7 +121,7 @@ impl Scheduler {
             self.sync_curr(waiting_for);
         }
         let new_curr_thread = self.curr_thread();
-        Pin::new(&mut *new_curr_thread.generator).resume(())
+        Pin::new(&mut *new_curr_thread.coroutine).resume(())
     }
 
     fn get_relative_clock(
