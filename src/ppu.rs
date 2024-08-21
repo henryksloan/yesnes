@@ -436,13 +436,10 @@ impl PPU {
     ) -> [Option<[u8; 3]>; 8] {
         let mut result = [None; 8];
         let line = if flip_y { 7 - line_offset } else { line_offset };
-        // TODO: Allocating here it a big slowdown. Once we have a cycle-accurate PPU, avoid allocations.
-        // let tile_plane_pairs: Vec<u16> = (0..(bits_per_pixel / 2))
-        //     .map(|i| self.vram[(i * 8 + tile_chr_base + line) % self.vram.len()])
-        //     .collect();
-        let tile_plane_pairs: ArrayVec<u16, 4> = (0..(bits_per_pixel / 2))
-            .map(|i| self.vram[(i * 8 + tile_chr_base + line) % self.vram.len()])
-            .collect();
+        let mut tile_plane_pairs: ArrayVec<u16, 4> = ArrayVec::new();
+        for i in 0..(bits_per_pixel / 2) {
+            tile_plane_pairs.push(self.vram[(i * 8 + tile_chr_base + line) % self.vram.len()]);
+        }
         for bit_i in 0..8 {
             let bit = if flip_x { 7 - bit_i } else { bit_i };
             let palette_i = tile_plane_pairs.iter().rev().fold(0, |acc, word| {

@@ -328,7 +328,7 @@ pub struct CPU {
     irq_enqueued: bool,
     timer_irq_flag: bool,
     vblank_nmi_flag: bool,
-    // TODO: Should change most instances of "tick" to "clock"
+    // TODO: Should change most instances of "tick" to "clock" (?)
     ticks_run: u64,
     // Some events like interrupt polling happen every 4 ticks. This tracks the
     // remainder ticks from `step()`, e.g. if `2` or `5` ticks elapse.
@@ -338,7 +338,9 @@ pub struct CPU {
     pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
     pub controller_states: [u16; 4],
     pub breakpoint_addrs: HashSet<u24>,
-    // DO NOT SUBMIT
+    // Tracks the number of cycles (as defined by the 65816 spec; not master clocks) since reset.
+    // Used by tests to verify cycle-accuracy.
+    // TODO: Verify the SingleStepTests bus activity in tests
     debug_cycles: u64,
 }
 
