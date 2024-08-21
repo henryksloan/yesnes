@@ -23,10 +23,10 @@ pub trait ShortcutWindow: AppWindow {
 
     fn consume_shortcuts(&mut self, ctx: &egui::Context) {
         for shortcut in Self::WINDOW_SHORTCUTS {
-            if ctx.input_mut(|i| i.consume_shortcut(&shortcut.to_egui_shortcut())) {
-                if self.shortcut_enabled(shortcut) {
-                    self.handle_shortcut(shortcut);
-                }
+            if ctx.input_mut(|i| i.consume_shortcut(shortcut.to_egui_shortcut()))
+                && self.shortcut_enabled(shortcut)
+            {
+                self.handle_shortcut(shortcut);
             }
         }
     }
@@ -42,7 +42,7 @@ pub trait ShortcutWindow: AppWindow {
         let enabled = self.shortcut_enabled(&shortcut);
         let mut button = egui::Button::new(text);
         if is_menu_button {
-            button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut.to_egui_shortcut()));
+            button = button.shortcut_text(ui.ctx().format_shortcut(shortcut.to_egui_shortcut()));
         }
         if ui.add_enabled(enabled, button).clicked() {
             self.handle_shortcut(&shortcut);

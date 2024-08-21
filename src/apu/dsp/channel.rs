@@ -34,7 +34,7 @@ pub enum AdsrState {
 }
 
 impl Channel {
-    pub fn brr_header(&self, apu_ram: &Box<[u8; 0x10000]>) -> BrrHeader {
+    pub fn brr_header(&self, apu_ram: &[u8; 0x10000]) -> BrrHeader {
         BrrHeader(apu_ram[self.brr_block_addr as usize])
     }
 }

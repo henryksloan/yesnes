@@ -18,7 +18,7 @@ pub enum DisassemblerShortcut {
 use DisassemblerShortcut::*;
 
 // Iterated over by the frontend to register and consume all shortcuts each frame.
-pub const DISASSEMBLER_SHORTCUTS: &'static [DisassemblerShortcut] = &[
+pub const DISASSEMBLER_SHORTCUTS: &[DisassemblerShortcut] = &[
     GoToAddress,
     GoToProgramCounter,
     Continue,

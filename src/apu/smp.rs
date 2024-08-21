@@ -4,7 +4,6 @@ pub use registers::{IoRegisters, Registers, StatusRegister};
 
 use super::DSP;
 
-use crate::cpu::yield_ticks;
 use crate::scheduler::*;
 
 use std::cell::RefCell;
@@ -310,14 +309,14 @@ macro_rules! set_clear_bit_instrs {
 
 macro_rules! instr {
     ($smp_rc: ident, $instr_f:ident) => {
-        yield_ticks!($smp_rc, SMP::$instr_f($smp_rc.clone()))
+        yield_all!(SMP::$instr_f($smp_rc.clone()))
     };
     ($smp_rc: ident, $instr_f:ident, implied) => {
         instr!($smp_rc, $instr_f)
     };
     ($smp_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {{
-        let data = yield_ticks!($smp_rc, SMP::$addr_mode_f($smp_rc.clone()));
-        yield_ticks!($smp_rc, SMP::$instr_f($smp_rc.clone(), data))
+        let data = yield_all!(SMP::$addr_mode_f($smp_rc.clone()));
+        yield_all!(SMP::$instr_f($smp_rc.clone(), data))
     }};
     ($smp_rc: ident, $instr_f:ident, $addr_mode_f:ident) => {
         instr!($smp_rc, $instr_f, $addr_mode_f)
@@ -441,18 +440,30 @@ impl SMP {
 
     pub fn run<'a>(smp: Rc<RefCell<SMP>>) -> impl DeviceCoroutine + 'a {
         #[coroutine]
+        move || {
+            let mut run_gen = SMP::run_loop(smp.clone());
+            loop {
+                let CoroutineState::Yielded(yield_reason) = Pin::new(&mut run_gen).resume(());
+                let ticks_to_yield = std::mem::take(&mut smp.borrow_mut().ticks_run);
+                yield (yield_reason, ticks_to_yield)
+            }
+        }
+    }
+
+    fn run_loop<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<!> + 'a {
+        #[coroutine]
         move || loop {
             if smp.borrow().stopped {
-                yield (YieldReason::FinishedInstruction(Device::SMP), 0);
+                yield YieldReason::FinishedInstruction(Device::SMP);
                 continue;
             }
             if smp.borrow().breakpoint_addrs.contains(&smp.borrow().reg.pc) {
-                yield (YieldReason::Debug(DebugPoint::Breakpoint), 0);
+                yield YieldReason::Debug(DebugPoint::Breakpoint);
             }
             if smp.borrow().debug_log {
                 print!("SMP {:#06X}", smp.borrow().reg.pc);
             }
-            let opcode = yield_ticks!(smp, SMP::read_u8(smp.clone(), smp.borrow().reg.pc));
+            let opcode = yield_all!(SMP::read_u8(smp.clone(), smp.borrow().reg.pc));
             smp.borrow_mut().progress_pc(1);
             if smp.borrow().debug_log {
                 let reg = &smp.borrow().reg;
@@ -631,7 +642,7 @@ impl SMP {
                 (stp; 0xEF=>implied, 0xFF=>implied)
             );
 
-            yield (YieldReason::FinishedInstruction(Device::SMP), 0);
+            yield YieldReason::FinishedInstruction(Device::SMP);
         }
     }
 
@@ -769,7 +780,7 @@ impl SMP {
         if self.test_mode {
             return self.ram[addr as usize];
         }
-        let data = match addr {
+        match addr {
             0x0000..=0x00EF => self.ram[addr as usize],
             0x00F0..=0x00FF => self.peak_io_reg(addr),
             0x0100..=0xFFBF => self.ram[addr as usize],
@@ -780,8 +791,7 @@ impl SMP {
                     self.ram[addr as usize]
                 }
             }
-        };
-        data
+        }
     }
 
     pub fn peak_u16(&self, addr: u16) -> u16 {
@@ -848,9 +858,8 @@ impl SMP {
             }
             // All writes always go to ram, even if they also go to e.g. IO
             smp.borrow_mut().ram[addr as usize] = data;
-            match addr {
-                0x00F0..=0x00FF => yield_all!(SMP::write_io_reg(smp.clone(), addr, data)),
-                _ => {}
+            if let 0x00F0..=0x00FF = addr {
+                yield_all!(SMP::write_io_reg(smp.clone(), addr, data))
             }
             // TODO: Some clock cycles before the write, depending on region
             yield_all!(SMP::step(smp.clone(), 1));
@@ -930,8 +939,7 @@ impl SMP {
         #[coroutine]
         move || {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-            let direct_addr = direct_page_base + fetch!(smp) as u16;
-            direct_addr
+            direct_page_base + fetch!(smp) as u16
         }
     }
 
@@ -939,9 +947,7 @@ impl SMP {
         #[coroutine]
         move || {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-            let direct_addr =
-                direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16;
-            direct_addr
+            direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16
         }
     }
 
@@ -949,9 +955,7 @@ impl SMP {
         #[coroutine]
         move || {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
-            let direct_addr =
-                direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.y)) as u16;
-            direct_addr
+            direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.y)) as u16
         }
     }
 
@@ -993,7 +997,7 @@ impl SMP {
     fn absolute_bit<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<AddressBit> + 'a {
         #[coroutine]
         move || {
-            let operand = fetch_u16!(smp) as u16;
+            let operand = fetch_u16!(smp);
             AddressBit {
                 addr: operand & 0x1FFF,
                 bit: (operand >> 13) as u8,
@@ -1005,7 +1009,7 @@ impl SMP {
     fn absolute_not_bit<'a>(smp: Rc<RefCell<SMP>>) -> impl Yieldable<AddressBit> + 'a {
         #[coroutine]
         move || {
-            let operand = fetch_u16!(smp) as u16;
+            let operand = fetch_u16!(smp);
             AddressBit {
                 addr: operand & 0x1FFF,
                 bit: (operand >> 13) as u8,
@@ -1060,16 +1064,12 @@ impl SMP {
             let direct_page_base = smp.borrow().reg.psw.direct_page_addr();
             let direct_addr =
                 direct_page_base + (fetch!(smp).wrapping_add(smp.borrow().reg.x)) as u16;
-            // let direct_addr = direct_page_base | (fetch!(smp) as u16 + smp.borrow().reg.x as u16);
-            let indirect_addr = {
-                let addr_lo = yield_all!(SMP::read_u8(smp.clone(), direct_addr as u16)) as u16;
-                let addr_hi = yield_all!(SMP::read_u8(
-                    smp.clone(),
-                    (direct_addr & 0xFF00) | (direct_addr.wrapping_add(1) & 0xFF)
-                )) as u16;
-                (addr_hi << 8) | addr_lo
-            };
-            indirect_addr
+            let addr_lo = yield_all!(SMP::read_u8(smp.clone(), direct_addr)) as u16;
+            let addr_hi = yield_all!(SMP::read_u8(
+                smp.clone(),
+                (direct_addr & 0xFF00) | (direct_addr.wrapping_add(1) & 0xFF)
+            )) as u16;
+            (addr_hi << 8) | addr_lo
         }
     }
 
@@ -1337,7 +1337,7 @@ impl SMP {
         #[coroutine]
         move || {
             let a = smp.borrow().reg.a;
-            let result = (a >> 4) | (a << 4);
+            let result = a.rotate_left(4);
             smp.borrow_mut().reg.a = result;
             smp.borrow_mut().reg.psw.n = (result >> 7) == 1;
             smp.borrow_mut().reg.psw.z = result == 0;
@@ -1820,7 +1820,7 @@ mod tests {
                     smp.borrow_mut().ram[members[0].as_usize().unwrap()] =
                         members[1].as_u8().unwrap();
                 }
-                snes.run_instruction_debug(Device::SMP, None);
+                snes.run_instruction(Device::SMP, None);
                 let after = &test["final"];
                 {
                     let reg = &smp.borrow().reg;

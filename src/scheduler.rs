@@ -1,13 +1,12 @@
-pub mod yield_reason;
-
-pub mod device;
 mod relative_clock;
+mod yield_reason;
 
-pub use device::Device;
 pub use relative_clock::RelativeClock;
-pub use yield_reason::{Access, AccessType, DebugPoint, YieldReason, YieldTicks};
+pub use yield_reason::{Access, AccessType, DebugPoint, Device};
 
-use std::ops::{Coroutine, CoroutineState};
+pub(crate) use yield_reason::*;
+
+use std::ops::CoroutineState;
 use std::pin::Pin;
 
 // Based on Higan's empirical numbers
@@ -18,52 +17,19 @@ pub const PPU_FREQ: u64 = CPU_FREQ;
 // maybe to accurately clock timers. If so, waitstates should be halved.
 pub const SMP_FREQ: u64 = 24_606_720 / 24;
 
-pub trait Yieldable<T> = Coroutine<Yield = YieldReason, Return = T>;
-pub trait DeviceCoroutine = Coroutine<Yield = YieldTicks, Return = !>;
-pub trait InstructionCoroutine = Yieldable<()>;
-type BoxGen = Box<dyn Unpin + DeviceCoroutine>;
-
 struct DeviceThread {
-    generator: BoxGen,
+    coroutine: BoxCoroutine,
     waiting_for: Option<Device>,
 }
 
 impl DeviceThread {
-    pub fn new(generator: BoxGen) -> Self {
+    pub fn new(coroutine: BoxCoroutine) -> Self {
         Self {
-            generator,
+            coroutine,
             waiting_for: None,
         }
     }
 }
-
-macro_rules! yield_all {
-    ($gen_expr:expr) => {{
-        let mut gen = $gen_expr;
-        loop {
-            match Pin::new(&mut gen).resume(()) {
-                CoroutineState::Yielded(yield_reason) => yield yield_reason,
-                CoroutineState::Complete(out) => break out,
-            }
-        }
-    }};
-}
-
-pub(crate) use yield_all;
-
-macro_rules! ignore_yields {
-    ($gen_expr:expr) => {{
-        let mut gen = $gen_expr;
-        loop {
-            match Pin::new(&mut gen).resume(()) {
-                CoroutineState::Complete(out) => break out,
-                _ => {}
-            }
-        }
-    }};
-}
-
-pub(crate) use ignore_yields;
 
 pub struct Scheduler {
     cpu: DeviceThread,
@@ -81,7 +47,7 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(cpu: BoxGen, ppu: BoxGen, smp: BoxGen) -> Self {
+    pub fn new(cpu: BoxCoroutine, ppu: BoxCoroutine, smp: BoxCoroutine) -> Self {
         Self {
             cpu: DeviceThread::new(cpu),
             ppu: DeviceThread::new(ppu),
@@ -92,51 +58,7 @@ impl Scheduler {
         }
     }
 
-    // TODO: These two functions (and more like them) can be abstracted nicely (arbitrary termination conditions)
-    pub fn run(&mut self) {
-        loop {
-            let yielded = self.resume();
-            match yielded {
-                CoroutineState::Yielded((yield_reason, n_ticks)) => {
-                    self.tick_curr_clocks(n_ticks);
-                    if let YieldReason::Sync(other_device) = yield_reason {
-                        self.curr_thread().waiting_for = Some(other_device);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn run_instruction(&mut self) {
-        loop {
-            let yielded = self.resume();
-            match yielded {
-                CoroutineState::Yielded((yield_reason, n_ticks)) => {
-                    self.tick_curr_clocks(n_ticks);
-                    match yield_reason {
-                        YieldReason::Sync(other_device) => {
-                            self.curr_thread().waiting_for = Some(other_device);
-                        }
-                        YieldReason::FinishedInstruction(_) => {
-                            break;
-                        }
-                        YieldReason::Debug(debug_point) => {
-                            if let DebugPoint::UnimplementedAccess(access) = debug_point {
-                                log::debug!(
-                                    "Unimplemented {:?} of {:#08}",
-                                    access.access_type,
-                                    access.addr
-                                );
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn run_instruction_debug(
+    pub fn run_instruction(
         &mut self,
         run_device: Device,
         stop_condition: Option<DebugPoint>,
@@ -199,7 +121,7 @@ impl Scheduler {
             self.sync_curr(waiting_for);
         }
         let new_curr_thread = self.curr_thread();
-        Pin::new(&mut *new_curr_thread.generator).resume(())
+        Pin::new(&mut *new_curr_thread.coroutine).resume(())
     }
 
     fn get_relative_clock(

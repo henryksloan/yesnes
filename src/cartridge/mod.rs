@@ -60,7 +60,7 @@ impl Cartridge {
             );
         }
         match header.cartridge_type().0 {
-            0x00 | 0x01 | 0x02 => {}
+            0x00..=0x02 => {}
             cartridge_type => panic!("Unsupported cartridge type 0x{cartridge_type:X}"),
         }
         log::debug!("Cartridge title: {}", header.title());
@@ -72,6 +72,7 @@ impl Cartridge {
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .open(&sram_path)
                 .expect("Failed to create or open SRAM file");
             log::debug!("Opened SRAM file at {sram_path:?}");

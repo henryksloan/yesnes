@@ -16,7 +16,6 @@ pub struct Bus {
     cpu: Weak<RefCell<CPU>>,
     ppu: Rc<RefCell<PPU>>,
     smp: Rc<RefCell<SMP>>,
-    // TODO: Probably want Box<[u8; 0x20000]>, but need to somehow avoid allocating on stack first
     wram: Box<[u8; 0x20000]>,
     wram_port_addr: u24,
     cart: Option<Cartridge>,
@@ -171,7 +170,7 @@ impl Bus {
                             .borrow_mut()
                             .io_read(addr),
                         0x2100..=0x213F => {
-                            // TODO: Uncomment once PPU actually does stuff
+                            // TODO: Uncomment once PPU state actually changes on its own
                             // yield YieldReason::Sync(Device::PPU);
                             bus.borrow().ppu.borrow_mut().io_read(addr.lo16())
                         }
@@ -259,7 +258,6 @@ impl Bus {
             match addr.bank() {
                 0x00..=0x3F | 0x80..=0xBF if (0x0000..=0x5FFF).contains(&addr.lo16()) => {
                     match addr.lo16() {
-                        // TODO: System area
                         0x0000..=0x1FFF => bus.borrow_mut().wram[addr.lo16() as usize] = data,
                         0x2100..=0x213F => {
                             // TODO: Uncomment once PPU actually does stuff
@@ -347,7 +345,7 @@ impl Bus {
         }
     }
 
-    // TODO: Remove debug function
+    // TODO: Change once PPU frame generation is realistic
     pub fn debug_get_frame(&self) -> [[[u8; 3]; 256]; 224] {
         self.ppu.borrow().debug_get_frame()
     }

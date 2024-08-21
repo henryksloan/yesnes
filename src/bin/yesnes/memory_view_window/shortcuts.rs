@@ -11,7 +11,7 @@ pub enum MemoryViewShortcut {
 use MemoryViewShortcut::*;
 
 // Iterated over by the frontend to register and consume all shortcuts each frame.
-pub const MEMORY_VIEW_SHORTCUTS: &'static [MemoryViewShortcut] = &[GoToAddress, Refresh];
+pub const MEMORY_VIEW_SHORTCUTS: &[MemoryViewShortcut] = &[GoToAddress, Refresh];
 
 const GO_TO_ADDRESS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
 const REFRESH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::R);
