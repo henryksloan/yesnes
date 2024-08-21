@@ -336,7 +336,11 @@ pub struct CPU {
     ticks_mod_4: u8,
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
     pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
-    pub controller_states: [u16; 4],
+    // Holds the most recent controller states passed from the frontend
+    controller_states: [u16; 4],
+    // When 4016h.bit0, controller inputs are latched into these shift registers.
+    // They are shifted out with reads to 4016h and 4017h.
+    controller_shifts: [u16; 4],
     pub breakpoint_addrs: HashSet<u24>,
     // Tracks the number of cycles (as defined by the 65816 spec; not master clocks) since reset.
     // Used by tests to verify cycle-accuracy.
@@ -372,6 +376,7 @@ impl CPU {
             ticks_mod_4: 0,
             debug_frame: None,
             controller_states: [0; 4],
+            controller_shifts: [0; 4],
             breakpoint_addrs: HashSet::new(),
             debug_cycles: 0,
         }
@@ -400,6 +405,9 @@ impl CPU {
         self.timer_irq_flag = false;
         self.vblank_nmi_flag = false;
 
+        self.controller_states = [0; 4];
+        self.controller_shifts = [0; 4];
+
         self.io_reg = IoRegisters::new();
         for channel_regs in self.io_reg.dma_channels.iter_mut() {
             channel_regs.setup.0 = 0xFF;
@@ -411,6 +419,14 @@ impl CPU {
             channel_regs.unused_byte = 0xFF;
         }
         self.debug_cycles = 0;
+    }
+
+    pub fn set_controller_state(&mut self, controller_i: usize, data: u16) {
+        assert!(controller_i < 4);
+        self.controller_states[controller_i] = data;
+        if self.io_reg.joypad_out.strobe() {
+            self.controller_shifts[controller_i] = data;
+        }
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceCoroutine + 'a {
@@ -774,6 +790,18 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
+            0x4016 => {
+                let val = ((self.controller_shifts[2] & 1) << 1) | (self.controller_shifts[0] & 1);
+                self.controller_shifts[0] >>= 1;
+                self.controller_shifts[2] >>= 1;
+                val as u8
+            }
+            0x4017 => {
+                let val = ((self.controller_shifts[3] & 1) << 1) | (self.controller_shifts[1] & 1);
+                self.controller_shifts[1] >>= 1;
+                self.controller_shifts[3] >>= 1;
+                val as u8
+            }
             0x4210 => {
                 let old_flag = self.vblank_nmi_flag;
                 self.vblank_nmi_flag = false;
@@ -794,6 +822,7 @@ impl CPU {
                 // TODO: Joypad auto-read busy flag
             }
             0x4218..=0x421F => {
+                // TODO: Cycle-accurate automatic reading, perhaps
                 let reg_off = addr.lo16() as usize - 0x4218;
                 let controller_state = self.controller_states[reg_off / 2];
                 (controller_state >> ((reg_off % 2) * 8)) as u8
@@ -863,6 +892,10 @@ impl CPU {
 
     pub fn io_write(&mut self, addr: u24, data: u8) {
         match addr.lo16() {
+            0x4016 => {
+                self.io_reg.joypad_out.0 = data;
+                self.controller_shifts = self.controller_states;
+            }
             0x4200 => {
                 self.io_reg.interrupt_control.0 = data;
                 if self.io_reg.interrupt_control.h_v_irq() == 0 {

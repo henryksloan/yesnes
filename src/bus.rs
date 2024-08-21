@@ -184,14 +184,13 @@ impl Bus {
                             bus.borrow_mut().wram_port_addr = wram_port_addr.wrapping_add_signed(1);
                             bus.borrow().wram[wram_port_addr.0 as usize & 0x1FFFF]
                         }
-                        0x4016 => {
-                            log::debug!("TODO: Read {addr} Joypad Input Register A (R)");
-                            0
-                        }
-                        0x4017 => {
-                            log::debug!("TODO: Read {addr} Joypad Input Register B (R)");
-                            0
-                        }
+                        0x4016 | 0x4017 => bus
+                            .borrow_mut()
+                            .cpu
+                            .upgrade()
+                            .unwrap()
+                            .borrow_mut()
+                            .io_read(addr),
                         // TODO: Move these math registers to the CPU
                         0x4214 => bus.borrow_mut().quotient as u8,
                         0x4215 => (bus.borrow_mut().quotient >> 8) as u8,
@@ -277,9 +276,13 @@ impl Bus {
                         0x2181 => bus.borrow_mut().wram_port_addr.set_lo_byte(data),
                         0x2182 => bus.borrow_mut().wram_port_addr.set_hi_byte(data),
                         0x2183 => bus.borrow_mut().wram_port_addr.set_bank(data & 1),
-                        0x4016 => {
-                            log::debug!("TODO: Write Joypad Output (W): {data:02X}");
-                        }
+                        0x4016 => bus
+                            .borrow_mut()
+                            .cpu
+                            .upgrade()
+                            .unwrap()
+                            .borrow_mut()
+                            .io_write(addr, data),
                         // TODO: Move these math registers to the CPU
                         0x4202 => {
                             bus.borrow_mut().multiplicand_a = data;
