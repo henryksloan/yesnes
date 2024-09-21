@@ -26,14 +26,15 @@ impl PpuCounter {
         move || {
             // TODO: Yield to CPU when we decide to latch the interlace
             let mut new_scanline = false;
-            counter.borrow_mut().h_ticks += n_clocks;
-            if counter.borrow().h_ticks >= 1364 {
+            let counter = &mut *counter.borrow_mut();
+            counter.h_ticks += n_clocks;
+            if counter.h_ticks >= 1364 {
                 new_scanline = true;
-                counter.borrow_mut().h_ticks -= 1364;
-                counter.borrow_mut().scanline += 1;
+                counter.h_ticks -= 1364;
+                counter.scanline += 1;
                 // TODO: Overscan mode
-                if counter.borrow().scanline >= 261 {
-                    counter.borrow_mut().scanline -= 261;
+                if counter.scanline >= 261 {
+                    counter.scanline -= 261;
                 }
             }
             new_scanline
