@@ -6,6 +6,7 @@ use yesnes::snes::SNES;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleRate, Stream, StreamConfig};
 use eframe::egui::{Color32, ColorImage, TextureHandle};
+use gilrs::{GamepadId, Gilrs};
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -79,6 +80,8 @@ pub struct ScreenWindow {
     debug_audio_buffer: Arc<Mutex<VecDeque<(f32, f32)>>>,
     audio_sample_rate: SampleRate,
     audio_stream: Stream,
+    gilrs: Gilrs,
+    current_gamepad: Option<GamepadId>,
 }
 
 impl ScreenWindow {
@@ -104,6 +107,8 @@ impl ScreenWindow {
             debug_audio_buffer,
             audio_sample_rate: sample_rate,
             audio_stream,
+            gilrs: Gilrs::new().unwrap(),
+            current_gamepad: None,
         }
     }
 }
@@ -118,6 +123,25 @@ impl AppWindow for ScreenWindow {
             self.audio_stream.pause().unwrap();
         } else {
             self.audio_stream.play().unwrap();
+        }
+
+        if self
+            .current_gamepad
+            .is_some_and(|current_gamepad| !self.gilrs.gamepad(current_gamepad).is_connected())
+        {
+            log::debug!(
+                "Current gamepad disconnected: {}",
+                self.current_gamepad.unwrap()
+            );
+            self.current_gamepad = None;
+        }
+
+        while let Some(event) = self.gilrs.next_event() {
+            // self.gilrs.update(&event);
+            if self.current_gamepad.is_none() {
+                self.current_gamepad = Some(event.id);
+                log::debug!("Setting current gamepad: {}", event.id);
+            }
         }
 
         if !paused {
@@ -149,6 +173,41 @@ impl AppWindow for ScreenWindow {
                         let mut controller_state = 0;
                         for (i, key) in KEYS.iter().enumerate() {
                             controller_state |= (input_state.key_down(*key) as u16) << (15 - i);
+                        }
+                        const GAMEPAD_BUTTONS: &[gilrs::Button] = &[
+                            gilrs::Button::South,        // B
+                            gilrs::Button::West,         // Y
+                            gilrs::Button::Select,       // Select
+                            gilrs::Button::Start,        // Start
+                            gilrs::Button::DPadUp,       // Up
+                            gilrs::Button::DPadDown,     // Down
+                            gilrs::Button::DPadLeft,     // Left
+                            gilrs::Button::DPadRight,    // Right
+                            gilrs::Button::East,         // A
+                            gilrs::Button::North,        // X
+                            gilrs::Button::LeftTrigger,  // L
+                            gilrs::Button::RightTrigger, // R
+                        ];
+                        if let Some(gamepad_id) = self.current_gamepad {
+                            let gamepad = self.gilrs.gamepad(gamepad_id);
+                            for (i, button) in GAMEPAD_BUTTONS.iter().enumerate() {
+                                controller_state |=
+                                    (gamepad.is_pressed(*button) as u16) << (15 - i);
+                            }
+                            if let Some(dpad_x_axis) = gamepad.axis_data(gilrs::Axis::DPadX) {
+                                if dpad_x_axis.value() >= 0.5 {
+                                    controller_state |= 1 << 8;
+                                } else if dpad_x_axis.value() <= -0.5 {
+                                    controller_state |= 1 << 9;
+                                }
+                            }
+                            if let Some(dpad_y_axis) = gamepad.axis_data(gilrs::Axis::DPadY) {
+                                if dpad_y_axis.value() >= 0.5 {
+                                    controller_state |= 1 << 10;
+                                } else if dpad_y_axis.value() <= -0.5 {
+                                    controller_state |= 1 << 11;
+                                }
+                            }
                         }
                         controller_state
                     });

@@ -21,6 +21,7 @@ bitfield = "0.14.0"
 memmap = "0.7.0"
 cpal = "0.15.3"
 arrayvec = "0.7.4"
+gilrs = "0.11.0"
 
 [dev-dependencies]
 json = "0.12.4"
