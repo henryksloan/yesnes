@@ -139,17 +139,18 @@ macro_rules! transfer_instrs {
         paste! {
             fn [<transfer_ $from _ $to>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    let data = cpu.borrow().reg.$from & ((1u32 << n_bits!(cpu.borrow(), $kind)) - 1) as u16;
-                    cpu.borrow_mut().reg.[<set_ $to>](data);
-                    if n_bits!(cpu.borrow(), $kind) == 16 {
-                        cpu.borrow_mut().reg.$to = data;
+                    let mut cpu = cpu.borrow_mut();
+                    let data = cpu.reg.$from & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
+                    cpu.reg.[<set_ $to>](data);
+                    if n_bits!(cpu, $kind) == 16 {
+                        cpu.reg.$to = data;
                     } else {
-                        cpu.borrow_mut().reg.$to &= 0xFF00;
-                        cpu.borrow_mut().reg.$to |= data & 0xFF;
+                        cpu.reg.$to &= 0xFF00;
+                        cpu.reg.$to |= data & 0xFF;
                     }
-                    let result = cpu.borrow().reg.$to & ((1u32 << n_bits!(cpu.borrow(), $kind)) - 1) as u16;
-                    cpu.borrow_mut().reg.p.n = (result >> (n_bits!(cpu.borrow(), $kind) - 1)) == 1;
-                    cpu.borrow_mut().reg.p.z = result == 0;
+                    let result = cpu.reg.$to & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
+                    cpu.reg.p.n = (result >> (n_bits!(cpu, $kind) - 1)) == 1;
+                    cpu.reg.p.z = result == 0;
                 }
             }
         }
@@ -665,44 +666,41 @@ impl CPU {
             // to resynchronize.
             yield YieldReason::Sync(Device::SMP);
             yield YieldReason::Sync(Device::PPU);
+            let mut cpu = cpu.borrow_mut();
             // TODO: Overscan mode
-            if cpu.borrow().ppu_counter.borrow().scanline < 225 {
-                cpu.borrow_mut().hdma_setup_triggered_this_line = false;
-                cpu.borrow_mut().hdma_triggered_this_line = false;
+            if cpu.ppu_counter.borrow().scanline < 225 {
+                cpu.hdma_setup_triggered_this_line = false;
+                cpu.hdma_triggered_this_line = false;
             }
-            if cpu.borrow().ppu_counter.borrow().scanline == 0 {
-                cpu.borrow_mut().vblank_nmi_flag = false;
-                let hdmas_enqueued = cpu.borrow_mut().hdmas_enqueued.take();
+            if cpu.ppu_counter.borrow().scanline == 0 {
+                cpu.vblank_nmi_flag = false;
+                let hdmas_enqueued = cpu.hdmas_enqueued.take();
                 if let Some(hdmas_enqueued) = hdmas_enqueued {
-                    cpu.borrow_mut().hdmas_ongoing = Some(hdmas_enqueued);
+                    cpu.hdmas_ongoing = Some(hdmas_enqueued);
                 }
-                let hdmas_ongoing = cpu.borrow().hdmas_ongoing;
+                let hdmas_ongoing = cpu.hdmas_ongoing;
                 if let Some(hdmas_ongoing) = hdmas_ongoing {
                     for channel_i in 0..=7 {
                         if (hdmas_ongoing >> channel_i) & 1 != 1 {
                             continue;
                         }
-                        let table_base_addr =
-                            cpu.borrow().io_reg.dma_channels[channel_i].addr.0.lo16();
-                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                            .hdma_table_curr_addr
-                            .0 = table_base_addr;
-                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                            .hdma_line_counter
-                            .0 &= 0x80;
+                        let table_base_addr = cpu.io_reg.dma_channels[channel_i].addr.0.lo16();
+                        cpu.io_reg.dma_channels[channel_i].hdma_table_curr_addr.0 = table_base_addr;
+                        cpu.io_reg.dma_channels[channel_i].hdma_line_counter.0 &= 0x80;
                     }
                 }
-                cpu.borrow_mut().hdmas_complete_this_frame.fill(false);
-                cpu.borrow_mut().do_hdmas_this_line.fill(true);
-            } else if cpu.borrow().ppu_counter.borrow().scanline == 225 {
+                cpu.hdmas_complete_this_frame.fill(false);
+                cpu.do_hdmas_this_line.fill(true);
+            } else if cpu.ppu_counter.borrow().scanline == 225 {
                 // TODO: Overscan mode
-                if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {
-                    cpu.borrow_mut().nmi_enqueued = true;
+                if cpu.io_reg.interrupt_control.vblank_nmi_enable() {
+                    cpu.nmi_enqueued = true;
                 }
                 // This flag is set even if NMIs are disabled
-                cpu.borrow_mut().vblank_nmi_flag = true;
-                let frame = cpu.borrow().bus.borrow().debug_get_frame();
-                cpu.borrow_mut().debug_frame = Some(frame);
+                cpu.vblank_nmi_flag = true;
+                let frame = cpu.bus.borrow().debug_get_frame();
+                cpu.debug_frame = Some(frame);
+                drop(cpu);
                 yield YieldReason::FrameReady;
             }
         }
