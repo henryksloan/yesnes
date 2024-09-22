@@ -30,10 +30,10 @@ pub const ABORT_VECTOR: u24 = u24(0xFFF8);
 pub const BRK_VECTOR: u24 = u24(0xFFE6);
 
 macro_rules! n_bits {
-    ($cpu_rc:ident, u8) => {
+    ($cpu:expr, u8) => {
         8
     };
-    ($cpu_rc:ident, u16) => {
+    ($cpu:expr, u16) => {
         16
     };
     ($cond:expr) => {
@@ -43,14 +43,14 @@ macro_rules! n_bits {
             8
         }
     };
-    ($cpu_rc:ident, m) => {
-        n_bits!($cpu_rc.borrow().reg.accumulator_16_bits())
+    ($cpu:expr, m) => {
+        n_bits!($cpu.reg.accumulator_16_bits())
     };
-    ($cpu_rc:ident, x) => {
-        n_bits!($cpu_rc.borrow().reg.index_reg_16_bits())
+    ($cpu:expr, x) => {
+        n_bits!($cpu.reg.index_reg_16_bits())
     };
-    ($cpu_rc:ident, e) => {
-        n_bits!(!$cpu_rc.borrow().reg.p.e)
+    ($cpu:expr, e) => {
+        n_bits!(!$cpu.reg.p.e)
     };
 }
 
@@ -98,7 +98,7 @@ macro_rules! pull_instrs {
                     yield_all!(CPU::idle(cpu.clone()));
                     let data = yield_all!(CPU::[<stack_pull_ $kind>](cpu.clone()));
                     cpu.borrow_mut().reg.[<set_ $reg>](data);
-                    cpu.borrow_mut().reg.p.n = ((data >> (n_bits!(cpu, $kind) - 1)) == 1);
+                    cpu.borrow_mut().reg.p.n = ((data >> (n_bits!(cpu.borrow(), $kind) - 1)) == 1);
                     cpu.borrow_mut().reg.p.z = (data == 0);
                 }
             }
@@ -139,16 +139,16 @@ macro_rules! transfer_instrs {
         paste! {
             fn [<transfer_ $from _ $to>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    let data = cpu.borrow().reg.$from & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
+                    let data = cpu.borrow().reg.$from & ((1u32 << n_bits!(cpu.borrow(), $kind)) - 1) as u16;
                     cpu.borrow_mut().reg.[<set_ $to>](data);
-                    if n_bits!(cpu, $kind) == 16 {
+                    if n_bits!(cpu.borrow(), $kind) == 16 {
                         cpu.borrow_mut().reg.$to = data;
                     } else {
                         cpu.borrow_mut().reg.$to &= 0xFF00;
                         cpu.borrow_mut().reg.$to |= data & 0xFF;
                     }
-                    let result = cpu.borrow().reg.$to & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
-                    cpu.borrow_mut().reg.p.n = (result >> (n_bits!(cpu, $kind) - 1)) == 1;
+                    let result = cpu.borrow().reg.$to & ((1u32 << n_bits!(cpu.borrow(), $kind)) - 1) as u16;
+                    cpu.borrow_mut().reg.p.n = (result >> (n_bits!(cpu.borrow(), $kind) - 1)) == 1;
                     cpu.borrow_mut().reg.p.z = result == 0;
                 }
             }
@@ -1256,28 +1256,23 @@ impl CPU {
         }
     }
 
-    fn direct_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
-        if cpu.borrow().reg.p.e && (cpu.borrow().reg.d & 0xFF == 0) {
+    fn direct_addr(&self, addr: u24) -> u24 {
+        if self.reg.p.e && (self.reg.d & 0xFF == 0) {
             // TODO: In emulation mode, we probably need "read_direct_u16" (and 24) to avoid this from over-wrapping
-            u24(cpu.borrow().reg.d.into()) | (addr & 0xFFu8)
+            u24(self.reg.d.into()) | (addr & 0xFFu8)
         } else {
-            (u24(cpu.borrow().reg.d.into()) + addr) & 0xFFFFu32
+            (u24(self.reg.d.into()) + addr) & 0xFFFFu32
         }
     }
 
     fn read_direct_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         #[coroutine]
-        move || {
-            yield_all!(CPU::read_u8(
-                cpu.clone(),
-                CPU::direct_addr(cpu.clone(), addr)
-            ))
-        }
+        move || yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().direct_addr(addr)))
     }
 
     // TODO: Stuff like this can OBVIOUSLY be modified to take &self
-    fn bank_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
-        u24((cpu.borrow().reg.b as u32) << 16) + addr
+    fn bank_addr(&self, addr: u24) -> u24 {
+        u24((self.reg.b as u32) << 16) + addr
     }
 
     fn stack_pull_u8<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u8> + 'a {
@@ -1391,7 +1386,7 @@ impl CPU {
             if cpu.borrow().reg.d & 0xFF != 0 {
                 yield_all!(CPU::idle(cpu.clone()));
             }
-            let addr = CPU::direct_addr(cpu.clone(), direct_addr);
+            let addr = cpu.borrow().direct_addr(direct_addr);
             Pointer::new_wrap_u16(addr, long)
         }
     }
@@ -1404,7 +1399,7 @@ impl CPU {
             if cpu.borrow().reg.d & 0xFF != 0 {
                 yield_all!(CPU::idle(cpu.clone()));
             }
-            let addr = CPU::direct_addr(cpu.clone(), direct_addr);
+            let addr = cpu.borrow().direct_addr(direct_addr);
             Pointer::new_wrap_u16(addr, long)
         }
     }
@@ -1417,7 +1412,7 @@ impl CPU {
             if cpu.borrow().reg.d & 0xFF != 0 {
                 yield_all!(CPU::idle(cpu.clone()));
             }
-            let addr = CPU::direct_addr(cpu.clone(), direct_addr);
+            let addr = cpu.borrow().direct_addr(direct_addr);
             Pointer::new_wrap_u16(addr, long)
         }
     }
@@ -1428,7 +1423,8 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                CPU::bank_addr(cpu.clone(), u24(((fetch!(cpu) as u32) << 8) | addr_lo))
+                let bank_addr = u24(((fetch!(cpu) as u32) << 8) | addr_lo);
+                cpu.borrow().bank_addr(bank_addr)
             };
             Pointer::new(addr, long)
         }
@@ -1445,7 +1441,7 @@ impl CPU {
             let addr_lo = fetch!(cpu) as u32;
             let base_addr = u24(((fetch!(cpu) as u32) << 8) | addr_lo);
             let offset_addr = base_addr + offset;
-            let addr = CPU::bank_addr(cpu.clone(), offset_addr);
+            let addr = cpu.borrow().bank_addr(offset_addr);
             // "Add 1 cycle for indexing across page boundaries, or write, or X=0.
             //  When X=1 or in the emulation mode, this cycle contains invalid addresses"
             if (base_addr.lo16() & 0xFF00 != offset_addr.lo16() & 0xFF00)
@@ -1583,7 +1579,7 @@ impl CPU {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 // TODO: Normalize wrapping behavior/functions for 16 bit accesses throughout
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
-                CPU::bank_addr(cpu.clone(), u24((hi << 8) | lo))
+                cpu.borrow().bank_addr(u24((hi << 8) | lo))
             };
             Pointer::new(addr, long)
         }
@@ -1607,7 +1603,7 @@ impl CPU {
                 )) as u32;
                 u24((hi << 8) | lo)
             };
-            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
+            let addr = cpu.borrow().bank_addr(bank_addr);
             Pointer::new(addr, long)
         }
     }
@@ -1630,7 +1626,7 @@ impl CPU {
                 u24((hi << 8) | lo)
             };
             let offset_addr = bank_addr + offset;
-            let addr = CPU::bank_addr(cpu.clone(), offset_addr);
+            let addr = cpu.borrow().bank_addr(offset_addr);
             // "Add 1 cycle for indexing across page boundaries, or write, or X=0.
             //  When X=1 or in the emulation mode, this cycle contains invalid addresses"
             if (bank_addr.lo16() & 0xFF00 != offset_addr.lo16() & 0xFF00)
@@ -1714,7 +1710,7 @@ impl CPU {
             let addr_hi =
                 yield_all!(CPU::read_u8(cpu.clone(), stack_addr.wrapping_add_lo16(1))) as u32;
             let bank_addr = ((addr_hi << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32;
-            let addr = CPU::bank_addr(cpu.clone(), u24(bank_addr));
+            let addr = cpu.borrow().bank_addr(u24(bank_addr));
             yield_all!(CPU::idle(cpu.clone()));
             Pointer::new(addr, long)
         }
@@ -1776,7 +1772,7 @@ impl CPU {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let zero = (cpu.borrow().reg.get_a() & data) == 0;
             cpu.borrow_mut().reg.p.z = zero;
-            let msb = n_bits!(cpu, m) - 1;
+            let msb = n_bits!(cpu.borrow(), m) - 1;
             cpu.borrow_mut().reg.p.n = (data >> msb) & 1 == 1;
             cpu.borrow_mut().reg.p.v = (data >> (msb - 1)) & 1 == 1;
         }
@@ -2305,16 +2301,16 @@ impl CPU {
 
     // Rotate and shift instructions
 
-    fn rotate_through_carry(cpu: Rc<RefCell<CPU>>, data: u16, left: bool) -> u16 {
-        let n_bits = n_bits!(cpu, m);
+    fn rotate_through_carry(&mut self, data: u16, left: bool) -> u16 {
+        let n_bits = n_bits!(self, m);
         let leftmost_mask = 1 << (n_bits - 1);
         let (check_mask, carry_mask) = if left {
             (leftmost_mask, 0x01)
         } else {
             (0x01, leftmost_mask)
         };
-        let old_carry = cpu.borrow().reg.p.c;
-        cpu.borrow_mut().reg.p.c = (data & check_mask) != 0;
+        let old_carry = self.reg.p.c;
+        self.reg.p.c = (data & check_mask) != 0;
         let result = {
             let temp = if left { data << 1 } else { data >> 1 };
             if old_carry {
@@ -2323,8 +2319,8 @@ impl CPU {
                 temp & !carry_mask
             }
         };
-        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
-        cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
+        self.reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
+        self.reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
 
@@ -2336,7 +2332,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let result = CPU::rotate_through_carry(cpu.clone(), data, left);
+            let result = cpu.borrow_mut().rotate_through_carry(data, left);
             yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
         }
@@ -2354,7 +2350,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = cpu.borrow().reg.get_a();
-            let result = CPU::rotate_through_carry(cpu.clone(), data, left);
+            let result = cpu.borrow_mut().rotate_through_carry(data, left);
             cpu.borrow_mut().reg.set_a(result);
         }
     }
@@ -2367,13 +2363,13 @@ impl CPU {
         CPU::rotate_acc_op(cpu, false)
     }
 
-    fn shift_with_carry(cpu: Rc<RefCell<CPU>>, data: u16, left: bool) -> u16 {
-        let n_bits = n_bits!(cpu, m);
+    fn shift_with_carry(&mut self, data: u16, left: bool) -> u16 {
+        let n_bits = n_bits!(self, m);
         let check_mask = if left { 1 << (n_bits - 1) } else { 0x01 };
-        cpu.borrow_mut().reg.p.c = (data & check_mask) == check_mask;
+        self.reg.p.c = (data & check_mask) == check_mask;
         let result = if left { data << 1 } else { data >> 1 };
-        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
-        cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
+        self.reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
+        self.reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
 
@@ -2381,7 +2377,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let result = CPU::shift_with_carry(cpu.clone(), data, true);
+            let result = cpu.borrow_mut().shift_with_carry(data, true);
             yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
         }
@@ -2391,7 +2387,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = cpu.borrow().reg.get_a();
-            let result = CPU::shift_with_carry(cpu.clone(), data, true);
+            let result = cpu.borrow_mut().shift_with_carry(data, true);
             cpu.borrow_mut().reg.set_a(result);
         }
     }
@@ -2400,7 +2396,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let result = CPU::shift_with_carry(cpu.clone(), data, false);
+            let result = cpu.borrow_mut().shift_with_carry(data, false);
             yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
         }
@@ -2410,7 +2406,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = cpu.borrow().reg.get_a();
-            let result = CPU::shift_with_carry(cpu.clone(), data, false);
+            let result = cpu.borrow_mut().shift_with_carry(data, false);
             cpu.borrow_mut().reg.set_a(result);
         }
     }
