@@ -2111,110 +2111,106 @@ impl CPU {
 
     // TODO: This is a mess in order to capture a bunch of little details about flags, and some
     // decimal-mode flags are still wrong.
-    fn arithmetic_op<'a>(
-        cpu: Rc<RefCell<CPU>>,
-        pointer: Pointer,
-        subtract: bool,
-    ) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            let n_bits: u32 = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
-                8
-            } else {
-                16
-            };
+    fn arithmetic_op(&mut self, mem_val: u16, subtract: bool) {
+        let n_bits: u32 = if self.reg.p.m || self.reg.p.e { 8 } else { 16 };
 
-            // TODO: Really need to check the 8- and 16-bit flag logic
-            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let data = {
-                if subtract {
-                    if n_bits == 8 {
-                        !(mem_val as i8 as i16) as u16
-                    } else {
-                        !(mem_val as i16) as u16
-                    }
+        let data = {
+            if subtract {
+                if n_bits == 8 {
+                    !(mem_val as i8 as i16) as u16
                 } else {
-                    mem_val
+                    !(mem_val as i16) as u16
                 }
-            };
-
-            let carry = cpu.borrow().reg.p.c as u16;
-            let result = if cpu.borrow().reg.p.d {
-                let bcd_max = if n_bits == 8 { 100 } else { 10000 };
-                let bcd_a = bcd_to_bin(cpu.borrow().reg.get_a()) as i32;
-                let temp = if subtract {
-                    bcd_a + ((bcd_max - bcd_to_bin(mem_val) as i32) - 1) + carry as i32
-                } else {
-                    bcd_a + bcd_to_bin(mem_val) as i32 + carry as i32
-                };
-                cpu.borrow_mut().reg.p.c = temp >= bcd_max;
-                bin_to_bcd((temp % bcd_max).unsigned_abs() as u16)
             } else {
-                let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
-                cpu.borrow_mut().reg.p.c = if subtract {
-                    let mask = (1u32 << n_bits) - 1;
-                    let temp2 = !(mem_val as u32) & mask;
-                    let res = cpu.borrow().reg.get_a() as u32 + temp2 + carry as u32;
-                    res > mask
-                } else {
-                    temp > ((1 << n_bits) - 1)
-                };
-                temp as u16
-            };
+                mem_val
+            }
+        };
 
-            // TODO: This doesn't work for decimal mode
-            let overflow =
-                ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & (1 << (n_bits - 1))) != 0;
-            cpu.borrow_mut().reg.p.v = overflow;
-            cpu.borrow_mut().reg.set_a(result);
-            let new_a = cpu.borrow_mut().reg.get_a();
-            cpu.borrow_mut().reg.p.n = (new_a >> (n_bits - 1)) & 1 == 1;
-            cpu.borrow_mut().reg.p.z = new_a == 0;
-        }
+        let carry = self.reg.p.c as u16;
+        let result = if self.reg.p.d {
+            let bcd_max = if n_bits == 8 { 100 } else { 10000 };
+            let bcd_a = bcd_to_bin(self.reg.get_a()) as i32;
+            let temp = if subtract {
+                bcd_a + ((bcd_max - bcd_to_bin(mem_val) as i32) - 1) + carry as i32
+            } else {
+                bcd_a + bcd_to_bin(mem_val) as i32 + carry as i32
+            };
+            self.reg.p.c = temp >= bcd_max;
+            bin_to_bcd((temp % bcd_max).unsigned_abs() as u16)
+        } else {
+            let temp = self.reg.get_a() as i32 + data as i32 + carry as i32;
+            self.reg.p.c = if subtract {
+                let mask = (1u32 << n_bits) - 1;
+                let temp2 = !(mem_val as u32) & mask;
+                let res = self.reg.get_a() as u32 + temp2 + carry as u32;
+                res > mask
+            } else {
+                temp > ((1 << n_bits) - 1)
+            };
+            temp as u16
+        };
+
+        // TODO: This doesn't work for decimal mode
+        let overflow = ((self.reg.get_a() ^ result) & (data ^ result) & (1 << (n_bits - 1))) != 0;
+        self.reg.p.v = overflow;
+        self.reg.set_a(result);
+        let new_a = self.reg.get_a();
+        self.reg.p.n = (new_a >> (n_bits - 1)) & 1 == 1;
+        self.reg.p.z = new_a == 0;
     }
 
     fn adc<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        return CPU::arithmetic_op(cpu, pointer, false);
-    }
-
-    fn sbc<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        return CPU::arithmetic_op(cpu, pointer, true);
-    }
-
-    fn compare_op<'a>(
-        cpu: Rc<RefCell<CPU>>,
-        pointer: Pointer,
-        reg_val: u16,
-        flag: bool,
-    ) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let result = reg_val as i32 - data as i32;
-
-            let n_bits = if flag || cpu.borrow().reg.p.e { 8 } else { 16 };
-            cpu.borrow_mut().reg.p.c = result >= 0;
-            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
-            cpu.borrow_mut().reg.p.z = result == 0;
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().arithmetic_op(mem_val, false);
         }
     }
 
+    fn sbc<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().arithmetic_op(mem_val, true);
+        }
+    }
+
+    fn compare_op(&mut self, mem_val: u16, reg_val: u16, flag: bool) {
+        let result = reg_val as i32 - mem_val as i32;
+        let n_bits = if flag || self.reg.p.e { 8 } else { 16 };
+        self.reg.p.c = result >= 0;
+        self.reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
+        self.reg.p.z = result == 0;
+    }
+
     fn cmp<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        let reg_val = cpu.borrow().reg.get_a();
-        let flag = cpu.borrow().reg.p.m;
-        return CPU::compare_op(cpu, pointer, reg_val, flag);
+        #[coroutine]
+        move || {
+            let reg_val = cpu.borrow().reg.get_a();
+            let flag = cpu.borrow().reg.p.m;
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().compare_op(mem_val, reg_val, flag);
+        }
     }
 
     fn cpx<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        let reg_val = cpu.borrow().reg.get_x();
-        let flag = cpu.borrow().reg.p.x_or_b;
-        return CPU::compare_op(cpu, pointer, reg_val, flag);
+        #[coroutine]
+        move || {
+            let reg_val = cpu.borrow().reg.get_x();
+            let flag = cpu.borrow().reg.p.x_or_b;
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().compare_op(mem_val, reg_val, flag);
+        }
     }
 
     fn cpy<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        let reg_val = cpu.borrow().reg.get_y();
-        let flag = cpu.borrow().reg.p.x_or_b;
-        return CPU::compare_op(cpu, pointer, reg_val, flag);
+        #[coroutine]
+        move || {
+            let reg_val = cpu.borrow().reg.get_y();
+            let flag = cpu.borrow().reg.p.x_or_b;
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().compare_op(mem_val, reg_val, flag);
+        }
     }
 
     fn jmp<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
@@ -2346,21 +2342,24 @@ impl CPU {
         CPU::rotate_op(cpu, pointer, false)
     }
 
-    fn rotate_acc_op<'a>(cpu: Rc<RefCell<CPU>>, left: bool) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            let data = cpu.borrow().reg.get_a();
-            let result = cpu.borrow_mut().rotate_through_carry(data, left);
-            cpu.borrow_mut().reg.set_a(result);
-        }
+    fn rotate_acc_op(&mut self, left: bool) {
+        let data = self.reg.get_a();
+        let result = self.rotate_through_carry(data, left);
+        self.reg.set_a(result);
     }
 
     fn rol_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        CPU::rotate_acc_op(cpu, true)
+        #[coroutine]
+        move || {
+            cpu.borrow_mut().rotate_acc_op(true);
+        }
     }
 
     fn ror_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        CPU::rotate_acc_op(cpu, false)
+        #[coroutine]
+        move || {
+            cpu.borrow_mut().rotate_acc_op(false);
+        }
     }
 
     fn shift_with_carry(&mut self, data: u16, left: bool) -> u16 {
