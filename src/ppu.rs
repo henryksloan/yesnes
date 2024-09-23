@@ -138,14 +138,11 @@ impl PPU {
         }
     }
 
-    fn step<'a>(ppu: Rc<RefCell<PPU>>, n_clocks: u64) -> impl Yieldable<()> + 'a {
+    fn step<'a>(ppu: Rc<RefCell<PPU>>, n_clocks: u16) -> impl Yieldable<()> + 'a {
         #[coroutine]
         move || {
-            ppu.borrow_mut().ticks_run += n_clocks;
-            let new_scanline = yield_all!(PpuCounter::tick(
-                ppu.borrow().ppu_counter.clone(),
-                n_clocks as u16
-            ));
+            ppu.borrow_mut().ticks_run += n_clocks as u64;
+            let new_scanline = ppu.borrow().ppu_counter.borrow_mut().tick(n_clocks);
             if new_scanline {
                 let scanline = ppu.borrow().ppu_counter.borrow().scanline;
                 // TODO: Overscan

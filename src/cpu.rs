@@ -311,7 +311,7 @@ pub struct CPU {
     reg: Registers,
     io_reg: IoRegisters,
     bus: Rc<RefCell<Bus>>,
-    pub ppu_counter: Rc<RefCell<PpuCounter>>,
+    ppu_counter: PpuCounter,
     ppu_h_count_latch: u16,
     ppu_h_count_flipflop: bool,
     ppu_v_count_latch: u16,
@@ -355,7 +355,7 @@ impl CPU {
             reg: Registers::new(),
             io_reg: IoRegisters::new(),
             bus,
-            ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
+            ppu_counter: PpuCounter::new(),
             ppu_h_count_latch: 0,
             ppu_h_count_flipflop: false,
             ppu_v_count_latch: 0,
@@ -394,7 +394,7 @@ impl CPU {
     pub fn reset(&mut self) {
         self.ticks_run = 0;
         self.reg = Registers::new();
-        self.ppu_counter = Rc::new(RefCell::new(PpuCounter::new()));
+        self.ppu_counter = PpuCounter::new();
         self.reg.pc = u24(ignore_yields!(Bus::read_u16(self.bus.clone(), RESET_VECTOR)) as u32);
         self.reg.set_p(0x34);
         self.reg.p.e = true;
@@ -445,7 +445,10 @@ impl CPU {
     fn run_loop<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<!> + 'a {
         #[coroutine]
         move || loop {
-            if cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc) {
+            // DO NOT SUBMIT: This is faster than checking contains, assuming the set is actually empty...
+            if cpu.borrow().breakpoint_addrs.len() > 0
+                && cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc)
+            {
                 yield YieldReason::Debug(DebugPoint::Breakpoint);
             }
             let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
@@ -668,11 +671,11 @@ impl CPU {
             yield YieldReason::Sync(Device::PPU);
             let mut cpu = cpu.borrow_mut();
             // TODO: Overscan mode
-            if cpu.ppu_counter.borrow().scanline < 225 {
+            if cpu.ppu_counter.scanline < 225 {
                 cpu.hdma_setup_triggered_this_line = false;
                 cpu.hdma_triggered_this_line = false;
             }
-            if cpu.ppu_counter.borrow().scanline == 0 {
+            if cpu.ppu_counter.scanline == 0 {
                 cpu.vblank_nmi_flag = false;
                 let hdmas_enqueued = cpu.hdmas_enqueued.take();
                 if let Some(hdmas_enqueued) = hdmas_enqueued {
@@ -691,7 +694,7 @@ impl CPU {
                 }
                 cpu.hdmas_complete_this_frame.fill(false);
                 cpu.do_hdmas_this_line.fill(true);
-            } else if cpu.ppu_counter.borrow().scanline == 225 {
+            } else if cpu.ppu_counter.scanline == 225 {
                 // TODO: Overscan mode
                 if cpu.io_reg.interrupt_control.vblank_nmi_enable() {
                     cpu.nmi_enqueued = true;
@@ -722,7 +725,7 @@ impl CPU {
             };
             // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
             for ppu_tick in 0..((aligned_clocks + 1) / 2) {
-                let scanline = yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                let scanline = cpu.borrow_mut().ppu_counter.tick(2);
                 if scanline {
                     yield_all!(CPU::on_scanline_start(cpu.clone()));
                 }
@@ -732,8 +735,8 @@ impl CPU {
                     let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
                     let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
                     // TODO: This is technically wrong since there are shorter and longer lines, and some dots are 5 cycles long
-                    let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
-                    let scanline = cpu.ppu_counter.borrow().scanline;
+                    let h_dot = cpu.ppu_counter.h_ticks / 4;
+                    let scanline = cpu.ppu_counter.scanline;
                     cpu.irq_enqueued |= match irq_mode {
                         0 => false,
                         1 => h_dot == h_scan_count,
@@ -745,7 +748,7 @@ impl CPU {
                 }
             }
             let mut cpu = cpu.borrow_mut();
-            if cpu.ppu_counter.borrow().h_ticks >= 1104 && !cpu.hdma_triggered_this_line {
+            if cpu.ppu_counter.h_ticks >= 1104 && !cpu.hdma_triggered_this_line {
                 cpu.hdma_triggered_this_line = true;
                 cpu.hdma_pending_this_line = true;
             }
@@ -812,10 +815,10 @@ impl CPU {
             }
             0x4212 => {
                 let hblank = {
-                    let h_count = self.ppu_counter.borrow().h_ticks / 4;
+                    let h_count = self.ppu_counter.h_ticks / 4;
                     !(22..=277).contains(&h_count)
                 };
-                let vblank = self.ppu_counter.borrow().scanline > 224;
+                let vblank = self.ppu_counter.scanline > 224;
                 ((vblank as u8) << 7) | ((hblank as u8) << 6)
                 // TODO: Joypad auto-read busy flag
             }
@@ -847,8 +850,8 @@ impl CPU {
             // TODO: These PPU registers should probably belong to the PPU eventually (?)
             0x2137 => {
                 // TODO: This is technically wrong since there are shorter and longer lines, and some dots are 5 cycles long
-                self.ppu_h_count_latch = self.ppu_counter.borrow().h_ticks / 4;
-                self.ppu_v_count_latch = self.ppu_counter.borrow().scanline;
+                self.ppu_h_count_latch = self.ppu_counter.h_ticks / 4;
+                self.ppu_v_count_latch = self.ppu_counter.scanline;
                 self.ppu_count_latch_flag = true;
                 // TODO: CPU open bus
                 0
@@ -1109,8 +1112,7 @@ impl CPU {
                 };
                 // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
                 for ppu_tick in 0..((aligned_clocks + 1) / 2) {
-                    let scanline =
-                        yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                    let scanline = cpu.borrow_mut().ppu_counter.tick(2);
                     if scanline {
                         yield_all!(CPU::on_scanline_start(cpu.clone()));
                     }
@@ -1119,13 +1121,12 @@ impl CPU {
                         let irq_mode = cpu.io_reg.interrupt_control.h_v_irq();
                         let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
                         let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
-                        let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
-                        let scanline = cpu.ppu_counter.borrow().scanline;
+                        let h_dot = cpu.ppu_counter.h_ticks / 4;
                         cpu.irq_enqueued |= match irq_mode {
                             0 => false,
                             1 => h_dot == h_scan_count,
-                            2 => scanline == v_scan_count && h_dot == 0,
-                            3 => scanline == v_scan_count && h_dot == h_scan_count,
+                            2 => cpu.ppu_counter.scanline == v_scan_count && h_dot == 0,
+                            3 => cpu.ppu_counter.scanline == v_scan_count && h_dot == h_scan_count,
                             _ => unreachable!(),
                         };
                     }
@@ -1133,7 +1134,7 @@ impl CPU {
             }
             {
                 let mut cpu = cpu.borrow_mut();
-                if cpu.ppu_counter.borrow().h_ticks >= 1104 && !cpu.hdma_triggered_this_line {
+                if cpu.ppu_counter.h_ticks >= 1104 && !cpu.hdma_triggered_this_line {
                     cpu.hdma_triggered_this_line = true;
                     cpu.hdma_pending_this_line = true;
                 }
@@ -1157,8 +1158,7 @@ impl CPU {
                 };
                 // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
                 for ppu_tick in 0..((aligned_clocks + 1) / 2) {
-                    let scanline =
-                        yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                    let scanline = cpu.borrow_mut().ppu_counter.tick(2);
                     if scanline {
                         yield_all!(CPU::on_scanline_start(cpu.clone()));
                     }
@@ -1167,8 +1167,8 @@ impl CPU {
                         let irq_mode = cpu.io_reg.interrupt_control.h_v_irq();
                         let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
                         let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
-                        let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
-                        let scanline = cpu.ppu_counter.borrow().scanline;
+                        let h_dot = cpu.ppu_counter.h_ticks / 4;
+                        let scanline = cpu.ppu_counter.scanline;
                         cpu.irq_enqueued |= match irq_mode {
                             0 => false,
                             1 => h_dot == h_scan_count,
