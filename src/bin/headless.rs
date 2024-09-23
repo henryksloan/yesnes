@@ -9,8 +9,8 @@ fn main() {
     snes.load_cart(&cart_path);
     snes.reset();
     loop {
-        // for _ in 0..5 {
-        const FRAMES_PER_CHECK: u32 = 60;
+        snes.reset();
+        const FRAMES_PER_CHECK: u32 = 600;
         let now = Instant::now();
         for _ in 0..FRAMES_PER_CHECK {
             while !snes.run_instruction(Device::CPU, None).1 {}
