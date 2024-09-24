@@ -132,7 +132,11 @@ impl PPU {
             // TODO: This is scanline-granularity, and does no synchronization below that granularity.
             let mut step_gen = PPU::step(ppu.clone(), 1364);
             while let CoroutineState::Yielded(yield_reason) = Pin::new(&mut step_gen).resume(()) {
-                let ticks_to_yield = std::mem::take(&mut ppu.borrow_mut().ticks_run);
+                let ticks_to_yield = if let YieldReason::Sync(_) = yield_reason {
+                    std::mem::take(&mut ppu.borrow_mut().ticks_run)
+                } else {
+                    0
+                };
                 yield (yield_reason, ticks_to_yield)
             }
         }
