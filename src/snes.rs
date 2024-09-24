@@ -105,8 +105,9 @@ impl SNES {
     }
 
     pub fn set_controller_state(&mut self, controller_i: usize, data: u16) {
-        assert!(controller_i < 4);
-        self.cpu.borrow_mut().controller_states[controller_i] = data;
+        self.cpu
+            .borrow_mut()
+            .set_controller_state(controller_i, data);
     }
 
     pub fn make_debug_cpu(&self) -> DebugCpu {

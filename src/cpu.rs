@@ -30,10 +30,10 @@ pub const ABORT_VECTOR: u24 = u24(0xFFF8);
 pub const BRK_VECTOR: u24 = u24(0xFFE6);
 
 macro_rules! n_bits {
-    ($cpu_rc:ident, u8) => {
+    ($cpu:expr, u8) => {
         8
     };
-    ($cpu_rc:ident, u16) => {
+    ($cpu:expr, u16) => {
         16
     };
     ($cond:expr) => {
@@ -43,14 +43,14 @@ macro_rules! n_bits {
             8
         }
     };
-    ($cpu_rc:ident, m) => {
-        n_bits!($cpu_rc.borrow().reg.accumulator_16_bits())
+    ($cpu:expr, m) => {
+        n_bits!($cpu.reg.accumulator_16_bits())
     };
-    ($cpu_rc:ident, x) => {
-        n_bits!($cpu_rc.borrow().reg.index_reg_16_bits())
+    ($cpu:expr, x) => {
+        n_bits!($cpu.reg.index_reg_16_bits())
     };
-    ($cpu_rc:ident, e) => {
-        n_bits!(!$cpu_rc.borrow().reg.p.e)
+    ($cpu:expr, e) => {
+        n_bits!(!$cpu.reg.p.e)
     };
 }
 
@@ -98,7 +98,7 @@ macro_rules! pull_instrs {
                     yield_all!(CPU::idle(cpu.clone()));
                     let data = yield_all!(CPU::[<stack_pull_ $kind>](cpu.clone()));
                     cpu.borrow_mut().reg.[<set_ $reg>](data);
-                    cpu.borrow_mut().reg.p.n = ((data >> (n_bits!(cpu, $kind) - 1)) == 1);
+                    cpu.borrow_mut().reg.p.n = ((data >> (n_bits!(cpu.borrow(), $kind) - 1)) == 1);
                     cpu.borrow_mut().reg.p.z = (data == 0);
                 }
             }
@@ -139,17 +139,18 @@ macro_rules! transfer_instrs {
         paste! {
             fn [<transfer_ $from _ $to>]<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
                 #[coroutine] move || {
-                    let data = cpu.borrow().reg.$from & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
-                    cpu.borrow_mut().reg.[<set_ $to>](data);
+                    let mut cpu = cpu.borrow_mut();
+                    let data = cpu.reg.$from & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
+                    cpu.reg.[<set_ $to>](data);
                     if n_bits!(cpu, $kind) == 16 {
-                        cpu.borrow_mut().reg.$to = data;
+                        cpu.reg.$to = data;
                     } else {
-                        cpu.borrow_mut().reg.$to &= 0xFF00;
-                        cpu.borrow_mut().reg.$to |= data & 0xFF;
+                        cpu.reg.$to &= 0xFF00;
+                        cpu.reg.$to |= data & 0xFF;
                     }
-                    let result = cpu.borrow().reg.$to & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
-                    cpu.borrow_mut().reg.p.n = (result >> (n_bits!(cpu, $kind) - 1)) == 1;
-                    cpu.borrow_mut().reg.p.z = result == 0;
+                    let result = cpu.reg.$to & ((1u32 << n_bits!(cpu, $kind)) - 1) as u16;
+                    cpu.reg.p.n = (result >> (n_bits!(cpu, $kind) - 1)) == 1;
+                    cpu.reg.p.z = result == 0;
                 }
             }
         }
@@ -310,7 +311,7 @@ pub struct CPU {
     reg: Registers,
     io_reg: IoRegisters,
     bus: Rc<RefCell<Bus>>,
-    pub ppu_counter: Rc<RefCell<PpuCounter>>,
+    ppu_counter: PpuCounter,
     ppu_h_count_latch: u16,
     ppu_h_count_flipflop: bool,
     ppu_v_count_latch: u16,
@@ -336,7 +337,11 @@ pub struct CPU {
     ticks_mod_4: u8,
     // TODO: Remove debug variable once there's a real way to alert frontend of frames
     pub debug_frame: Option<[[[u8; 3]; 256]; 224]>,
-    pub controller_states: [u16; 4],
+    // Holds the most recent controller states passed from the frontend
+    controller_states: [u16; 4],
+    // When 4016h.bit0, controller inputs are latched into these shift registers.
+    // They are shifted out with reads to 4016h and 4017h.
+    controller_shifts: [u16; 4],
     pub breakpoint_addrs: HashSet<u24>,
     // Tracks the number of cycles (as defined by the 65816 spec; not master clocks) since reset.
     // Used by tests to verify cycle-accuracy.
@@ -350,7 +355,7 @@ impl CPU {
             reg: Registers::new(),
             io_reg: IoRegisters::new(),
             bus,
-            ppu_counter: Rc::new(RefCell::new(PpuCounter::new())),
+            ppu_counter: PpuCounter::new(),
             ppu_h_count_latch: 0,
             ppu_h_count_flipflop: false,
             ppu_v_count_latch: 0,
@@ -372,6 +377,7 @@ impl CPU {
             ticks_mod_4: 0,
             debug_frame: None,
             controller_states: [0; 4],
+            controller_shifts: [0; 4],
             breakpoint_addrs: HashSet::new(),
             debug_cycles: 0,
         }
@@ -388,7 +394,7 @@ impl CPU {
     pub fn reset(&mut self) {
         self.ticks_run = 0;
         self.reg = Registers::new();
-        self.ppu_counter = Rc::new(RefCell::new(PpuCounter::new()));
+        self.ppu_counter = PpuCounter::new();
         self.reg.pc = u24(ignore_yields!(Bus::read_u16(self.bus.clone(), RESET_VECTOR)) as u32);
         self.reg.set_p(0x34);
         self.reg.p.e = true;
@@ -399,6 +405,9 @@ impl CPU {
         self.irq_enqueued = false;
         self.timer_irq_flag = false;
         self.vblank_nmi_flag = false;
+
+        self.controller_states = [0; 4];
+        self.controller_shifts = [0; 4];
 
         self.io_reg = IoRegisters::new();
         for channel_regs in self.io_reg.dma_channels.iter_mut() {
@@ -411,6 +420,14 @@ impl CPU {
             channel_regs.unused_byte = 0xFF;
         }
         self.debug_cycles = 0;
+    }
+
+    pub fn set_controller_state(&mut self, controller_i: usize, data: u16) {
+        assert!(controller_i < 4);
+        self.controller_states[controller_i] = data;
+        if self.io_reg.joypad_out.strobe() {
+            self.controller_shifts[controller_i] = data;
+        }
     }
 
     pub fn run<'a>(cpu: Rc<RefCell<CPU>>) -> impl DeviceCoroutine + 'a {
@@ -428,7 +445,10 @@ impl CPU {
     fn run_loop<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<!> + 'a {
         #[coroutine]
         move || loop {
-            if cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc) {
+            // DO NOT SUBMIT: This is faster than checking contains, assuming the set is actually empty...
+            if cpu.borrow().breakpoint_addrs.len() > 0
+                && cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc)
+            {
                 yield YieldReason::Debug(DebugPoint::Breakpoint);
             }
             let opcode = yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().reg.pc));
@@ -649,44 +669,41 @@ impl CPU {
             // to resynchronize.
             yield YieldReason::Sync(Device::SMP);
             yield YieldReason::Sync(Device::PPU);
+            let mut cpu = cpu.borrow_mut();
             // TODO: Overscan mode
-            if cpu.borrow().ppu_counter.borrow().scanline < 225 {
-                cpu.borrow_mut().hdma_setup_triggered_this_line = false;
-                cpu.borrow_mut().hdma_triggered_this_line = false;
+            if cpu.ppu_counter.scanline < 225 {
+                cpu.hdma_setup_triggered_this_line = false;
+                cpu.hdma_triggered_this_line = false;
             }
-            if cpu.borrow().ppu_counter.borrow().scanline == 0 {
-                cpu.borrow_mut().vblank_nmi_flag = false;
-                let hdmas_enqueued = cpu.borrow_mut().hdmas_enqueued.take();
+            if cpu.ppu_counter.scanline == 0 {
+                cpu.vblank_nmi_flag = false;
+                let hdmas_enqueued = cpu.hdmas_enqueued.take();
                 if let Some(hdmas_enqueued) = hdmas_enqueued {
-                    cpu.borrow_mut().hdmas_ongoing = Some(hdmas_enqueued);
+                    cpu.hdmas_ongoing = Some(hdmas_enqueued);
                 }
-                let hdmas_ongoing = cpu.borrow().hdmas_ongoing;
+                let hdmas_ongoing = cpu.hdmas_ongoing;
                 if let Some(hdmas_ongoing) = hdmas_ongoing {
                     for channel_i in 0..=7 {
                         if (hdmas_ongoing >> channel_i) & 1 != 1 {
                             continue;
                         }
-                        let table_base_addr =
-                            cpu.borrow().io_reg.dma_channels[channel_i].addr.0.lo16();
-                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                            .hdma_table_curr_addr
-                            .0 = table_base_addr;
-                        cpu.borrow_mut().io_reg.dma_channels[channel_i]
-                            .hdma_line_counter
-                            .0 &= 0x80;
+                        let table_base_addr = cpu.io_reg.dma_channels[channel_i].addr.0.lo16();
+                        cpu.io_reg.dma_channels[channel_i].hdma_table_curr_addr.0 = table_base_addr;
+                        cpu.io_reg.dma_channels[channel_i].hdma_line_counter.0 &= 0x80;
                     }
                 }
-                cpu.borrow_mut().hdmas_complete_this_frame.fill(false);
-                cpu.borrow_mut().do_hdmas_this_line.fill(true);
-            } else if cpu.borrow().ppu_counter.borrow().scanline == 225 {
+                cpu.hdmas_complete_this_frame.fill(false);
+                cpu.do_hdmas_this_line.fill(true);
+            } else if cpu.ppu_counter.scanline == 225 {
                 // TODO: Overscan mode
-                if cpu.borrow().io_reg.interrupt_control.vblank_nmi_enable() {
-                    cpu.borrow_mut().nmi_enqueued = true;
+                if cpu.io_reg.interrupt_control.vblank_nmi_enable() {
+                    cpu.nmi_enqueued = true;
                 }
                 // This flag is set even if NMIs are disabled
-                cpu.borrow_mut().vblank_nmi_flag = true;
-                let frame = cpu.borrow().bus.borrow().debug_get_frame();
-                cpu.borrow_mut().debug_frame = Some(frame);
+                cpu.vblank_nmi_flag = true;
+                let frame = cpu.bus.borrow().debug_get_frame();
+                cpu.debug_frame = Some(frame);
+                drop(cpu);
                 yield YieldReason::FrameReady;
             }
         }
@@ -708,7 +725,7 @@ impl CPU {
             };
             // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
             for ppu_tick in 0..((aligned_clocks + 1) / 2) {
-                let scanline = yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                let scanline = cpu.borrow_mut().ppu_counter.tick(2);
                 if scanline {
                     yield_all!(CPU::on_scanline_start(cpu.clone()));
                 }
@@ -718,8 +735,8 @@ impl CPU {
                     let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
                     let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
                     // TODO: This is technically wrong since there are shorter and longer lines, and some dots are 5 cycles long
-                    let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
-                    let scanline = cpu.ppu_counter.borrow().scanline;
+                    let h_dot = cpu.ppu_counter.h_ticks / 4;
+                    let scanline = cpu.ppu_counter.scanline;
                     cpu.irq_enqueued |= match irq_mode {
                         0 => false,
                         1 => h_dot == h_scan_count,
@@ -731,7 +748,7 @@ impl CPU {
                 }
             }
             let mut cpu = cpu.borrow_mut();
-            if cpu.ppu_counter.borrow().h_ticks >= 1104 && !cpu.hdma_triggered_this_line {
+            if cpu.ppu_counter.h_ticks >= 1104 && !cpu.hdma_triggered_this_line {
                 cpu.hdma_triggered_this_line = true;
                 cpu.hdma_pending_this_line = true;
             }
@@ -774,6 +791,18 @@ impl CPU {
 
     pub fn io_read(&mut self, addr: u24) -> u8 {
         match addr.lo16() {
+            0x4016 => {
+                let val = ((self.controller_shifts[2] & 1) << 1) | (self.controller_shifts[0] & 1);
+                self.controller_shifts[0] >>= 1;
+                self.controller_shifts[2] >>= 1;
+                val as u8
+            }
+            0x4017 => {
+                let val = ((self.controller_shifts[3] & 1) << 1) | (self.controller_shifts[1] & 1);
+                self.controller_shifts[1] >>= 1;
+                self.controller_shifts[3] >>= 1;
+                val as u8
+            }
             0x4210 => {
                 let old_flag = self.vblank_nmi_flag;
                 self.vblank_nmi_flag = false;
@@ -786,14 +815,15 @@ impl CPU {
             }
             0x4212 => {
                 let hblank = {
-                    let h_count = self.ppu_counter.borrow().h_ticks / 4;
+                    let h_count = self.ppu_counter.h_ticks / 4;
                     !(22..=277).contains(&h_count)
                 };
-                let vblank = self.ppu_counter.borrow().scanline > 224;
+                let vblank = self.ppu_counter.scanline > 224;
                 ((vblank as u8) << 7) | ((hblank as u8) << 6)
                 // TODO: Joypad auto-read busy flag
             }
             0x4218..=0x421F => {
+                // TODO: Cycle-accurate automatic reading, perhaps
                 let reg_off = addr.lo16() as usize - 0x4218;
                 let controller_state = self.controller_states[reg_off / 2];
                 (controller_state >> ((reg_off % 2) * 8)) as u8
@@ -820,8 +850,8 @@ impl CPU {
             // TODO: These PPU registers should probably belong to the PPU eventually (?)
             0x2137 => {
                 // TODO: This is technically wrong since there are shorter and longer lines, and some dots are 5 cycles long
-                self.ppu_h_count_latch = self.ppu_counter.borrow().h_ticks / 4;
-                self.ppu_v_count_latch = self.ppu_counter.borrow().scanline;
+                self.ppu_h_count_latch = self.ppu_counter.h_ticks / 4;
+                self.ppu_v_count_latch = self.ppu_counter.scanline;
                 self.ppu_count_latch_flag = true;
                 // TODO: CPU open bus
                 0
@@ -863,6 +893,10 @@ impl CPU {
 
     pub fn io_write(&mut self, addr: u24, data: u8) {
         match addr.lo16() {
+            0x4016 => {
+                self.io_reg.joypad_out.0 = data;
+                self.controller_shifts = self.controller_states;
+            }
             0x4200 => {
                 self.io_reg.interrupt_control.0 = data;
                 if self.io_reg.interrupt_control.h_v_irq() == 0 {
@@ -1078,8 +1112,7 @@ impl CPU {
                 };
                 // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
                 for ppu_tick in 0..((aligned_clocks + 1) / 2) {
-                    let scanline =
-                        yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                    let scanline = cpu.borrow_mut().ppu_counter.tick(2);
                     if scanline {
                         yield_all!(CPU::on_scanline_start(cpu.clone()));
                     }
@@ -1088,13 +1121,12 @@ impl CPU {
                         let irq_mode = cpu.io_reg.interrupt_control.h_v_irq();
                         let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
                         let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
-                        let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
-                        let scanline = cpu.ppu_counter.borrow().scanline;
+                        let h_dot = cpu.ppu_counter.h_ticks / 4;
                         cpu.irq_enqueued |= match irq_mode {
                             0 => false,
                             1 => h_dot == h_scan_count,
-                            2 => scanline == v_scan_count && h_dot == 0,
-                            3 => scanline == v_scan_count && h_dot == h_scan_count,
+                            2 => cpu.ppu_counter.scanline == v_scan_count && h_dot == 0,
+                            3 => cpu.ppu_counter.scanline == v_scan_count && h_dot == h_scan_count,
                             _ => unreachable!(),
                         };
                     }
@@ -1102,7 +1134,7 @@ impl CPU {
             }
             {
                 let mut cpu = cpu.borrow_mut();
-                if cpu.ppu_counter.borrow().h_ticks >= 1104 && !cpu.hdma_triggered_this_line {
+                if cpu.ppu_counter.h_ticks >= 1104 && !cpu.hdma_triggered_this_line {
                     cpu.hdma_triggered_this_line = true;
                     cpu.hdma_pending_this_line = true;
                 }
@@ -1126,8 +1158,7 @@ impl CPU {
                 };
                 // We tick the PPU counter by 2's for efficiency; all PPU timing events occur on even clocks.
                 for ppu_tick in 0..((aligned_clocks + 1) / 2) {
-                    let scanline =
-                        yield_all!(PpuCounter::tick(cpu.borrow().ppu_counter.clone(), 2));
+                    let scanline = cpu.borrow_mut().ppu_counter.tick(2);
                     if scanline {
                         yield_all!(CPU::on_scanline_start(cpu.clone()));
                     }
@@ -1136,8 +1167,8 @@ impl CPU {
                         let irq_mode = cpu.io_reg.interrupt_control.h_v_irq();
                         let v_scan_count = cpu.io_reg.v_scan_count.timer_value();
                         let h_scan_count = cpu.io_reg.h_scan_count.timer_value();
-                        let h_dot = cpu.ppu_counter.borrow().h_ticks / 4;
-                        let scanline = cpu.ppu_counter.borrow().scanline;
+                        let h_dot = cpu.ppu_counter.h_ticks / 4;
+                        let scanline = cpu.ppu_counter.scanline;
                         cpu.irq_enqueued |= match irq_mode {
                             0 => false,
                             1 => h_dot == h_scan_count,
@@ -1223,28 +1254,23 @@ impl CPU {
         }
     }
 
-    fn direct_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
-        if cpu.borrow().reg.p.e && (cpu.borrow().reg.d & 0xFF == 0) {
+    fn direct_addr(&self, addr: u24) -> u24 {
+        if self.reg.p.e && (self.reg.d & 0xFF == 0) {
             // TODO: In emulation mode, we probably need "read_direct_u16" (and 24) to avoid this from over-wrapping
-            u24(cpu.borrow().reg.d.into()) | (addr & 0xFFu8)
+            u24(self.reg.d.into()) | (addr & 0xFFu8)
         } else {
-            (u24(cpu.borrow().reg.d.into()) + addr) & 0xFFFFu32
+            (u24(self.reg.d.into()) + addr) & 0xFFFFu32
         }
     }
 
     fn read_direct_u8<'a>(cpu: Rc<RefCell<CPU>>, addr: u24) -> impl Yieldable<u8> + 'a {
         #[coroutine]
-        move || {
-            yield_all!(CPU::read_u8(
-                cpu.clone(),
-                CPU::direct_addr(cpu.clone(), addr)
-            ))
-        }
+        move || yield_all!(CPU::read_u8(cpu.clone(), cpu.borrow().direct_addr(addr)))
     }
 
     // TODO: Stuff like this can OBVIOUSLY be modified to take &self
-    fn bank_addr(cpu: Rc<RefCell<CPU>>, addr: u24) -> u24 {
-        u24((cpu.borrow().reg.b as u32) << 16) + addr
+    fn bank_addr(&self, addr: u24) -> u24 {
+        u24((self.reg.b as u32) << 16) + addr
     }
 
     fn stack_pull_u8<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<u8> + 'a {
@@ -1358,7 +1384,7 @@ impl CPU {
             if cpu.borrow().reg.d & 0xFF != 0 {
                 yield_all!(CPU::idle(cpu.clone()));
             }
-            let addr = CPU::direct_addr(cpu.clone(), direct_addr);
+            let addr = cpu.borrow().direct_addr(direct_addr);
             Pointer::new_wrap_u16(addr, long)
         }
     }
@@ -1371,7 +1397,7 @@ impl CPU {
             if cpu.borrow().reg.d & 0xFF != 0 {
                 yield_all!(CPU::idle(cpu.clone()));
             }
-            let addr = CPU::direct_addr(cpu.clone(), direct_addr);
+            let addr = cpu.borrow().direct_addr(direct_addr);
             Pointer::new_wrap_u16(addr, long)
         }
     }
@@ -1384,7 +1410,7 @@ impl CPU {
             if cpu.borrow().reg.d & 0xFF != 0 {
                 yield_all!(CPU::idle(cpu.clone()));
             }
-            let addr = CPU::direct_addr(cpu.clone(), direct_addr);
+            let addr = cpu.borrow().direct_addr(direct_addr);
             Pointer::new_wrap_u16(addr, long)
         }
     }
@@ -1395,7 +1421,8 @@ impl CPU {
         move || {
             let addr = {
                 let addr_lo = fetch!(cpu) as u32;
-                CPU::bank_addr(cpu.clone(), u24(((fetch!(cpu) as u32) << 8) | addr_lo))
+                let bank_addr = u24(((fetch!(cpu) as u32) << 8) | addr_lo);
+                cpu.borrow().bank_addr(bank_addr)
             };
             Pointer::new(addr, long)
         }
@@ -1412,7 +1439,7 @@ impl CPU {
             let addr_lo = fetch!(cpu) as u32;
             let base_addr = u24(((fetch!(cpu) as u32) << 8) | addr_lo);
             let offset_addr = base_addr + offset;
-            let addr = CPU::bank_addr(cpu.clone(), offset_addr);
+            let addr = cpu.borrow().bank_addr(offset_addr);
             // "Add 1 cycle for indexing across page boundaries, or write, or X=0.
             //  When X=1 or in the emulation mode, this cycle contains invalid addresses"
             if (base_addr.lo16() & 0xFF00 != offset_addr.lo16() & 0xFF00)
@@ -1550,7 +1577,7 @@ impl CPU {
                 let lo = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr)) as u32;
                 // TODO: Normalize wrapping behavior/functions for 16 bit accesses throughout
                 let hi = yield_all!(CPU::read_direct_u8(cpu.clone(), indirect_addr + 1u32)) as u32;
-                CPU::bank_addr(cpu.clone(), u24((hi << 8) | lo))
+                cpu.borrow().bank_addr(u24((hi << 8) | lo))
             };
             Pointer::new(addr, long)
         }
@@ -1574,7 +1601,7 @@ impl CPU {
                 )) as u32;
                 u24((hi << 8) | lo)
             };
-            let addr = CPU::bank_addr(cpu.clone(), bank_addr);
+            let addr = cpu.borrow().bank_addr(bank_addr);
             Pointer::new(addr, long)
         }
     }
@@ -1597,7 +1624,7 @@ impl CPU {
                 u24((hi << 8) | lo)
             };
             let offset_addr = bank_addr + offset;
-            let addr = CPU::bank_addr(cpu.clone(), offset_addr);
+            let addr = cpu.borrow().bank_addr(offset_addr);
             // "Add 1 cycle for indexing across page boundaries, or write, or X=0.
             //  When X=1 or in the emulation mode, this cycle contains invalid addresses"
             if (bank_addr.lo16() & 0xFF00 != offset_addr.lo16() & 0xFF00)
@@ -1681,7 +1708,7 @@ impl CPU {
             let addr_hi =
                 yield_all!(CPU::read_u8(cpu.clone(), stack_addr.wrapping_add_lo16(1))) as u32;
             let bank_addr = ((addr_hi << 8) | addr_lo) + cpu.borrow().reg.get_y() as u32;
-            let addr = CPU::bank_addr(cpu.clone(), u24(bank_addr));
+            let addr = cpu.borrow().bank_addr(u24(bank_addr));
             yield_all!(CPU::idle(cpu.clone()));
             Pointer::new(addr, long)
         }
@@ -1743,7 +1770,7 @@ impl CPU {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
             let zero = (cpu.borrow().reg.get_a() & data) == 0;
             cpu.borrow_mut().reg.p.z = zero;
-            let msb = n_bits!(cpu, m) - 1;
+            let msb = n_bits!(cpu.borrow(), m) - 1;
             cpu.borrow_mut().reg.p.n = (data >> msb) & 1 == 1;
             cpu.borrow_mut().reg.p.v = (data >> (msb - 1)) & 1 == 1;
         }
@@ -2082,110 +2109,106 @@ impl CPU {
 
     // TODO: This is a mess in order to capture a bunch of little details about flags, and some
     // decimal-mode flags are still wrong.
-    fn arithmetic_op<'a>(
-        cpu: Rc<RefCell<CPU>>,
-        pointer: Pointer,
-        subtract: bool,
-    ) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            let n_bits: u32 = if cpu.borrow().reg.p.m || cpu.borrow().reg.p.e {
-                8
-            } else {
-                16
-            };
+    fn arithmetic_op(&mut self, mem_val: u16, subtract: bool) {
+        let n_bits: u32 = if self.reg.p.m || self.reg.p.e { 8 } else { 16 };
 
-            // TODO: Really need to check the 8- and 16-bit flag logic
-            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let data = {
-                if subtract {
-                    if n_bits == 8 {
-                        !(mem_val as i8 as i16) as u16
-                    } else {
-                        !(mem_val as i16) as u16
-                    }
+        let data = {
+            if subtract {
+                if n_bits == 8 {
+                    !(mem_val as i8 as i16) as u16
                 } else {
-                    mem_val
+                    !(mem_val as i16) as u16
                 }
-            };
-
-            let carry = cpu.borrow().reg.p.c as u16;
-            let result = if cpu.borrow().reg.p.d {
-                let bcd_max = if n_bits == 8 { 100 } else { 10000 };
-                let bcd_a = bcd_to_bin(cpu.borrow().reg.get_a()) as i32;
-                let temp = if subtract {
-                    bcd_a + ((bcd_max - bcd_to_bin(mem_val) as i32) - 1) + carry as i32
-                } else {
-                    bcd_a + bcd_to_bin(mem_val) as i32 + carry as i32
-                };
-                cpu.borrow_mut().reg.p.c = temp >= bcd_max;
-                bin_to_bcd((temp % bcd_max).unsigned_abs() as u16)
             } else {
-                let temp = cpu.borrow().reg.get_a() as i32 + data as i32 + carry as i32;
-                cpu.borrow_mut().reg.p.c = if subtract {
-                    let mask = (1u32 << n_bits) - 1;
-                    let temp2 = !(mem_val as u32) & mask;
-                    let res = cpu.borrow().reg.get_a() as u32 + temp2 + carry as u32;
-                    res > mask
-                } else {
-                    temp > ((1 << n_bits) - 1)
-                };
-                temp as u16
-            };
+                mem_val
+            }
+        };
 
-            // TODO: This doesn't work for decimal mode
-            let overflow =
-                ((cpu.borrow().reg.get_a() ^ result) & (data ^ result) & (1 << (n_bits - 1))) != 0;
-            cpu.borrow_mut().reg.p.v = overflow;
-            cpu.borrow_mut().reg.set_a(result);
-            let new_a = cpu.borrow_mut().reg.get_a();
-            cpu.borrow_mut().reg.p.n = (new_a >> (n_bits - 1)) & 1 == 1;
-            cpu.borrow_mut().reg.p.z = new_a == 0;
-        }
+        let carry = self.reg.p.c as u16;
+        let result = if self.reg.p.d {
+            let bcd_max = if n_bits == 8 { 100 } else { 10000 };
+            let bcd_a = bcd_to_bin(self.reg.get_a()) as i32;
+            let temp = if subtract {
+                bcd_a + ((bcd_max - bcd_to_bin(mem_val) as i32) - 1) + carry as i32
+            } else {
+                bcd_a + bcd_to_bin(mem_val) as i32 + carry as i32
+            };
+            self.reg.p.c = temp >= bcd_max;
+            bin_to_bcd((temp % bcd_max).unsigned_abs() as u16)
+        } else {
+            let temp = self.reg.get_a() as i32 + data as i32 + carry as i32;
+            self.reg.p.c = if subtract {
+                let mask = (1u32 << n_bits) - 1;
+                let temp2 = !(mem_val as u32) & mask;
+                let res = self.reg.get_a() as u32 + temp2 + carry as u32;
+                res > mask
+            } else {
+                temp > ((1 << n_bits) - 1)
+            };
+            temp as u16
+        };
+
+        // TODO: This doesn't work for decimal mode
+        let overflow = ((self.reg.get_a() ^ result) & (data ^ result) & (1 << (n_bits - 1))) != 0;
+        self.reg.p.v = overflow;
+        self.reg.set_a(result);
+        let new_a = self.reg.get_a();
+        self.reg.p.n = (new_a >> (n_bits - 1)) & 1 == 1;
+        self.reg.p.z = new_a == 0;
     }
 
     fn adc<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        return CPU::arithmetic_op(cpu, pointer, false);
-    }
-
-    fn sbc<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        return CPU::arithmetic_op(cpu, pointer, true);
-    }
-
-    fn compare_op<'a>(
-        cpu: Rc<RefCell<CPU>>,
-        pointer: Pointer,
-        reg_val: u16,
-        flag: bool,
-    ) -> impl InstructionCoroutine + 'a {
         #[coroutine]
         move || {
-            let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let result = reg_val as i32 - data as i32;
-
-            let n_bits = if flag || cpu.borrow().reg.p.e { 8 } else { 16 };
-            cpu.borrow_mut().reg.p.c = result >= 0;
-            cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
-            cpu.borrow_mut().reg.p.z = result == 0;
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().arithmetic_op(mem_val, false);
         }
     }
 
+    fn sbc<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
+        #[coroutine]
+        move || {
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().arithmetic_op(mem_val, true);
+        }
+    }
+
+    fn compare_op(&mut self, mem_val: u16, reg_val: u16, flag: bool) {
+        let result = reg_val as i32 - mem_val as i32;
+        let n_bits = if flag || self.reg.p.e { 8 } else { 16 };
+        self.reg.p.c = result >= 0;
+        self.reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
+        self.reg.p.z = result == 0;
+    }
+
     fn cmp<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        let reg_val = cpu.borrow().reg.get_a();
-        let flag = cpu.borrow().reg.p.m;
-        return CPU::compare_op(cpu, pointer, reg_val, flag);
+        #[coroutine]
+        move || {
+            let reg_val = cpu.borrow().reg.get_a();
+            let flag = cpu.borrow().reg.p.m;
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().compare_op(mem_val, reg_val, flag);
+        }
     }
 
     fn cpx<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        let reg_val = cpu.borrow().reg.get_x();
-        let flag = cpu.borrow().reg.p.x_or_b;
-        return CPU::compare_op(cpu, pointer, reg_val, flag);
+        #[coroutine]
+        move || {
+            let reg_val = cpu.borrow().reg.get_x();
+            let flag = cpu.borrow().reg.p.x_or_b;
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().compare_op(mem_val, reg_val, flag);
+        }
     }
 
     fn cpy<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
-        let reg_val = cpu.borrow().reg.get_y();
-        let flag = cpu.borrow().reg.p.x_or_b;
-        return CPU::compare_op(cpu, pointer, reg_val, flag);
+        #[coroutine]
+        move || {
+            let reg_val = cpu.borrow().reg.get_y();
+            let flag = cpu.borrow().reg.p.x_or_b;
+            let mem_val = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
+            cpu.borrow_mut().compare_op(mem_val, reg_val, flag);
+        }
     }
 
     fn jmp<'a>(cpu: Rc<RefCell<CPU>>, pointer: Pointer) -> impl InstructionCoroutine + 'a {
@@ -2272,16 +2295,16 @@ impl CPU {
 
     // Rotate and shift instructions
 
-    fn rotate_through_carry(cpu: Rc<RefCell<CPU>>, data: u16, left: bool) -> u16 {
-        let n_bits = n_bits!(cpu, m);
+    fn rotate_through_carry(&mut self, data: u16, left: bool) -> u16 {
+        let n_bits = n_bits!(self, m);
         let leftmost_mask = 1 << (n_bits - 1);
         let (check_mask, carry_mask) = if left {
             (leftmost_mask, 0x01)
         } else {
             (0x01, leftmost_mask)
         };
-        let old_carry = cpu.borrow().reg.p.c;
-        cpu.borrow_mut().reg.p.c = (data & check_mask) != 0;
+        let old_carry = self.reg.p.c;
+        self.reg.p.c = (data & check_mask) != 0;
         let result = {
             let temp = if left { data << 1 } else { data >> 1 };
             if old_carry {
@@ -2290,8 +2313,8 @@ impl CPU {
                 temp & !carry_mask
             }
         };
-        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
-        cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
+        self.reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
+        self.reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
 
@@ -2303,7 +2326,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let result = CPU::rotate_through_carry(cpu.clone(), data, left);
+            let result = cpu.borrow_mut().rotate_through_carry(data, left);
             yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
         }
@@ -2317,30 +2340,33 @@ impl CPU {
         CPU::rotate_op(cpu, pointer, false)
     }
 
-    fn rotate_acc_op<'a>(cpu: Rc<RefCell<CPU>>, left: bool) -> impl InstructionCoroutine + 'a {
-        #[coroutine]
-        move || {
-            let data = cpu.borrow().reg.get_a();
-            let result = CPU::rotate_through_carry(cpu.clone(), data, left);
-            cpu.borrow_mut().reg.set_a(result);
-        }
+    fn rotate_acc_op(&mut self, left: bool) {
+        let data = self.reg.get_a();
+        let result = self.rotate_through_carry(data, left);
+        self.reg.set_a(result);
     }
 
     fn rol_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        CPU::rotate_acc_op(cpu, true)
+        #[coroutine]
+        move || {
+            cpu.borrow_mut().rotate_acc_op(true);
+        }
     }
 
     fn ror_a<'a>(cpu: Rc<RefCell<CPU>>) -> impl InstructionCoroutine + 'a {
-        CPU::rotate_acc_op(cpu, false)
+        #[coroutine]
+        move || {
+            cpu.borrow_mut().rotate_acc_op(false);
+        }
     }
 
-    fn shift_with_carry(cpu: Rc<RefCell<CPU>>, data: u16, left: bool) -> u16 {
-        let n_bits = n_bits!(cpu, m);
+    fn shift_with_carry(&mut self, data: u16, left: bool) -> u16 {
+        let n_bits = n_bits!(self, m);
         let check_mask = if left { 1 << (n_bits - 1) } else { 0x01 };
-        cpu.borrow_mut().reg.p.c = (data & check_mask) == check_mask;
+        self.reg.p.c = (data & check_mask) == check_mask;
         let result = if left { data << 1 } else { data >> 1 };
-        cpu.borrow_mut().reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
-        cpu.borrow_mut().reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
+        self.reg.p.n = (result >> (n_bits - 1)) & 1 == 1;
+        self.reg.p.z = result & ((1u32 << n_bits) - 1) as u16 == 0;
         result
     }
 
@@ -2348,7 +2374,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let result = CPU::shift_with_carry(cpu.clone(), data, true);
+            let result = cpu.borrow_mut().shift_with_carry(data, true);
             yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
         }
@@ -2358,7 +2384,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = cpu.borrow().reg.get_a();
-            let result = CPU::shift_with_carry(cpu.clone(), data, true);
+            let result = cpu.borrow_mut().shift_with_carry(data, true);
             cpu.borrow_mut().reg.set_a(result);
         }
     }
@@ -2367,7 +2393,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = yield_all!(CPU::read_pointer(cpu.clone(), pointer));
-            let result = CPU::shift_with_carry(cpu.clone(), data, false);
+            let result = cpu.borrow_mut().shift_with_carry(data, false);
             yield_all!(CPU::idle(cpu.clone()));
             yield_all!(CPU::write_pointer(cpu.clone(), pointer, result));
         }
@@ -2377,7 +2403,7 @@ impl CPU {
         #[coroutine]
         move || {
             let data = cpu.borrow().reg.get_a();
-            let result = CPU::shift_with_carry(cpu.clone(), data, false);
+            let result = cpu.borrow_mut().shift_with_carry(data, false);
             cpu.borrow_mut().reg.set_a(result);
         }
     }

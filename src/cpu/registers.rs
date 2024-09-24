@@ -245,6 +245,7 @@ pub struct IoRegisters {
     pub dma_channels: [DmaChannelRegisters; 8],
     pub h_scan_count: PpuScanCount,
     pub v_scan_count: PpuScanCount,
+    pub joypad_out: JoypadOutput,
 }
 
 impl IoRegisters {
@@ -413,4 +414,13 @@ bitfield! {
   impl Debug;
   pub line_count, set_line_count: 6, 0;
   pub repeat, _: 7;
+}
+
+bitfield! {
+  /// 4016h/Write - JOYWR - Joypad Output (W)
+  /// Includes the joypad strobe bit which latches joypad inputs into 4016h (R) and 4017h (R)
+  #[derive(Clone, Copy, Default)]
+  pub struct JoypadOutput(u8);
+  impl Debug;
+  pub strobe, _: 0;
 }
