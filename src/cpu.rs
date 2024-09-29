@@ -449,7 +449,7 @@ impl CPU {
     fn run_loop<'a>(cpu: Rc<RefCell<CPU>>) -> impl Yieldable<!> + 'a {
         #[coroutine]
         move || loop {
-            // DO NOT SUBMIT: This is faster than checking contains, assuming the set is actually empty...
+            // TODO: Checking len makes this faster, but there might be a better way
             if cpu.borrow().breakpoint_addrs.len() > 0
                 && cpu.borrow().breakpoint_addrs.contains(&cpu.borrow().reg.pc)
             {

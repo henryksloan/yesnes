@@ -14,9 +14,9 @@ pub struct LoROM {
 impl LoROM {
     pub fn new(rom: Vec<u8>, sram: Box<dyn DerefMut<Target = [u8]>>) -> Self {
         Self {
-            // DO NOT SUBMIT: This doesn't enforce (or at least doesn't make clear) that these are powers of two
-            rom_mask: rom.len() - 1,
-            sram_mask: sram.len() - 1,
+            // TODO: This masking isn't robust to non-power-of-two sizes, though those may be impossible?
+            rom_mask: rom.len().next_power_of_two() - 1,
+            sram_mask: sram.len().next_power_of_two() - 1,
             rom,
             sram,
         }
