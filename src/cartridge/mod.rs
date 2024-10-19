@@ -59,10 +59,11 @@ impl Cartridge {
                 mapper_type
             );
         }
-        match header.cartridge_type().0 {
-            0x00..=0x02 => {}
-            cartridge_type => panic!("Unsupported cartridge type 0x{cartridge_type:X}"),
-        }
+        // DO NOT SUBMIT:
+        // match header.cartridge_type().0 {
+        //     0x00..=0x02 => {}
+        //     cartridge_type => panic!("Unsupported cartridge type 0x{cartridge_type:X}"),
+        // }
         log::debug!("Cartridge title: {}", header.title());
         // TODO: Support configurable SRAM directory
         // TODO: Consider supporting non-file-backed SRAM (just a VEC)

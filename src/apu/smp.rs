@@ -458,6 +458,7 @@ impl SMP {
         #[coroutine]
         move || loop {
             if smp.borrow().stopped {
+                yield_all!(SMP::step(smp.clone(), 1));
                 yield YieldReason::FinishedInstruction(Device::SMP);
                 continue;
             }
