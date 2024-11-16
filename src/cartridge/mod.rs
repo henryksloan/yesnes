@@ -2,8 +2,11 @@ mod cartridge_header;
 mod mapper;
 
 use cartridge_header::CartridgeHeader;
-use mapper::{HiROM, LoROM, Mapper, MapperType};
+use mapper::{CoprocessorType, HiROM, LoROM, MapperType};
 
+pub use mapper::Mapper;
+
+use crate::coprocessor::sa1::SA1;
 use crate::u24::u24;
 
 use memmap::MmapMut;
@@ -17,6 +20,7 @@ pub struct Cartridge {
     #[expect(unused)]
     header: CartridgeHeader,
     mapper: Box<dyn Mapper>,
+    coprocessor: Option<Box<dyn Mapper>>,
 }
 
 impl Cartridge {
@@ -89,14 +93,31 @@ impl Cartridge {
             MapperType::HiROM => Box::new(HiROM::new(data, sram)),
             _ => unimplemented!("Mapper {mapper_type:?} is not yet implemented"),
         };
-        Self { header, mapper }
+        let coprocessor: Option<Box<dyn Mapper>> = match header.cartridge_type().coprocessor() {
+            CoprocessorType::None => None,
+            CoprocessorType::SA1 => Some(Box::new(SA1 {})),
+            coprocessor_type => {
+                unimplemented!("Unimplemented coprocessor type {coprocessor_type:?}")
+            }
+        };
+        Self {
+            header,
+            mapper,
+            coprocessor,
+        }
     }
 
     pub fn try_read_u8(&self, addr: u24) -> Option<u8> {
-        self.mapper.try_read_u8(addr)
+        self.coprocessor
+            .as_ref()
+            .and_then(|coprocessor| coprocessor.try_read_u8(addr))
+            .or_else(|| self.mapper.try_read_u8(addr))
     }
 
     pub fn try_write_u8(&mut self, addr: u24, data: u8) -> bool {
-        self.mapper.try_write_u8(addr, data)
+        self.coprocessor
+            .as_mut()
+            .map_or(false, |coprocessor| coprocessor.try_write_u8(addr, data))
+            || self.mapper.try_write_u8(addr, data)
     }
 }

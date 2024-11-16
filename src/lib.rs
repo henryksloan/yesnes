@@ -12,6 +12,7 @@ extern crate test;
 mod apu;
 mod bus;
 mod cartridge;
+mod coprocessor;
 mod cpu;
 pub mod disassembler;
 pub mod frame_history;

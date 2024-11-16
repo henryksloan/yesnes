@@ -1,4 +1,4 @@
-use super::mapper::MapperType;
+use super::mapper::{CoprocessorType, MapperType};
 
 use bitfield::bitfield;
 
@@ -99,4 +99,22 @@ bitfield! {
   impl Debug;
   pub lo4, _: 3, 0;
   pub coprocessor_type, _: 7, 4;
+}
+
+impl CartridgeType {
+    pub fn coprocessor(&self) -> CoprocessorType {
+        match self.lo4() {
+            0x3 | 0x4 | 0x5 | 0x6 | 0x9 | 0xA => {}
+            _ => return CoprocessorType::None,
+        }
+        match self.coprocessor_type() {
+            0x0 => CoprocessorType::DSP,
+            0x1 => CoprocessorType::GSU,
+            0x2 => CoprocessorType::OBC1,
+            0x3 => CoprocessorType::SA1,
+            0x4 => CoprocessorType::SDD1,
+            0x5 => CoprocessorType::SRTC,
+            _ => CoprocessorType::None,
+        }
+    }
 }
