@@ -20,7 +20,6 @@ pub struct Cartridge {
     #[expect(unused)]
     header: CartridgeHeader,
     mapper: Box<dyn Mapper>,
-    coprocessor: Option<Box<dyn Mapper>>,
 }
 
 impl Cartridge {
@@ -30,17 +29,17 @@ impl Cartridge {
             data.drain(..0x200);
         }
         // TODO: Once the frontend has any error reporting, refactor these panics to Result
-        let (header, mapper_type) = {
+        let (header, is_hirom) = {
             let lorom_header = (data.len() >= 0x7FE0)
                 .then(|| {
                     CartridgeHeader::try_read_from(data[0x7FC0..0x7FE0].try_into().unwrap())
-                        .map(|header| (header, MapperType::LoROM))
+                        .map(|header| (header, false))
                 })
                 .flatten();
             let hirom_header = (data.len() >= 0xFFE0)
                 .then(|| {
                     CartridgeHeader::try_read_from(data[0xFFC0..0xFFE0].try_into().unwrap())
-                        .map(|header| (header, MapperType::HiROM))
+                        .map(|header| (header, true))
                 })
                 .flatten();
             if lorom_header.is_some() && hirom_header.is_some() {
@@ -55,12 +54,13 @@ impl Cartridge {
                 hirom_header.expect("Invalid ROM")
             }
         };
-        if header.mapper() != mapper_type {
+        let mapper = header.mapper();
+        if mapper.is_hirom() != is_hirom {
             // TODO: Guessing the mapping type purely from checksums isn't quite ideal
             panic!(
-                "ROM mapping type {:?} mismatches checksum-ascertained type {:?}",
-                header.mapper(),
-                mapper_type
+                "ROM mapping type {}HiROM, while checksum-ascertained type is {}HiROM",
+                if mapper.is_hirom() { "" } else { "not " },
+                if is_hirom { "" } else { "not " },
             );
         }
         // DO NOT SUBMIT:
@@ -71,7 +71,7 @@ impl Cartridge {
         log::debug!("Cartridge title: {}", header.title());
         // TODO: Support configurable SRAM directory
         // TODO: Consider supporting non-file-backed SRAM (just a VEC)
-        let sram: Box<dyn DerefMut<Target = [u8]>> = if header.ram_bytes() > 0 {
+        let sram: Box<dyn DerefMut<Target = [u8]>> = if header.cartridge_type().has_battery() {
             let sram_path = cart_path.with_extension("srm");
             let sram_file = OpenOptions::new()
                 .read(true)
@@ -88,36 +88,24 @@ impl Cartridge {
         } else {
             Box::new(vec![0; header.ram_bytes()])
         };
-        let mapper: Box<dyn Mapper> = match mapper_type {
+        let mapper: Box<dyn Mapper> = match mapper {
             MapperType::LoROM => Box::new(LoROM::new(data, sram)),
             MapperType::HiROM => Box::new(HiROM::new(data, sram)),
-            _ => unimplemented!("Mapper {mapper_type:?} is not yet implemented"),
+            MapperType::SA1 => Box::new(SA1::new(data, sram)),
+            _ => unimplemented!("Mapper {mapper:?} is not yet implemented"),
         };
-        let coprocessor: Option<Box<dyn Mapper>> = match header.cartridge_type().coprocessor() {
-            CoprocessorType::None => None,
-            CoprocessorType::SA1 => Some(Box::new(SA1 {})),
-            coprocessor_type => {
-                unimplemented!("Unimplemented coprocessor type {coprocessor_type:?}")
-            }
-        };
-        Self {
-            header,
-            mapper,
-            coprocessor,
-        }
+        Self { header, mapper }
+    }
+
+    pub fn reset(&mut self) {
+        self.mapper.reset();
     }
 
     pub fn try_read_u8(&self, addr: u24) -> Option<u8> {
-        self.coprocessor
-            .as_ref()
-            .and_then(|coprocessor| coprocessor.try_read_u8(addr))
-            .or_else(|| self.mapper.try_read_u8(addr))
+        self.mapper.try_read_u8(addr)
     }
 
     pub fn try_write_u8(&mut self, addr: u24, data: u8) -> bool {
-        self.coprocessor
-            .as_mut()
-            .map_or(false, |coprocessor| coprocessor.try_write_u8(addr, data))
-            || self.mapper.try_write_u8(addr, data)
+        self.mapper.try_write_u8(addr, data)
     }
 }

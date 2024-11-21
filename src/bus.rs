@@ -81,6 +81,9 @@ impl Bus {
         if let Some(testonly_ram) = &mut self.testonly_ram {
             testonly_ram.fill(0);
         }
+        if let Some(cart) = self.cart.as_mut() {
+            cart.reset();
+        }
     }
 
     pub fn load_cart(&mut self, cart_path: &Path) {

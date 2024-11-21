@@ -85,8 +85,9 @@ bitfield! {
 impl RomSpeedMapMode {
     pub fn mapper(&self) -> MapperType {
         match self.map_mode() {
-            0x0 | 0x2 | 0x3 => MapperType::LoROM,
+            0x0 | 0x2 => MapperType::LoROM,
             0x1 | 0x5 | 0xA => MapperType::HiROM,
+            0x3 => MapperType::SA1,
             _ => MapperType::Unknown,
         }
     }
@@ -116,5 +117,9 @@ impl CartridgeType {
             0x5 => CoprocessorType::SRTC,
             _ => CoprocessorType::None,
         }
+    }
+
+    pub fn has_battery(&self) -> bool {
+        matches!(self.lo4(), 0x2 | 0x5 | 0x6 | 0x9 | 0xA)
     }
 }
