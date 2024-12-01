@@ -3,6 +3,7 @@ use bitfield::bitfield;
 #[derive(Default, Clone, Copy)]
 pub struct IoRegisters {
     pub mmc_bank_controls: [MmcBankControl; 4],
+    pub bwram_mapping: BwRamMapping,
 }
 
 impl IoRegisters {
@@ -22,4 +23,13 @@ bitfield! {
   impl Debug;
   pub u8, bank, _: 2, 0; // Selects a 1MByte bank
   pub u8, lorom, _: 7;
+}
+
+bitfield! {
+  /// 2224h SNES BMAPS - SNES CPU BW-RAM Mapping to 6000h-7FFFh (W)
+  /// Select the 8Kbyte BW-RAM Block for mapping to 6000h-7FFFh.
+  #[derive(Clone, Copy, Default)]
+  pub struct BwRamMapping(u16);
+  impl Debug;
+  pub u8, block, _: 4, 0; // Selects a 8KByte block
 }
