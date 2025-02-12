@@ -97,6 +97,8 @@ impl Scheduler {
                                     access.access_type,
                                     access.addr
                                 );
+                                // DO NOT SUBMIT
+                                hit_debug = true;
                             }
                         }
                         _ => {}

@@ -5,7 +5,8 @@ use crate::u24::u24;
 #[derive(Default, Clone, Copy)]
 pub struct IoRegisters {
     pub mmc_bank_controls: [MmcBankControl; 4],
-    pub bw_ram_bank_control: BwRamBankControl,
+    pub snes_bw_ram_bank_control: SnesBwRamBankControl,
+    pub sa1_bw_ram_bank_control: Sa1BwRamBankControl,
 }
 
 impl IoRegisters {
@@ -28,10 +29,25 @@ bitfield! {
 }
 
 bitfield! {
-  /// 2225h SA-1 BMAP - SA-1 CPU BW-RAM Mapping to 6000h-7FFFh (W)
-  /// Controls the mapping of each the mappable BW-RAM regions.
+  /// 2224h SNES BMAPS - SNES CPU BW-RAM Mapping to 6000h-7FFFh (W)
+  /// Controls the mapping of the mappable BW-RAM region on the SNES side.
   #[derive(Clone, Copy, Default)]
-  pub struct BwRamBankControl(u8);
+  pub struct SnesBwRamBankControl(u8);
+  impl Debug;
+  pub u32, block, _: 4, 0;
+}
+
+impl SnesBwRamBankControl {
+    pub fn base(self) -> u24 {
+        u24(self.block() * 0x2000)
+    }
+}
+
+bitfield! {
+  /// 2225h SA-1 BMAP - SA-1 CPU BW-RAM Mapping to 6000h-7FFFh (W)
+  /// Controls the mapping of the mappable BW-RAM region on the SA-1 side.
+  #[derive(Clone, Copy, Default)]
+  pub struct Sa1BwRamBankControl(u8);
   impl Debug;
   // Depending on the setting of `source`
   // 0: Select one of the 32 8KiB regions in banks 40h-43h
@@ -41,12 +57,12 @@ bitfield! {
   pub bool, source, _: 7;
 }
 
-impl BwRamBankControl {
+impl Sa1BwRamBankControl {
     pub fn base(self) -> u24 {
         if self.source() {
-            u24(0x40_0000) + u24(self.block_128() * 0x2000)
+            u24(0x60_0000) + u24(self.block_128() * 0x2000)
         } else {
-            u24(0x60_0000) + u24(self.block_32() * 0x2000)
+            u24(0x40_0000) + u24(self.block_32() * 0x2000)
         }
     }
 }

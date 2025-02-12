@@ -42,9 +42,10 @@ impl SA1 {
             0x2220..=0x2223 => {
                 self.io_reg.mmc_bank_controls[addr.lo16() as usize - 0x2220].0 = data;
             }
-            0x2225 => self.io_reg.bw_ram_bank_control.0 = data,
-            _ => {} // _ => log::debug!("TODO: SA-1 IO write {addr}: {data:02X}"), // TODO: Remove this fallback
-                    // _ => panic!("Invalid IO write of SA-1 at {addr:#06X} with data {data:#02X}"),
+            0x2224 => self.io_reg.snes_bw_ram_bank_control.0 = data,
+            0x2225 => self.io_reg.sa1_bw_ram_bank_control.0 = data,
+            // _ => {} // _ => log::debug!("TODO: SA-1 IO write {addr}: {data:02X}"), // TODO: Remove this fallback
+            _ => panic!("Invalid IO write of SA-1 at {addr:#06X} with data {data:#02X}"),
         }
     }
 }
@@ -55,7 +56,8 @@ impl Mapper for SA1 {
         self.io_reg.mmc_bank_controls[1].0 = 1;
         self.io_reg.mmc_bank_controls[2].0 = 2;
         self.io_reg.mmc_bank_controls[3].0 = 3;
-        self.io_reg.bw_ram_bank_control.0 = 0;
+        self.io_reg.snes_bw_ram_bank_control.0 = 0;
+        self.io_reg.sa1_bw_ram_bank_control.0 = 0;
     }
 
     // DO NOT SUBMIT: Differentiate CPU and SA-1 perspective
@@ -70,10 +72,16 @@ impl Mapper for SA1 {
                 0x3000..=0x37FF => Some(self.iram[addr.lo16() as usize - 0x3000]),
                 // DO NOT SUBMIT: This is different for CPU and SA-1
                 0x6000..=0x7FFF => Some(
-                    self.sram[(self.io_reg.bw_ram_bank_control.base() + (addr.lo16() - 0x6000))
+                    self.sram[(self.io_reg.snes_bw_ram_bank_control.base()
+                        + (addr.lo16() - 0x6000))
                         .raw()
                         % self.sram.len()],
                 ),
+                // 0x6000..=0x7FFF => Some(
+                //     self.sram[(self.io_reg.sa1_bw_ram_bank_control.base() + (addr.lo16() - 0x6000))
+                //         .raw()
+                //         % self.sram.len()],
+                // ),
                 0x8000..=0xFFFF => match addr.bank() {
                     0x00..=0x1F => {
                         let area = if self.io_reg.mmc_bank_controls[0].lorom() {
@@ -170,11 +178,19 @@ impl Mapper for SA1 {
                 // DO NOT SUBMIT: This is different for CPU and SA-1
                 0x6000..=0x7FFF => {
                     let len = self.sram.len();
-                    self.sram[(self.io_reg.bw_ram_bank_control.base() + (addr.lo16() - 0x6000))
+                    self.sram[(self.io_reg.snes_bw_ram_bank_control.base()
+                        + (addr.lo16() - 0x6000))
                         .raw()
                         % len] = data;
                     true
                 }
+                // 0x6000..=0x7FFF => {
+                //     let len = self.sram.len();
+                //     self.sram[(self.io_reg.sa1_bw_ram_bank_control.base() + (addr.lo16() - 0x6000))
+                //         .raw()
+                //         % len] = data;
+                //     true
+                // }
                 _ => false,
             },
             0x40..=0x4F => {
