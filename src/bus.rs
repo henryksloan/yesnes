@@ -130,7 +130,13 @@ impl Bus {
                         .unwrap()
                         .borrow_mut()
                         .io_peak(addr),
-                    _ => 0,
+                    // DO NOT SUBMIT: This repetition isn't ideal
+                    _ => bus
+                        .borrow()
+                        .cart
+                        .as_ref()
+                        .and_then(|cart| cart.try_read_u8(addr))
+                        .unwrap_or(0), // TODO: Open bus for peak?
                 }
             }
             0x7E..=0x7F => {
@@ -208,11 +214,22 @@ impl Bus {
                             .io_read(addr),
                         0x4220..=0x42FF => 0, // TODO: Open bus (?)
                         _ => {
-                            yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
-                                access_type: AccessType::Read,
-                                addr,
-                            }));
-                            0
+                            // DO NOT SUBMIT: This repetition isn't ideal
+                            let cart_read = bus
+                                .borrow()
+                                .cart
+                                .as_ref()
+                                .and_then(|cart| cart.try_read_u8(addr));
+                            if let Some(data) = cart_read {
+                                data
+                            } else {
+                                yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
+                                    access_type: AccessType::Read,
+                                    addr,
+                                }));
+                                // TODO: Open bus
+                                0
+                            }
                         }
                     }
                 }
@@ -322,11 +339,19 @@ impl Bus {
                                 .io_write(addr, data);
                         }
                         0x4220..=0x42FF => {} // TODO: Open bus (?)
+                        // DO NOT SUBMIT: This repetition isn't ideal
                         _ => {
-                            yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
-                                access_type: AccessType::Write,
-                                addr,
-                            }));
+                            let cart_write = bus
+                                .borrow_mut()
+                                .cart
+                                .as_mut()
+                                .is_some_and(|cart| cart.try_write_u8(addr, data));
+                            if !cart_write {
+                                yield YieldReason::Debug(DebugPoint::UnimplementedAccess(Access {
+                                    access_type: AccessType::Write,
+                                    addr,
+                                }));
+                            }
                         }
                     }
                 }

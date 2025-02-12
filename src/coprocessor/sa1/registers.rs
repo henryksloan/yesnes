@@ -21,7 +21,7 @@ bitfield! {
   /// 2223h SNES FXB - Set Super MMC Bank F - Hirom F0h-FFh / LoRom A0h-BFh (W)
   /// Controls the mapping of each the four mappable HiROM and LoROM regions.
   #[derive(Clone, Copy, Default)]
-  pub struct MmcBankControl(u16);
+  pub struct MmcBankControl(u8);
   impl Debug;
   pub u8, bank, _: 2, 0; // Selects a 1MByte bank
   pub bool, lorom, _: 7;
@@ -31,7 +31,7 @@ bitfield! {
   /// 2225h SA-1 BMAP - SA-1 CPU BW-RAM Mapping to 6000h-7FFFh (W)
   /// Controls the mapping of each the mappable BW-RAM regions.
   #[derive(Clone, Copy, Default)]
-  pub struct BwRamBankControl(u16);
+  pub struct BwRamBankControl(u8);
   impl Debug;
   // Depending on the setting of `source`
   // 0: Select one of the 32 8KiB regions in banks 40h-43h

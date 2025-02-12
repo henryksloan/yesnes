@@ -10,6 +10,7 @@ use std::ops::DerefMut;
 pub struct SA1 {
     rom: Vec<u8>,
     sram: Box<dyn DerefMut<Target = [u8]>>,
+    iram: Box<[u8; 0x800]>,
     io_reg: IoRegisters,
 }
 
@@ -18,7 +19,32 @@ impl SA1 {
         Self {
             rom,
             sram,
+            iram: vec![0; 0x800].try_into().unwrap(),
             io_reg: IoRegisters::new(),
+        }
+    }
+}
+
+impl SA1 {
+    // DO NOT SUBMIT: Might have to make this mut at some point, and hence try_read_u8...
+    pub fn io_read(&self, addr: u24) -> u8 {
+        match addr.lo16() {
+            _ => {
+                // DO NOT SUBMIT: Still log, but add a `peek` function that doesn't
+                // log::debug!("TODO: SA-1 IO read {addr}"); // TODO: Remove this fallback
+                0
+            } // _ => panic!("Invalid IO read of SA-1 at {addr:#06X}"),
+        }
+    }
+
+    pub fn io_write(&mut self, addr: u24, data: u8) {
+        match addr.lo16() {
+            0x2220..=0x2223 => {
+                self.io_reg.mmc_bank_controls[addr.lo16() as usize - 0x2220].0 = data;
+            }
+            0x2225 => self.io_reg.bw_ram_bank_control.0 = data,
+            _ => {} // _ => log::debug!("TODO: SA-1 IO write {addr}: {data:02X}"), // TODO: Remove this fallback
+                    // _ => panic!("Invalid IO write of SA-1 at {addr:#06X} with data {data:#02X}"),
         }
     }
 }
@@ -32,7 +58,7 @@ impl Mapper for SA1 {
         self.io_reg.bw_ram_bank_control.0 = 0;
     }
 
-    // DO NOT SUBMIT: Differentiate CPU writes and SA-1 writes
+    // DO NOT SUBMIT: Differentiate CPU and SA-1 perspective
     fn try_read_u8(&self, addr: u24) -> Option<u8> {
         match addr.bank() {
             0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
@@ -40,8 +66,9 @@ impl Mapper for SA1 {
                 Some(self.rom[(0x7F00 | (addr.lo16() & 0xFF)) as usize % self.rom.len()])
             }
             0x00..=0x3F | 0x80..=0xBF => match addr.lo16() {
-                0x2200..=0x23FF => todo!("read IO {addr}"),
-                0x3000..=0x37FF => todo!("read I-RAM {addr}"),
+                0x2200..=0x23FF => Some(self.io_read(addr)),
+                0x3000..=0x37FF => Some(self.iram[addr.lo16() as usize - 0x3000]),
+                // DO NOT SUBMIT: This is different for CPU and SA-1
                 0x6000..=0x7FFF => Some(
                     self.sram[(self.io_reg.bw_ram_bank_control.base() + (addr.lo16() - 0x6000))
                         .raw()
@@ -52,12 +79,13 @@ impl Mapper for SA1 {
                         let area = if self.io_reg.mmc_bank_controls[0].lorom() {
                             self.io_reg.mmc_bank_controls[0].bank() as usize
                         } else {
+                            // DO NOT SUBMIT: Not clear to me if this is mirrored
                             0
                         };
                         Some(
                             self.rom[area * 0x10_0000
                                 + (addr.bank() as usize - 0x00) * 0x8000
-                                + addr.lo16() as usize],
+                                + (addr.lo16() as usize - 0x8000)],
                         )
                     }
                     0x20..=0x3F => {
@@ -69,31 +97,31 @@ impl Mapper for SA1 {
                         Some(
                             self.rom[area * 0x10_0000
                                 + (addr.bank() as usize - 0x20) * 0x8000
-                                + addr.lo16() as usize],
+                                + (addr.lo16() as usize - 0x8000)],
                         )
                     }
                     0x80..=0x9F => {
                         let area = if self.io_reg.mmc_bank_controls[2].lorom() {
                             self.io_reg.mmc_bank_controls[2].bank() as usize
                         } else {
-                            1
+                            2
                         };
                         Some(
                             self.rom[area * 0x10_0000
                                 + (addr.bank() as usize - 0x80) * 0x8000
-                                + addr.lo16() as usize],
+                                + (addr.lo16() as usize - 0x8000)],
                         )
                     }
                     0xA0..=0xBF | _ => {
                         let area = if self.io_reg.mmc_bank_controls[3].lorom() {
                             self.io_reg.mmc_bank_controls[3].bank() as usize
                         } else {
-                            1
+                            3
                         };
                         Some(
                             self.rom[area * 0x10_0000
                                 + (addr.bank() as usize - 0xA0) * 0x8000
-                                + addr.lo16() as usize],
+                                + (addr.lo16() as usize - 0x8000)],
                         )
                     }
                 },
@@ -104,30 +132,42 @@ impl Mapper for SA1 {
                     % self.sram.len()],
             ),
             0xC0..=0xCF => Some(
-                self.rom[self.io_reg.mmc_bank_controls[0].bank() as usize * 0x10_0000
-                    + (addr.raw() - 0xC0_0000)],
+                self.rom[(self.io_reg.mmc_bank_controls[0].bank() as usize * 0x10_0000
+                    + (addr.raw() - 0xC0_0000))
+                    % self.rom.len()],
             ),
             0xD0..=0xDF => Some(
-                self.rom[self.io_reg.mmc_bank_controls[1].bank() as usize * 0x10_0000
-                    + (addr.raw() - 0xD0_0000)],
+                self.rom[(self.io_reg.mmc_bank_controls[1].bank() as usize * 0x10_0000
+                    + (addr.raw() - 0xD0_0000))
+                    % self.rom.len()],
             ),
             0xE0..=0xEF => Some(
-                self.rom[self.io_reg.mmc_bank_controls[2].bank() as usize * 0x10_0000
-                    + (addr.raw() - 0xE0_0000)],
+                self.rom[(self.io_reg.mmc_bank_controls[2].bank() as usize * 0x10_0000
+                    + (addr.raw() - 0xE0_0000))
+                    % self.rom.len()],
             ),
             0xF0..=0xFF => Some(
-                self.rom[self.io_reg.mmc_bank_controls[3].bank() as usize * 0x10_0000
-                    + (addr.raw() - 0xF0_0000)],
+                self.rom[(self.io_reg.mmc_bank_controls[3].bank() as usize * 0x10_0000
+                    + (addr.raw() - 0xF0_0000))
+                    % self.rom.len()],
             ),
             _ => None,
         }
     }
 
+    // DO NOT SUBMIT: Differentiate CPU and SA-1 perspective
     fn try_write_u8(&mut self, addr: u24, data: u8) -> bool {
         match addr.bank() {
             0x00..=0x3F => match addr.lo16() {
-                0x2200..=0x23FF => todo!("write IO {addr}"),
-                0x3000..=0x37FF => todo!("write I-RAM {addr}"),
+                0x2200..=0x23FF => {
+                    self.io_write(addr, data);
+                    true
+                }
+                0x3000..=0x37FF => {
+                    self.iram[addr.lo16() as usize - 0x3000] = data;
+                    true
+                }
+                // DO NOT SUBMIT: This is different for CPU and SA-1
                 0x6000..=0x7FFF => {
                     let len = self.sram.len();
                     self.sram[(self.io_reg.bw_ram_bank_control.base() + (addr.lo16() - 0x6000))

@@ -129,6 +129,7 @@ impl<D: DebugProcessor + RegisterArea> DebuggerWindow<D> {
             self.button_with_shortcut(ui, DisassemblerShortcut::Pause, "Pause");
             self.button_with_shortcut(ui, DisassemblerShortcut::Trace, "Trace");
             // TODO: Implement step over more completely
+            // DO NOT SUBMIT: This now hangs we never reach the next instruction
             let button = egui::Button::new("Step over");
             if ui
                 .add_enabled(self.emu_paused.load(Ordering::Acquire), button)
