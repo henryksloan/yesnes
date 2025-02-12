@@ -29,14 +29,24 @@ impl Mapper for SA1 {
         self.io_reg.mmc_bank_controls[1].0 = 1;
         self.io_reg.mmc_bank_controls[2].0 = 2;
         self.io_reg.mmc_bank_controls[3].0 = 3;
+        self.io_reg.bw_ram_bank_control.0 = 0;
     }
 
+    // DO NOT SUBMIT: Differentiate CPU writes and SA-1 writes
     fn try_read_u8(&self, addr: u24) -> Option<u8> {
         match addr.bank() {
+            0x00 if (0xFF00..=0xFFFF).contains(&addr.lo16()) => {
+                // DO NOT SUBMIT: Fix these. e.g. Super Metroid does weird mirroring stuff in banks 60h+
+                Some(self.rom[(0x7F00 | (addr.lo16() & 0xFF)) as usize % self.rom.len()])
+            }
             0x00..=0x3F | 0x80..=0xBF => match addr.lo16() {
                 0x2200..=0x23FF => todo!("read IO {addr}"),
                 0x3000..=0x37FF => todo!("read I-RAM {addr}"),
-                0x6000..=0x7FFF => todo!("read one mappable 8Kbyte BW-RAM block {addr}"),
+                0x6000..=0x7FFF => Some(
+                    self.sram[(self.io_reg.bw_ram_bank_control.base() + (addr.lo16() - 0x6000))
+                        .raw()
+                        % self.sram.len()],
+                ),
                 0x8000..=0xFFFF => match addr.bank() {
                     0x00..=0x1F => {
                         let area = if self.io_reg.mmc_bank_controls[0].lorom() {
@@ -89,7 +99,10 @@ impl Mapper for SA1 {
                 },
                 _ => None,
             },
-            0x40..=0x4F => todo!("read entire 256Kbyte BW-RAM (mirrors in 44h-4Fh) {addr}"),
+            0x40..=0x4F => Some(
+                self.sram[(((addr.bank() as usize - 0x40) % 4) * 0x10000 + addr.lo16() as usize)
+                    % self.sram.len()],
+            ),
             0xC0..=0xCF => Some(
                 self.rom[self.io_reg.mmc_bank_controls[0].bank() as usize * 0x10_0000
                     + (addr.raw() - 0xC0_0000)],
@@ -115,10 +128,21 @@ impl Mapper for SA1 {
             0x00..=0x3F => match addr.lo16() {
                 0x2200..=0x23FF => todo!("write IO {addr}"),
                 0x3000..=0x37FF => todo!("write I-RAM {addr}"),
-                0x6000..=0x7FFF => todo!("write one mappable 8Kbyte BW-RAM block {addr}"),
+                0x6000..=0x7FFF => {
+                    let len = self.sram.len();
+                    self.sram[(self.io_reg.bw_ram_bank_control.base() + (addr.lo16() - 0x6000))
+                        .raw()
+                        % len] = data;
+                    true
+                }
                 _ => false,
             },
-            0x40..=0x4F => todo!("write entire 256Kbyte BW-RAM (mirrors in 44h-4Fh) {addr}"),
+            0x40..=0x4F => {
+                let len = self.sram.len();
+                self.sram[(((addr.bank() - 0x40) as usize % 4) * 0x10000 + addr.lo16() as usize)
+                    % len] = data;
+                true
+            }
             _ => false,
         }
     }
