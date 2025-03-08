@@ -16,6 +16,19 @@ impl IoRegisters {
 }
 
 bitfield! {
+  /// 2200h SNES CCNT - SA-1 CPU Control (W)
+  // Operations and messages from SNES to SA-1.
+  #[derive(Clone, Copy, Default)]
+  pub struct Sa1CpuControl(u8);
+  impl Debug;
+  pub u32, message, _: 3, 0;
+  pub nmi, _: 4;
+  pub reset, _: 5;
+  pub wait, _: 6;
+  pub irq, _: 7;
+}
+
+bitfield! {
   /// 2220h SNES CXB - Set Super MMC Bank C - Hirom C0h-CFh / LoRom 00h-1Fh (W)
   /// 2221h SNES DXB - Set Super MMC Bank D - Hirom D0h-DFh / LoRom 20h-3Fh (W)
   /// 2222h SNES EXB - Set Super MMC Bank E - Hirom E0h-EFh / LoRom 80h-9Fh (W)
@@ -25,7 +38,7 @@ bitfield! {
   pub struct MmcBankControl(u8);
   impl Debug;
   pub u8, bank, _: 2, 0; // Selects a 1MByte bank
-  pub bool, lorom, _: 7;
+  pub lorom, _: 7;
 }
 
 bitfield! {
@@ -54,7 +67,7 @@ bitfield! {
   // 1: Select one of the 128 8KiB regions in banks 60h-6Fh
   pub u32, block_32, _: 4, 0;
   pub u32, block_128, _: 6, 0;
-  pub bool, source, _: 7;
+  pub source, _: 7;
 }
 
 impl Sa1BwRamBankControl {

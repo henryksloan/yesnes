@@ -43,9 +43,11 @@ impl SA1 {
                 self.io_reg.mmc_bank_controls[addr.lo16() as usize - 0x2220].0 = data;
             }
             0x2224 => self.io_reg.snes_bw_ram_bank_control.0 = data,
+            // DO NOT SUBMIT: Some of these are from the SA-1 side
             0x2225 => self.io_reg.sa1_bw_ram_bank_control.0 = data,
-            // _ => {} // _ => log::debug!("TODO: SA-1 IO write {addr}: {data:02X}"), // TODO: Remove this fallback
-            _ => panic!("Invalid IO write of SA-1 at {addr:#06X} with data {data:#02X}"),
+            // _ => {}
+            _ => log::debug!("TODO: SA-1 IO write {addr}: {data:02X}"), // TODO: Remove this fallback
+                                                                        // _ => panic!("Invalid IO write of SA-1 at {addr:#06X} with data {data:#02X}"),
         }
     }
 }
@@ -91,9 +93,10 @@ impl Mapper for SA1 {
                             0
                         };
                         Some(
-                            self.rom[area * 0x10_0000
+                            self.rom[(area * 0x10_0000
                                 + (addr.bank() as usize - 0x00) * 0x8000
-                                + (addr.lo16() as usize - 0x8000)],
+                                + (addr.lo16() as usize - 0x8000))
+                                % self.rom.len()],
                         )
                     }
                     0x20..=0x3F => {
@@ -103,9 +106,10 @@ impl Mapper for SA1 {
                             1
                         };
                         Some(
-                            self.rom[area * 0x10_0000
+                            self.rom[(area * 0x10_0000
                                 + (addr.bank() as usize - 0x20) * 0x8000
-                                + (addr.lo16() as usize - 0x8000)],
+                                + (addr.lo16() as usize - 0x8000))
+                                % self.rom.len()],
                         )
                     }
                     0x80..=0x9F => {
@@ -115,9 +119,10 @@ impl Mapper for SA1 {
                             2
                         };
                         Some(
-                            self.rom[area * 0x10_0000
+                            self.rom[(area * 0x10_0000
                                 + (addr.bank() as usize - 0x80) * 0x8000
-                                + (addr.lo16() as usize - 0x8000)],
+                                + (addr.lo16() as usize - 0x8000))
+                                % self.rom.len()],
                         )
                     }
                     0xA0..=0xBF | _ => {
@@ -127,9 +132,10 @@ impl Mapper for SA1 {
                             3
                         };
                         Some(
-                            self.rom[area * 0x10_0000
+                            self.rom[(area * 0x10_0000
                                 + (addr.bank() as usize - 0xA0) * 0x8000
-                                + (addr.lo16() as usize - 0x8000)],
+                                + (addr.lo16() as usize - 0x8000))
+                                % self.rom.len()],
                         )
                     }
                 },
@@ -166,7 +172,7 @@ impl Mapper for SA1 {
     // DO NOT SUBMIT: Differentiate CPU and SA-1 perspective
     fn try_write_u8(&mut self, addr: u24, data: u8) -> bool {
         match addr.bank() {
-            0x00..=0x3F => match addr.lo16() {
+            0x00..=0x3F | 0x80..=0xBF => match addr.lo16() {
                 0x2200..=0x23FF => {
                     self.io_write(addr, data);
                     true
